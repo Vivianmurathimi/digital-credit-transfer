@@ -170,6 +170,21 @@ app.post('/api/login', async (req, res) => {
         res.status(500).json({ error: "Failed to log in." });
     }
 });
+
+//Door 8: Fetch PTE Course Catalog for Mapping
+app.get('/api/pte-courses', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT c.id, c.course_code, c.course_name, c.credits 
+            FROM courses c
+            JOIN universities u ON c.university_id = u.id
+            WHERE u.name = 'University of Pécs (PTE)'
+        `);
+        res.json({ success: true, courses: result.rows });
+    } catch (err) {
+        res.status(500).json({ error: "Database error" });
+    }
+});
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`🚀 Backend Server is running on http://localhost:${PORT}`);
