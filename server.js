@@ -60,38 +60,33 @@ app.get('/api/users', async (req, res) => {
     }
 });
 // Door 5: The Registration Door (POST - Receiving Data)
+// --- USER REGISTRATION ROUTE ---
 app.post('/api/register', async (req, res) => {
-    try {
-        // 1. Open the digital envelope from the Frontend
-        const { fullName, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
-        // 2. The Security Guard scrambles the password
+    try {
+        // 1. Check if the email is already in the database
+        const userCheck = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (userCheck.rows.length > 0) {
+            return res.status(400).json({ error: 'An account with this email already exists!' });
+        }
+
+        // 2. Hash the password for security (Requires bcrypt)
+        const bcrypt = require('bcrypt');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // 3. Send the scrambled data down the db.js cable to PostgreSQL
-        const insertQuery = `
-            INSERT INTO users (full_name, email, password, role) 
-            VALUES ($1, $2, $3, $4) 
-            RETURNING id, full_name, email, role; 
-        `;
-        // Notice we are saving the 'hashedPassword', NOT the real password!
-        const result = await pool.query(insertQuery, [fullName, email, hashedPassword, role || 'student']);
+        // 3. Save the new user as a 'student' by default
+        const newUser = await pool.query(
+            'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+            [name, email, hashedPassword, 'student']
+        );
 
-        // 4. Send the successful receipt back to the Frontend
-        res.status(201).json({
-            success: true,
-            message: "Student account created successfully!",
-            user: result.rows[0]
-        });
+        res.status(201).json({ message: '✅ Registration successful! You can now log in.' });
 
-    } catch (err) {
-        console.error("Registration Error:", err);
-        // 23505 is the specific Postgres code for "This email already exists"
-        if (err.code === '23505') { 
-            return res.status(400).json({ error: "This email is already registered." });
-        }
-        res.status(500).json({ error: "Failed to register user." });
+    } catch (error) {
+        console.error('Registration Error:', error);
+        res.status(500).json({ error: 'Server error during registration.' });
     }
 });
 // Door 6: The Document Upload Door
