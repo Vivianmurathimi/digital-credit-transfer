@@ -2,14 +2,17 @@ require('dotenv').config();
 const express = require('express'); 
 const cors = require('cors'); 
 const pool = require('./db'); 
-const minioClient = require('./minio'); // 🔌 NEW: Plugging in the MinIO cable!
-const bcrypt = require('bcryptjs'); // 🛡️ Our new security guard
+const minioClient = require('./minio'); 
+const bcrypt = require('bcryptjs'); // 🛡️ Security guard (globally imported)
+const jwt = require('jsonwebtoken'); // 🎫 Digital Badge Maker (globally imported)
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage() }); // Catches the file in computer memory temporarily
-const jwt = require('jsonwebtoken'); // 🎫 The Digital Badge Maker
+const upload = multer({ storage: multer.memoryStorage() }); 
+
 const app = express();
 app.use(express.json()); 
 app.use(cors()); 
+
+// --- HEALTH & TEST ROUTES ---
 
 // Door 1: The Health Check
 app.get('/api/health', (req, res) => {
@@ -23,7 +26,7 @@ app.get('/api/test-db', async (req, res) => {
         res.json({ 
             success: true, 
             message: "Node.js successfully talked to PostgreSQL!",
-            databaseTime: result.rows[0].now 
+            databaseTime: result.rows.now 
         });
     } catch (err) {
         console.error(err);
@@ -31,66 +34,120 @@ app.get('/api/test-db', async (req, res) => {
     }
 });
 
-// Door 3: 🔌 NEW: The Storage Test
+// Door 3: The Storage Test
 app.get('/api/test-storage', async (req, res) => {
     try {
-        // We are asking MinIO for a list of all our file buckets
         const buckets = await minioClient.listBuckets();
         res.json({
             success: true,
             message: "Node.js successfully talked to MinIO Storage!",
-            buckets: buckets // This will be an empty array [] right now, which is perfect!
+            buckets: buckets
         });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to talk to storage" });
     }
 });
-// Door 4: 🔌 NEW: Fetch all users
-app.get('/api/users', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, full_name, email, role, created_at FROM users');
-        res.json({
-            success: true,
-            users: result.rows
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to fetch users" });
-    }
-});
-// Door 5: The Registration Door (POST - Receiving Data)
-// --- USER REGISTRATION ROUTE ---
+
+
+// --- AUTHENTICATION ROUTES ---
+
+// USER REGISTRATION
 app.post('/api/register', async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password } = req.body; 
 
     try {
-        // 1. Check if the email is already in the database
         const userCheck = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
         if (userCheck.rows.length > 0) {
             return res.status(400).json({ error: 'An account with this email already exists!' });
         }
 
-        // 2. Hash the password for security (Requires bcrypt)
-        const bcrypt = require('bcrypt');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        // 3. Save the new user as a 'student' by default
         const newUser = await pool.query(
-            'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+            'INSERT INTO users (full_name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id, email, role',
             [name, email, hashedPassword, 'student']
         );
 
         res.status(201).json({ message: '✅ Registration successful! You can now log in.' });
-
     } catch (error) {
         console.error('Registration Error:', error);
         res.status(500).json({ error: 'Server error during registration.' });
     }
 });
-// Door 6: The Document Upload Door
-// Notice we use "upload.single('file')" - this tells the catcher to look for one file named "file"
+
+// USER LOGIN
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (userResult.rows.length === 0) {
+            return res.status(400).json({ error: 'Invalid email or password.' });
+        }
+
+        // 🐛 THE FIX: Added to grab the first user object!
+        const user = userResult.rows[0];
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ error: 'Invalid email or password.' });
+        }
+
+        const token = jwt.sign(
+            { id: user.id, role: user.role },
+            process.env.JWT_SECRET || 'fallback_backup_secret_do_not_use_in_production', 
+            { expiresIn: '2h' } 
+        );
+
+        res.json({ 
+            message: 'Login successful',
+            token: token,
+            user: { 
+                id: user.id, 
+                email: user.email, 
+                role: user.role 
+            }
+        });
+    } catch (error) {
+        console.error('Login Error:', error);
+        res.status(500).json({ error: 'Server error during login.' });
+    }
+});
+
+
+// --- ADMIN ROUTES ---
+
+// Get all users
+app.get('/api/users', async (req, res) => {
+    try {
+        const allUsers = await pool.query('SELECT id, full_name, email, role FROM users ORDER BY id ASC');
+        res.json(allUsers.rows);
+    } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({ error: 'Server error fetching users.' });
+    }
+});
+
+// Update user role
+app.put('/api/users/:id/role', async (req, res) => {
+    const userId = req.params.id;
+    const { role } = req.body; 
+    
+    try {
+        await pool.query('UPDATE users SET role = $1 WHERE id = $2', [role, userId]);
+        res.json({ message: `✅ User ${userId} successfully updated to ${role}!` });
+    } catch (error) {
+        console.error('Error updating role:', error);
+        res.status(500).json({ error: 'Server error updating role.' });
+    }
+});
+
+
+// --- STUDENT ROUTES ---
+
+// Document Upload Door
 app.post('/api/upload', upload.single('file'), async (req, res) => {
     try {
         const file = req.file;
@@ -98,23 +155,19 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             return res.status(400).json({ error: "No file was uploaded." });
         }
 
-        // 1. Create a unique name for the file so we don't accidentally overwrite anything
         const uniqueFileName = `${Date.now()}-${file.originalname}`;
         const bucketName = 'transcripts';
 
-        // 2. Check if the "transcripts" bucket exists in MinIO. If not, build it!
         const bucketExists = await minioClient.bucketExists(bucketName);
         if (!bucketExists) {
             await minioClient.makeBucket(bucketName);
             console.log(`🪣 Created new MinIO bucket: ${bucketName}`);
         }
 
-        // 3. Send the file down the cable to MinIO
         await minioClient.putObject(bucketName, uniqueFileName, file.buffer, file.size, {
             'Content-Type': file.mimetype
         });
 
-        // 4. Send the success receipt back
         res.status(200).json({
             success: true,
             message: "File successfully uploaded to MinIO!",
@@ -126,47 +179,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         res.status(500).json({ error: "Failed to upload file." });
     }
 });
-// Door 7: The Login Door (POST - Checking Data)
-app.post('/api/login', async (req, res) => {
-    try {
-        const { email, password } = req.body;
 
-        // 1. Ask the database if this email even exists
-        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-        if (userResult.rows.length === 0) {
-            return res.status(401).json({ error: "Invalid email or password." }); // 401 means Unauthorized
-        }
-        
-        const user = userResult.rows[0];
-
-        // 2. Have the Security Guard check if the password matches the scrambled one in the database
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(401).json({ error: "Invalid email or password." });
-        }
-
-        // 3. Passwords match! Print the Digital ID Badge (JWT)
-        const token = jwt.sign(
-            { id: user.id, role: user.role }, // Information inside the badge
-            process.env.JWT_SECRET,           // The secret stamp
-            { expiresIn: '2h' }               // The badge expires in 2 hours for security
-        );
-
-        // 4. Hand the badge to the React Frontend
-        res.json({
-            success: true,
-            message: "Login successful!",
-            token: token, // <-- This is the magic badge!
-            user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role }
-        });
-
-    } catch (err) {
-        console.error("Login Error:", err);
-        res.status(500).json({ error: "Failed to log in." });
-    }
-});
-
-//Door 8: Fetch PTE Course Catalog for Mapping
+// Fetch PTE Course Catalog
 app.get('/api/pte-courses', async (req, res) => {
     try {
         const result = await pool.query(`
@@ -178,6 +192,25 @@ app.get('/api/pte-courses', async (req, res) => {
         res.json({ success: true, courses: result.rows });
     } catch (err) {
         res.status(500).json({ error: "Database error" });
+    }
+});
+// POST /api/applications - Submit a credit transfer application
+app.post('/api/applications', async (req, res) => {
+    // React is handing us the data...
+    const { student_id, previous_course, pte_course_id, syllabus_file } = req.body;
+
+    try {
+        // 👇 Look right here! We changed previous_course to fulfilled_course in the database! 👇
+        const newApp = await pool.query(
+            `INSERT INTO applications (student_id, fulfilled_course, pte_course_id, syllabus_file, status) 
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [student_id, previous_course, pte_course_id, syllabus_file, 'pending']
+        );
+        
+        res.status(201).json({ success: true, message: 'Application submitted successfully!', application: newApp.rows[0] });
+    } catch (error) {
+        console.error('Submit Application Error:', error);
+        res.status(500).json({ error: 'Failed to submit application.' });
     }
 });
 const PORT = process.env.PORT || 5000;
