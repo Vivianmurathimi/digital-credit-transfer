@@ -213,6 +213,69 @@ app.post('/api/applications', async (req, res) => {
         res.status(500).json({ error: 'Failed to submit application.' });
     }
 });
+    // --- STUDENT: Fetch only their own applications ---
+app.get('/api/applications/student/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+        const result = await pool.query(`
+            SELECT 
+                a.id, 
+                a.fulfilled_course, 
+                c.course_name as pte_course_name, 
+                a.syllabus_file, 
+                a.status, 
+                TO_CHAR(a.created_at, 'YYYY-MM-DD') as date_submitted
+            FROM applications a
+            JOIN courses c ON a.pte_course_id = c.id
+            WHERE a.student_id = $1
+            ORDER BY a.created_at DESC
+        `, [studentId]);
+        
+        res.json({ success: true, applications: result.rows });
+    } catch (err) {
+        console.error("Student Fetch Error:", err);
+        res.status(500).json({ error: "Failed to fetch student applications" });
+    }
+});
+// --- REVIEWER: Fetch all applications with Student Names and PTE Course Names ---
+app.get('/api/applications', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                a.id, 
+                u.full_name as student_name, 
+                a.fulfilled_course, 
+                c.course_name as pte_course_name, 
+                a.syllabus_file, 
+                a.status, 
+                a.created_at
+            FROM applications a
+            JOIN users u ON a.student_id = u.id
+            JOIN courses c ON a.pte_course_id = c.id
+            ORDER BY a.created_at DESC
+        `);
+            // --- REVIEWER: Approve or Reject an Application ---
+        app.put('/api/applications/:id/status', async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body; // Expects 'approved' or 'rejected'
+
+    try {
+        await pool.query(
+            'UPDATE applications SET status = $1 WHERE id = $2',
+            [status, id]
+        );
+        res.json({ success: true, message: `Application ${status} successfully!` });
+    } catch (err) {
+        console.error("Status Update Error:", err);
+        res.status(500).json({ error: "Failed to update status." });
+    }
+});
+        res.json({ success: true, applications: result.rows });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch applications" });
+    }
+});
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`🚀 Backend Server is running on http://localhost:${PORT}`);
