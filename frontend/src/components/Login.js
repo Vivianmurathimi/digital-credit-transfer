@@ -13,7 +13,7 @@ const Login = () => {
         try {
             const response = await axios.post('/api/login', { email, password });
             localStorage.setItem('token', response.data.token);
-            localStorage.setItem('role', response.data.role);
+            localStorage.setItem('role', response.data.user.role);
 
             setMessage('✅ Login Successful! Redirecting...');
             setTimeout(() => {

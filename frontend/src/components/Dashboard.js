@@ -1,90 +1,331 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
     const navigate = useNavigate();
     const role = localStorage.getItem('role');
-    const [users, setUsers] = useState([]);
-    const [message, setMessage] = useState('');
+    const token = localStorage.getItem('token');
+    const userId = token ? JSON.parse(atob(token.split('.')[1])).id : null;
+    
+    // --- COMMON STATES ---
+    const [courses, setCourses] = useState([]);
+    const [applications, setApplications] = useState([]); 
 
-    // If the user is a superadmin, fetch the user list when the dashboard loads
+    // --- STUDENT STATES ---
+    const [studentTab, setStudentTab] = useState('dashboard');
+    const [selectedCourses, setSelectedCourses] = useState([]); 
+    const [fulfilledCourse, setFulfilledCourse] = useState('');
+    const [fulfilledCourseCode, setFulfilledCourseCode] = useState('');
+    const [fulfilledCredits, setFulfilledCredits] = useState('');
+    const [fulfilledGrade, setFulfilledGrade] = useState('');
+    
+    const [showUploader, setShowUploader] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState(null);
+    const [uploadStatus, setUploadStatus] = useState('');
+    const [uploadedFiles, setUploadedFiles] = useState([]); // 🆕 Now an ARRAY to hold multiple proofs!
+    const [submitStatus, setSubmitStatus] = useState('');
+    const [myApplications, setMyApplications] = useState([]); 
+
+    // --- AUDITOR STATES ---
+    const [evidenceRequiredMsg, setEvidenceRequiredMsg] = useState('');
+    const [matches, setMatches] = useState({ name: false, credits: false });
+
+    // --- CANVAS STATES ---
+    const imgRef = useRef(null);    
+    const canvasRef = useRef(null); 
+    const [ctx, setCtx] = useState(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [activeTool, setActiveTool] = useState('pen'); 
+
+    // --- DATA FETCHING ---
+    const fetchCourses = useCallback(async () => {
+        try {
+            const res = await axios.get('/api/pte-courses');
+            if (res.data.success) setCourses(res.data.courses); 
+        } catch (err) { console.error(err); }
+    }, []);
+
+    const fetchApplications = useCallback(async () => {
+        try {
+            const res = await axios.get('/api/applications');
+            if (res.data.success) setApplications(res.data.applications);
+        } catch (err) { console.error("Error fetching apps", err); }
+    }, []);
+
+    const fetchMyApplications = useCallback(async () => {
+        if (!userId) return;
+        try {
+            const res = await axios.get(`/api/applications/student/${userId}`);
+            if (res.data.success) setMyApplications(res.data.applications);
+        } catch (err) { console.error("Error fetching student apps", err); }
+    }, [userId]);
+
     useEffect(() => {
-        if (role === 'superadmin') {
-            fetchUsers();
+        if (role === 'student') {
+            fetchCourses(); 
+            fetchMyApplications(); 
         }
-    }, [role]);
-
-    const fetchUsers = async () => {
-        try {
-            const response = await axios.get('/api/users');
-            setUsers(response.data);
-        } catch (error) {
-            console.error('Error fetching users', error);
+        if (role === 'reviewer' || role === 'superadmin') {
+            fetchApplications(); 
         }
-    };
+    }, [role, fetchCourses, fetchApplications, fetchMyApplications]);
 
-    const handleRoleChange = async (userId, newRole) => {
-        try {
-            await axios.put(`/api/users/${userId}/role`, { role: newRole });
-            setMessage(`✅ Role updated successfully!`);
-            fetchUsers(); // Refresh the table to show the new role
-            setTimeout(() => setMessage(''), 3000); // Clear message after 3 seconds
-        } catch (error) {
-            setMessage('❌ Failed to update role.');
+    // --- SMART AUDITOR LOGIC ---
+    useEffect(() => {
+        if (selectedCourses.length > 0 && fulfilledCourse) {
+            const totalTargetCredits = selectedCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
+            const inputCredits = parseFloat(fulfilledCredits || 0);
+            const creditMatch = inputCredits >= totalTargetCredits;
+            
+            let nameMatch = false;
+            if (selectedCourses.length === 1) {
+                const targetName = selectedCourses[0].course_name.toLowerCase();
+                const fulfilledName = fulfilledCourse.toLowerCase();
+                nameMatch = fulfilledName.includes(targetName) || targetName.includes(fulfilledName);
+            }
+
+            setMatches({ name: nameMatch, credits: creditMatch });
+
+            if (!creditMatch || !nameMatch || selectedCourses.length > 1) {
+                let reason = "";
+                if (selectedCourses.length > 1) reason = "mapping one course to multiple target courses";
+                else if (!creditMatch) reason = `the credit gap (your ${inputCredits} credits vs total required ${totalTargetCredits})`;
+                else reason = "the course name difference";
+
+                setEvidenceRequiredMsg(`Please attach proof of fulfilling this course (syllabus) to account for ${reason}.`);
+            } else {
+                setEvidenceRequiredMsg('');
+            }
+        } else {
+            setMatches({ name: false, credits: false });
+            setEvidenceRequiredMsg('');
         }
-    };
+    }, [fulfilledCourse, selectedCourses, fulfilledCredits]);
 
+    // --- ACTIONS ---
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('role');
+        localStorage.clear();
         navigate('/login');
     };
 
+    const handleImpersonate = (newRole) => {
+        localStorage.setItem('originalRole', 'superadmin');
+        localStorage.setItem('role', newRole);
+        window.location.reload();
+    };
+
+    const stopImpersonation = () => {
+        const original = localStorage.getItem('originalRole');
+        if (original) {
+            localStorage.setItem('role', original);
+            localStorage.removeItem('originalRole');
+            window.location.reload();
+        }
+    };
+
+    const handleUpdateStatus = async (appId, newStatus) => {
+        try {
+            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: 'System Override' });
+            if (res.data.success) {
+                alert(`Status updated to ${newStatus}!`);
+                fetchApplications(); 
+            }
+        } catch (err) { alert("Update failed."); }
+    };
+
+    const handleDownload = async (fileName) => {
+        try {
+            const response = await fetch(`http://localhost:9000/transcripts/${fileName}`);
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName; 
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (err) { alert("Download failed."); }
+    };
+
+    // --- CANVAS/UPLOAD LOGIC ---
+    const handleImageLoad = () => {
+        if (imgRef.current && canvasRef.current) {
+            const canvas = canvasRef.current;
+            canvas.width = imgRef.current.clientWidth;
+            canvas.height = imgRef.current.clientHeight;
+            const context = canvas.getContext('2d');
+            context.lineCap = 'round';
+            setCtx(context);
+        }
+    };
+
+    const handleUploadHighlighted = () => {
+        if (!canvasRef.current || !imgRef.current) return;
+        setUploadStatus('⏳ Saving...');
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvasRef.current.width;
+        tempCanvas.height = canvasRef.current.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(imgRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
+        tempCtx.drawImage(canvasRef.current, 0, 0);
+        tempCanvas.toBlob(async (blob) => {
+            const formData = new FormData();
+            formData.append('file', blob, `marked-${Date.now()}.png`);
+            try {
+                const res = await axios.post('/api/upload', formData);
+                if (res.data.success) {
+                    setUploadStatus(`✅ Evidence saved.`);
+                    
+                    // 🆕 Add the new file to our array of proofs
+                    setUploadedFiles(prev => [...prev, res.data.fileName]);
+                    
+                    // 🪄 UI Cleanup: Shrink uploader & CLEAR the preview for the next file
+                    setTimeout(() => {
+                        setShowUploader(false);
+                        setUploadStatus('');
+                        setPreviewUrl(null); // Blanks the canvas out for the next upload
+                    }, 1500);
+                }
+            } catch (err) { setUploadStatus('❌ Upload failed.'); }
+        }, 'image/png'); 
+    };
+
+    const handleSubmitApplication = async () => {
+        if (!fulfilledCourse || selectedCourses.length === 0 || uploadedFiles.length === 0) {
+            setSubmitStatus('❌ Please complete all fields and select at least one target course.');
+            return;
+        }
+        try {
+            setSubmitStatus('⏳ submitting...');
+            
+            const pte_course_ids = selectedCourses.map(c => c.id);
+            const syllabus_files_joined = uploadedFiles.join(','); // Join array into a single string for the DB
+
+            const response = await axios.post('/api/applications', {
+                student_id: userId,
+                previous_course: fulfilledCourse,
+                fulfilled_course_code: fulfilledCourseCode,
+                fulfilled_credits: fulfilledCredits,
+                fulfilled_grade: fulfilledGrade,
+                pte_course_ids: pte_course_ids, 
+                syllabus_file: syllabus_files_joined, // 🆕 Sending all files
+                system_note: evidenceRequiredMsg
+            });
+
+            if (response.data.success) {
+                alert(`🎉 Successfully mapped to ${selectedCourses.length} units with ${uploadedFiles.length} pages of proof!`);
+                // Reset state
+                setFulfilledCourse('');
+                setFulfilledCourseCode('');
+                setFulfilledCredits('');
+                setFulfilledGrade('');
+                setSelectedCourses([]);
+                setShowUploader(false);
+                setUploadedFiles([]); // Clear all proofs
+                setPreviewUrl(null);
+                setSubmitStatus('');
+                
+                fetchMyApplications();
+                setStudentTab('dashboard');
+            }
+        } catch (err) { setSubmitStatus('❌ Submission failed.'); }
+    };
+
     return (
-        <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h1 style={{ color: '#003d7c' }}>Welcome to the Dashboard</h1>
-                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    Log Out
-                </button>
+        <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+            
+            {localStorage.getItem('originalRole') && (
+                <div style={{ backgroundColor: '#ffc107', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px' }}>
+                    ⚠️ VIEWING AS {role.toUpperCase()}
+                    <button onClick={stopImpersonation} style={{ marginLeft: '20px', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold' }}>Return to Admin</button>
+                </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #ddd', paddingBottom: '10px' }}>
+                <h1 style={{ color: '#003d7c', margin: 0 }}>University Portal</h1>
+                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Log Out</button>
             </div>
 
-            <h3 style={{ color: '#555' }}>Your Role: <span style={{ textTransform: 'uppercase', color: '#003d7c' }}>{role}</span></h3>
-
             {/* --- SUPER ADMIN VIEW --- */}
-            {role === 'superadmin' && (
-                <div style={{ marginTop: '30px', backgroundColor: '#fdf3f4', padding: '20px', borderRadius: '10px', border: '1px solid #f5c6cb' }}>
-                    <h2 style={{ color: '#721c24', marginTop: '0' }}>👑 Super Admin Control Panel</h2>
-                    <p>Manage system users and assign roles below.</p>
-                    
-                    {message && <p style={{ fontWeight: 'bold', color: 'green' }}>{message}</p>}
+            {role === 'superadmin' && !localStorage.getItem('originalRole') && (
+                <div style={{ marginTop: '30px' }}>
+                    <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px' }}>
+                        <h3>👤 Audit Controls</h3>
+                        <button onClick={() => handleImpersonate('student')} style={{ padding: '10px 20px', marginRight: '10px', cursor: 'pointer', backgroundColor: '#004085', color: 'white', border: 'none', borderRadius: '4px' }}>Audit as Student</button>
+                        <button onClick={() => handleImpersonate('reviewer')} style={{ padding: '10px 20px', cursor: 'pointer', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px' }}>Audit as Reviewer</button>
+                    </div>
 
-                    <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '15px', backgroundColor: '#fff' }}>
+                    <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
+                        <h2 style={{ marginTop: 0, color: '#003d7c' }}>🛡️ Admin Overrides</h2>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#003d7c', color: 'white' }}>
+                                    <th style={{ padding: '12px', textAlign: 'left' }}>Student</th>
+                                    <th style={{ padding: '12px', textAlign: 'center' }}>Status</th>
+                                    <th style={{ padding: '12px', textAlign: 'center' }}>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {applications.map(app => (
+                                    <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
+                                        <td style={{ padding: '12px' }}>{app.student_name}</td>
+                                        <td style={{ padding: '12px', textAlign: 'center' }}>
+                                            <span style={{ fontWeight: 'bold', color: app.status === 'approved' ? 'green' : app.status === 'rejected' ? 'red' : 'orange' }}>{app.status.toUpperCase()}</span>
+                                        </td>
+                                        <td style={{ padding: '12px', textAlign: 'center' }}>
+                                            <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '5px 10px', backgroundColor: '#ffc107', border: 'none', borderRadius: '3px' }}>🔄 Reset</button>
+                                            <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '5px', padding: '5px 10px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '3px' }}>🚀 Force Approve</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* --- REVIEWER VIEW --- */}
+            {role === 'reviewer' && (
+                <div style={{ marginTop: '30px', backgroundColor: '#e2f0d9', padding: '20px', borderRadius: '10px' }}>
+                    <h2 style={{ marginTop: 0, color: '#155724' }}>👨‍🏫 Reviewer Portal</h2>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
                         <thead>
-                            <tr style={{ backgroundColor: '#003d7c', color: 'white', textAlign: 'left' }}>
-                                <th style={{ padding: '10px', border: '1px solid #ddd' }}>ID</th>
-                                <th style={{ padding: '10px', border: '1px solid #ddd' }}>Name</th>
-                                <th style={{ padding: '10px', border: '1px solid #ddd' }}>Email</th>
-                                <th style={{ padding: '10px', border: '1px solid #ddd' }}>Assign Role</th>
+                            <tr style={{ backgroundColor: '#28a745', color: 'white' }}>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Student</th>
+                                <th style={{ padding: '10px', textAlign: 'left' }}>Target Course</th>
+                                <th style={{ padding: '10px', textAlign: 'center' }}>Evidence (All Pages)</th>
+                                <th style={{ padding: '10px', textAlign: 'center' }}>Decision</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {users.map((user) => (
-                                <tr key={user.id}>
-                                    <td style={{ padding: '10px', border: '1px solid #ddd' }}>{user.id}</td>
-                                    <td style={{ padding: '10px', border: '1px solid #ddd' }}>{user.full_name}</td>
-                                    <td style={{ padding: '10px', border: '1px solid #ddd' }}>{user.email}</td>
-                                    <td style={{ padding: '10px', border: '1px solid #ddd' }}>
-                                        <select 
-                                            value={user.role} 
-                                            onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                                            style={{ padding: '5px', borderRadius: '3px' }}
-                                        >
-                                            <option value="student">Student</option>
-                                            <option value="reviewer">Reviewer</option>
-                                            <option value="superadmin">Super Admin</option>
-                                        </select>
+                            {applications.map(app => (
+                                <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
+                                    <td style={{ padding: '10px' }}>{app.student_name}</td>
+                                    <td style={{ padding: '10px' }}>{app.pte_course_name}</td>
+                                    
+                                    {/* 🆕 REVIEWER: Multi-Image Viewer with View & Download Buttons */}
+<td style={{ padding: '10px', textAlign: 'center' }}>
+    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {app.syllabus_file.split(',').map((file, idx) => (
+            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', border: '1px solid #eee', padding: '4px', borderRadius: '4px', backgroundColor: '#f8f9fa' }}>
+                <img src={`http://localhost:9000/transcripts/${file}`} alt={`Proof ${idx+1}`} style={{ width: '40px', height: '40px', objectFit: 'cover', border: '1px solid #ccc', borderRadius: '4px' }} />
+                <div style={{ display: 'flex', gap: '2px' }}>
+                    <button onClick={() => window.open(`http://localhost:9000/transcripts/${file}`, '_blank')} title="View" style={{ cursor: 'pointer', fontSize: '10px', padding: '2px 5px', backgroundColor: '#17a2b8', color: 'white', border: 'none', borderRadius: '3px' }}>👁️</button>
+                    {/* 👇 Here is the missing Download Button! 👇 */}
+                    <button onClick={() => handleDownload(file)} title="Download" style={{ cursor: 'pointer', fontSize: '10px', padding: '2px 5px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '3px' }}>📥</button>
+                </div>
+            </div>
+        ))}
+    </div>
+</td>
+                                    <td style={{ padding: '10px', textAlign: 'center' }}>
+                                        {app.status === 'pending' ? (
+                                            <>
+                                                <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ backgroundColor: '#28a745', color: 'white', cursor: 'pointer', padding: '5px 10px', border: 'none', borderRadius: '3px' }}>Approve</button>
+                                                <button onClick={() => handleUpdateStatus(app.id, 'rejected')} style={{ backgroundColor: '#dc3545', color: 'white', cursor: 'pointer', marginLeft: '5px', padding: '5px 10px', border: 'none', borderRadius: '3px' }}>Reject</button>
+                                            </>
+                                        ) : <strong>{app.status.toUpperCase()}</strong>}
                                     </td>
                                 </tr>
                             ))}
@@ -93,19 +334,137 @@ const Dashboard = () => {
                 </div>
             )}
 
-            {/* --- REVIEWER VIEW --- */}
-            {role === 'reviewer' && (
-                <div style={{ marginTop: '30px', backgroundColor: '#e2f0d9', padding: '20px', borderRadius: '10px', border: '1px solid #c3e6cb' }}>
-                    <h2 style={{ color: '#155724', marginTop: '0' }}>👨‍🏫 Reviewer Portal</h2>
-                    <p>Pending credit transfer requests will appear here soon.</p>
-                </div>
-            )}
-
             {/* --- STUDENT VIEW --- */}
             {role === 'student' && (
-                <div style={{ marginTop: '30px', backgroundColor: '#e2e3f0', padding: '20px', borderRadius: '10px', border: '1px solid #b8daff' }}>
-                    <h2 style={{ color: '#004085', marginTop: '0' }}>🎓 Student Portal</h2>
-                    <p>You can upload your syllabus and apply for credit transfer here soon.</p>
+                <div style={{ marginTop: '30px' }}>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                        <button onClick={() => setStudentTab('dashboard')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'dashboard' ? '#004085' : '#e2e3f0', color: studentTab === 'dashboard' ? 'white' : '#004085' }}>📊 My Status</button>
+                        <button onClick={() => setStudentTab('submit')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'submit' ? '#004085' : '#e2e3f0', color: studentTab === 'submit' ? 'white' : '#004085' }}>➕ New Application</button>
+                    </div>
+
+                    {/* ... (Dashboard Table remains identical) ... */}
+                    {studentTab === 'dashboard' && (
+                        <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #ccc' }}>
+                            <h2 style={{ marginTop: 0, color: '#004085' }}>📜 My Applications</h2>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ backgroundColor: '#f8f9fa' }}>
+                                        <th style={{ padding: '12px', textAlign: 'left' }}>Fulfilled Course</th>
+                                        <th style={{ padding: '12px', textAlign: 'left' }}>Target PTE Course</th>
+                                        <th style={{ padding: '12px', textAlign: 'center' }}>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {myApplications.map(app => (
+                                        <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
+                                            <td style={{ padding: '12px', fontWeight: 'bold' }}>{app.fulfilled_course}</td>
+                                            <td style={{ padding: '12px' }}>{app.pte_course_name}</td>
+                                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                <span style={{ fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', backgroundColor: app.status === 'approved' ? '#28a745' : app.status === 'rejected' ? '#dc3545' : '#ffc107' }}>
+                                                    {app.status.toUpperCase()}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {studentTab === 'submit' && (
+                        <div style={{ backgroundColor: '#e2e3f0', padding: '20px', borderRadius: '10px', border: '1px solid #b8daff', maxWidth: '800px' }}>
+                            <h2 style={{ marginTop: 0, color: '#004085' }}>🎓 New Application</h2>
+                            
+                            {/* Course Input Fields */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', backgroundColor: '#fff', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>Name {matches.name && <span style={{ color: 'green' }}>✅</span>}</label><input type="text" value={fulfilledCourse} onChange={(e) => setFulfilledCourse(e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>Code</label><input type="text" value={fulfilledCourseCode} onChange={(e) => setFulfilledCourseCode(e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>Credits {matches.credits && <span style={{ color: 'green' }}>✅</span>}</label><input type="number" step="0.5" value={fulfilledCredits} onChange={(e) => setFulfilledCredits(e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
+                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>Grade</label><input type="text" value={fulfilledGrade} onChange={(e) => setFulfilledGrade(e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
+                            </div>
+
+                            {/* Target Courses */}
+                            <div style={{ marginBottom: '20px' }}>
+                                <label style={{ fontWeight: 'bold', color: '#004085' }}>Target PTE Courses:</label>
+                                <select value="" onChange={(e) => {
+                                        const course = courses.find(c => c.id === parseInt(e.target.value));
+                                        if (course && !selectedCourses.find(sc => sc.id === course.id)) setSelectedCourses([...selectedCourses, course]);
+                                    }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid #ccc', borderRadius: '4px' }}>
+                                    <option value="">-- Select & Add PTE Courses --</option>
+                                    {courses.map(c => <option key={c.id} value={c.id}>{c.course_code} - {c.course_name} ({c.credits} Credits)</option>)}
+                                </select>
+                                <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                    {selectedCourses.map(sc => (
+                                        <span key={sc.id} style={{ backgroundColor: '#004085', color: 'white', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', display: 'flex', alignItems: 'center' }}>
+                                            {sc.course_name}
+                                            <button onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'white', marginLeft: '8px', cursor: 'pointer', fontWeight: 'bold' }}>×</button>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Assistant Notice */}
+                            {evidenceRequiredMsg && (
+                                <div style={{ backgroundColor: '#d1ecf1', color: '#0c5460', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                                    <strong>ℹ️ Notice:</strong> {evidenceRequiredMsg}
+                                </div>
+                            )}
+
+                            {/* 🆕 UPLOADED PROOF THUMBNAILS */}
+                            {uploadedFiles.length > 0 && (
+                                <div style={{ marginBottom: '15px' }}>
+                                    <label style={{ fontWeight: 'bold', color: '#28a745' }}>✅ Attached Evidence ({uploadedFiles.length}):</label>
+                                    <div style={{ display: 'flex', gap: '10px', marginTop: '5px', flexWrap: 'wrap' }}>
+                                        {uploadedFiles.map((file, index) => (
+                                            <div key={index} style={{ position: 'relative', border: '2px solid #28a745', borderRadius: '5px', padding: '3px', backgroundColor: '#fff' }}>
+                                                <img src={`http://localhost:9000/transcripts/${file}`} alt={`Proof ${index+1}`} style={{ height: '60px', objectFit: 'cover', borderRadius: '3px' }} />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 🆕 SMART UPLOADER BUTTON */}
+                            <button onClick={() => setShowUploader(!showUploader)} style={{ marginBottom: '10px', cursor: 'pointer', padding: '10px', backgroundColor: uploadedFiles.length > 0 ? '#6c757d' : '#007bff', color: 'white', border: 'none', borderRadius: '5px', fontWeight: 'bold' }}>
+                                {showUploader ? 'Hide Uploader' : (uploadedFiles.length > 0 ? '➕ Upload More Proof' : '📸 Upload & Mark Evidence')}
+                            </button>
+
+                            {/* Uploader Canvas Area */}
+                            {showUploader && (
+                                <div style={{ backgroundColor: '#fff', padding: '15px', border: '2px dashed #007bff', borderRadius: '5px', marginBottom: '20px' }}>
+                                    <input type="file" onChange={(e) => setPreviewUrl(URL.createObjectURL(e.target.files[0]))} />
+                                    {previewUrl && (
+                                        <div style={{ marginTop: '10px' }}>
+                                            <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', marginRight: '5px', cursor: 'pointer' }}>🔴 Pen</button>
+                                            <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', cursor: 'pointer' }}>🧹 Eraser</button>
+                                            <div style={{ position: 'relative', display: 'inline-block', marginTop: '10px', border: '1px solid #000' }}>
+                                                <img ref={imgRef} src={previewUrl} onLoad={handleImageLoad} style={{ maxWidth: '100%' }} alt="Syllabus" />
+                                                <canvas ref={canvasRef} 
+                                                    onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => {
+                                                        ctx.beginPath();
+                                                        ctx.moveTo(offsetX, offsetY);
+                                                        ctx.lineWidth = activeTool === 'pen' ? 3 : 30;
+                                                        ctx.strokeStyle = 'red';
+                                                        ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out';
+                                                        setIsDrawing(true);
+                                                    }}
+                                                    onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => {
+                                                        if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); }
+                                                    }}
+                                                    onMouseUp={() => setIsDrawing(false)}
+                                                    style={{ position: 'absolute', top: 0, left: 0 }} />
+                                            </div>
+                                            <br/><button onClick={handleUploadHighlighted} style={{ marginTop: '10px', cursor: 'pointer', padding: '8px 15px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px' }}>Save Evidence Page</button>
+                                            <p style={{ fontWeight: 'bold' }}>{uploadStatus}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <button onClick={handleSubmitApplication} style={{ width: '100%', padding: '15px', backgroundColor: '#004085', color: 'white', fontWeight: 'bold', cursor: 'pointer', border: 'none', borderRadius: '5px', marginTop: '10px' }}>🚀 Submit Transfer Request</button>
+                            {submitStatus && <p style={{ color: 'red', textAlign: 'center', fontWeight: 'bold' }}>{submitStatus}</p>}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
