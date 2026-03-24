@@ -4,13 +4,21 @@ import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
     const navigate = useNavigate();
-    const role = localStorage.getItem('role');
+    
+    // --- TRUE IMPERSONATION LOGIC ---
     const token = localStorage.getItem('token');
-    const userId = token ? JSON.parse(atob(token.split('.')[1])).id : null;
+    const realUserId = token ? JSON.parse(atob(token.split('.')[1])).id : null;
+    const originalRole = localStorage.getItem('originalRole');
+    
+    // If we are impersonating, use the fake ID and Role. Otherwise, use the real ones.
+    const userId = localStorage.getItem('impersonatedUserId') || realUserId;
+    const role = localStorage.getItem('impersonatedRole') || localStorage.getItem('role');
+    const impersonatedName = localStorage.getItem('impersonatedName');
     
     // --- COMMON STATES ---
     const [courses, setCourses] = useState([]);
     const [applications, setApplications] = useState([]); 
+    const [systemUsers, setSystemUsers] = useState([]); 
 
     // --- STUDENT STATES ---
     const [studentTab, setStudentTab] = useState('dashboard');
@@ -19,15 +27,12 @@ const Dashboard = () => {
     const [fulfilledCourseCode, setFulfilledCourseCode] = useState('');
     const [fulfilledCredits, setFulfilledCredits] = useState('');
     const [fulfilledGrade, setFulfilledGrade] = useState('');
-    
     const [showUploader, setShowUploader] = useState(false);
     const [previewUrl, setPreviewUrl] = useState(null);
     const [uploadStatus, setUploadStatus] = useState('');
     const [uploadedFiles, setUploadedFiles] = useState([]); 
     const [submitStatus, setSubmitStatus] = useState('');
     const [myApplications, setMyApplications] = useState([]); 
-
-    // --- RESUBMIT STATES (The Pending Loop) ---
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
 
@@ -71,10 +76,21 @@ const Dashboard = () => {
         } catch (err) { console.error("Error fetching student apps", err); }
     }, [userId]);
 
+    const fetchSystemUsers = useCallback(async () => {
+        try {
+            const res = await axios.get('/api/users');
+            if (res.data.success) {
+                console.log("Users fetched from DB:", res.data.users); // 🔍 Debugging log!
+                setSystemUsers(res.data.users);
+            }
+        } catch (err) { console.error("Error fetching users. Is the backend route working?", err); }
+    }, []);
+
     useEffect(() => {
         if (role === 'student') { fetchCourses(); fetchMyApplications(); }
         if (role === 'reviewer' || role === 'superadmin') { fetchApplications(); }
-    }, [role, fetchCourses, fetchApplications, fetchMyApplications]);
+        if (role === 'superadmin' && !originalRole) { fetchSystemUsers(); }
+    }, [role, originalRole, fetchCourses, fetchApplications, fetchMyApplications, fetchSystemUsers]);
 
     // --- SMART AUDITOR LOGIC ---
     useEffect(() => {
@@ -105,19 +121,20 @@ const Dashboard = () => {
     // --- ACTIONS ---
     const handleLogout = () => { localStorage.clear(); navigate('/login'); };
 
-    const handleImpersonate = (newRole) => {
+    const handleImpersonateSpecificUser = (user) => {
         localStorage.setItem('originalRole', 'superadmin');
-        localStorage.setItem('role', newRole);
+        localStorage.setItem('impersonatedRole', user.role);
+        localStorage.setItem('impersonatedUserId', user.id);
+        localStorage.setItem('impersonatedName', user.name);
         window.location.reload();
     };
 
     const stopImpersonation = () => {
-        const original = localStorage.getItem('originalRole');
-        if (original) {
-            localStorage.setItem('role', original);
-            localStorage.removeItem('originalRole');
-            window.location.reload();
-        }
+        localStorage.removeItem('originalRole');
+        localStorage.removeItem('impersonatedRole');
+        localStorage.removeItem('impersonatedUserId');
+        localStorage.removeItem('impersonatedName');
+        window.location.reload();
     };
 
     const handleUpdateStatus = async (appId, newStatus) => {
@@ -138,7 +155,7 @@ const Dashboard = () => {
         } catch (err) { alert("Download failed."); }
     };
 
-    // --- REVIEWER DECISION & FEEDBACK LOGIC ---
+    // --- REVIEWER DECISION LOGIC ---
     const submitReviewerDecision = async () => {
         if (!reviewerNote.trim() && feedbackModal.type !== 'approved') return alert("A rationale note is mandatory.");
         try {
@@ -157,7 +174,7 @@ const Dashboard = () => {
         if (imgRef.current && canvasRef.current) {
             const canvas = canvasRef.current;
             canvas.width = imgRef.current.clientWidth; canvas.height = imgRef.current.clientHeight;
-            const context = canvas.getContext('2d'); context.lineCap = 'round'; setCtx(context);
+            setCtx(canvas.getContext('2d'));
         }
     };
 
@@ -184,9 +201,7 @@ const Dashboard = () => {
     };
 
     const handleSubmitApplication = async () => {
-        if (!fulfilledCourse || selectedCourses.length === 0 || uploadedFiles.length === 0) {
-            return setSubmitStatus('❌ Complete all fields and upload evidence.');
-        }
+        if (!fulfilledCourse || selectedCourses.length === 0 || uploadedFiles.length === 0) return setSubmitStatus('❌ Complete all fields and upload evidence.');
         try {
             setSubmitStatus('⏳ Submitting request...');
             const response = await axios.post('/api/applications', {
@@ -203,7 +218,6 @@ const Dashboard = () => {
         } catch (err) { setSubmitStatus('❌ Submission failed.'); }
     };
 
-    // --- RESUBMIT LOGIC (Pending Loop) ---
     const handleResubmitFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -223,19 +237,15 @@ const Dashboard = () => {
         if (resubmitFiles.length === 0) return alert("Please attach the requested missing information before resubmitting.");
         try {
             setUploadStatus('⏳ Sending back to reviewer...');
-            const res = await axios.put(`/api/applications/${resubmitModal.app.id}/resubmit`, {
-                new_files: resubmitFiles.join(',')
-            });
+            const res = await axios.put(`/api/applications/${resubmitModal.app.id}/resubmit`, { new_files: resubmitFiles.join(',') });
             if (res.data.success) {
                 alert("🎉 Successfully returned to Reviewer!");
                 setResubmitModal({ isOpen: false, app: null });
-                setResubmitFiles([]); setUploadStatus('');
-                fetchMyApplications(); 
+                setResubmitFiles([]); setUploadStatus(''); fetchMyApplications(); 
             }
         } catch (err) { setUploadStatus('❌ Failed to resubmit.'); }
     };
 
-    // --- REVIEWER TAB FILTERING ---
     const pendingApps = applications.filter(a => a.status === 'pending');
     const needsInfoApps = applications.filter(a => a.status === 'needs_info');
     const completedApps = applications.filter(a => a.status === 'approved' || a.status === 'rejected');
@@ -244,11 +254,10 @@ const Dashboard = () => {
     return (
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif' }}>
             
-            {/* SAFETY BANNER */}
-            {localStorage.getItem('originalRole') && (
-                <div style={{ backgroundColor: '#ffc107', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px' }}>
-                    ⚠️ VIEWING AS {role.toUpperCase()}
-                    <button onClick={stopImpersonation} style={{ marginLeft: '20px', cursor: 'pointer', padding: '5px 10px', fontWeight: 'bold' }}>Return to Admin</button>
+            {originalRole && (
+                <div style={{ backgroundColor: '#ffc107', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
+                    <span>⚠️ GOD MODE: You are actively impersonating <strong>{impersonatedName}</strong> ({role.toUpperCase()})</span>
+                    <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>End Impersonation</button>
                 </div>
             )}
 
@@ -258,16 +267,57 @@ const Dashboard = () => {
             </div>
 
             {/* --- SUPER ADMIN VIEW --- */}
-            {role === 'superadmin' && !localStorage.getItem('originalRole') && (
+            {role === 'superadmin' && !originalRole && (
                 <div style={{ marginTop: '30px' }}>
-                    <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px' }}>
-                        <h3 style={{ marginTop: 0 }}>👤 Audit Controls</h3>
-                        <button onClick={() => handleImpersonate('student')} style={{ padding: '10px 20px', marginRight: '10px', cursor: 'pointer', backgroundColor: '#004085', color: 'white', border: 'none', borderRadius: '4px' }}>Audit as Student</button>
-                        <button onClick={() => handleImpersonate('reviewer')} style={{ padding: '10px 20px', cursor: 'pointer', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px' }}>Audit as Reviewer</button>
+                    
+                    {/* DROPDOWN IMPERSONATION UI */}
+                    <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed #004085' }}>
+                        <h2 style={{ marginTop: 0, color: '#004085' }}>🎭 Impersonate User</h2>
+                        <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>Select a specific user from the dropdowns below to instantly log in as them.</p>
+                        
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
+                            
+                            {/* STUDENT DROPDOWN */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                                <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>👨‍🎓 Impersonate Student</label>
+                                <select 
+                                    onChange={(e) => {
+                                        if (e.target.value) handleImpersonateSpecificUser(JSON.parse(e.target.value));
+                                    }}
+                                    style={{ padding: '10px', width: '250px', border: '1px solid #004085', borderRadius: '5px', cursor: 'pointer', fontSize: '14px' }}
+                                >
+                                    <option value="">-- Choose a Student --</option>
+                                    {systemUsers.filter(u => u.role === 'student').map(user => (
+                                        <option key={user.id} value={JSON.stringify(user)}>
+                                            {user.name} ({user.email})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            {/* REVIEWER DROPDOWN */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                                <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>👨‍🏫 Impersonate Reviewer</label>
+                                <select 
+                                    onChange={(e) => {
+                                        if (e.target.value) handleImpersonateSpecificUser(JSON.parse(e.target.value));
+                                    }}
+                                    style={{ padding: '10px', width: '250px', border: '1px solid #28a745', borderRadius: '5px', cursor: 'pointer', fontSize: '14px' }}
+                                >
+                                    <option value="">-- Choose a Reviewer --</option>
+                                    {systemUsers.filter(u => u.role === 'reviewer').map(user => (
+                                        <option key={user.id} value={JSON.stringify(user)}>
+                                            {user.name} ({user.email})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                        </div>
                     </div>
 
                     <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
-                        <h2 style={{ marginTop: 0, color: '#003d7c' }}>🛡️ Admin Overrides</h2>
+                        <h2 style={{ marginTop: 0, color: '#003d7c' }}>🛡️ Admin Application Overrides</h2>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ backgroundColor: '#003d7c', color: 'white' }}>
@@ -277,7 +327,9 @@ const Dashboard = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {applications.map(app => (
+                                {applications.length === 0 ? (
+                                    <tr><td colSpan="3" style={{ textAlign: 'center', padding: '20px' }}>No applications in system yet.</td></tr>
+                                ) : applications.map(app => (
                                     <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
                                         <td style={{ padding: '12px' }}>{app.student_name}</td>
                                         <td style={{ padding: '12px', textAlign: 'center' }}><span style={{ fontWeight: 'bold', color: app.status === 'approved' ? 'green' : app.status === 'rejected' ? 'red' : 'orange' }}>{app.status.toUpperCase()}</span></td>
@@ -307,7 +359,6 @@ const Dashboard = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
                         <thead>
                             <tr style={{ backgroundColor: '#28a745', color: 'white' }}>
-                                {/* Clean 5-Column Layout */}
                                 <th style={{ padding: '10px', textAlign: 'left' }}>Student</th>
                                 <th style={{ padding: '10px', textAlign: 'left' }}>Fulfilled Course</th>
                                 <th style={{ padding: '10px', textAlign: 'left' }}>Target Course</th>
@@ -320,40 +371,19 @@ const Dashboard = () => {
                                 <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>No applications in this category.</td></tr>
                             ) : activeReviewerApps.map(app => (
                                 <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
-                                    
                                     <td style={{ padding: '10px' }}><strong>{app.student_name}</strong></td>
                                     <td style={{ padding: '10px', fontWeight: 'bold', color: '#004085' }}>{app.fulfilled_course}</td>
                                     <td style={{ padding: '10px' }}>{app.pte_course_name}</td>
-                                    
-                                   <td style={{ padding: '10px', textAlign: 'center' }}>
-    <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-        {app.syllabus_file && app.syllabus_file.split(',').map((file, idx) => (
-            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '1px solid #ddd', padding: '5px', borderRadius: '6px', backgroundColor: '#f8f9fa', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                
-                {/* 📸 The Clickable Image */}
-                <img 
-                    src={`http://localhost:9000/transcripts/${file}`} 
-                    alt={`Proof ${idx+1}`} 
-                    onClick={() => window.open(`http://localhost:9000/transcripts/${file}`, '_blank')}
-                    title="Click to view full size"
-                    style={{ 
-                        width: '50px', height: '50px', objectFit: 'cover', border: '1px solid #ccc', 
-                        borderRadius: '4px', cursor: 'pointer' 
-                    }} 
-                />
-                
-                {/* 📥 The Download Button */}
-                <button 
-                    onClick={() => handleDownload(file)} 
-                    title="Download File" 
-                    style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}
-                >
-                    📥
-                </button>
-            </div>
-        ))}
-    </div>
-</td>
+                                    <td style={{ padding: '10px', textAlign: 'center' }}>
+                                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                            {app.syllabus_file && app.syllabus_file.split(',').map((file, idx) => (
+                                                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '1px solid #ddd', padding: '5px', borderRadius: '6px', backgroundColor: '#f8f9fa', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                                                    <img src={`http://localhost:9000/transcripts/${file}`} alt={`Proof ${idx+1}`} onClick={() => window.open(`http://localhost:9000/transcripts/${file}`, '_blank')} title="Click to view full size" style={{ width: '50px', height: '50px', objectFit: 'cover', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }} />
+                                                    <button onClick={() => handleDownload(file)} title="Download File" style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </td>
                                     <td style={{ padding: '10px', textAlign: 'center' }}>
                                         {reviewerTab !== 'completed' ? (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>

@@ -1,48 +1,61 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 const Login = () => {
-    const [email, setEmail] = useState('');
+    const [email, setEmail] = useState(''); // Changed from username to email
     const [password, setPassword] = useState('');
-    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
     const navigate = useNavigate();
 
     const handleLogin = async (e) => {
         e.preventDefault();
         try {
-            const response = await axios.post('/api/login', { email, password });
-            localStorage.setItem('token', response.data.token);
-            localStorage.setItem('role', response.data.user.role);
-
-            setMessage('✅ Login Successful! Redirecting...');
-            setTimeout(() => {
+            // Sending 'email' to match the backend
+            const res = await axios.post('/api/login', { email, password });
+            if (res.data.success) {
+                localStorage.setItem('token', res.data.token);
+                localStorage.setItem('role', res.data.role);
                 navigate('/dashboard');
-            }, 1000);
-        } catch (error) {
-            setMessage('❌ Login Failed: ' + (error.response?.data?.error || 'Server error'));
+            }
+        } catch (err) {
+            setError(err.response?.data?.error || 'Login failed. Please try again.');
         }
     };
 
     return (
-        <div style={{ maxWidth: '400px', margin: '80px auto', border: '1px solid #ddd', borderRadius: '10px', textAlign: 'center', backgroundColor: '#fff', overflow: 'hidden', boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-
-
-            <div style={{ padding: '20px' }}>
-                <h2 style={{ marginTop: '0', color: '#003d7c' }}>Portal Login</h2>
-                <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
-                    <input type="email" placeholder="Email (e.g. admin@example.com)" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }} />
-                    <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }} />
-                    <button type="submit" style={{ padding: '12px', backgroundColor: '#003d7c', color: 'white', border: 'none', cursor: 'pointer', borderRadius: '5px', fontWeight: 'bold', fontSize: '16px' }}>
-                        Log In
-                    </button>
-                </form>
-                {message && <p style={{ marginTop: '20px', fontWeight: 'bold' }}>{message}</p>}
-                
-                <div style={{ marginTop: '15px' }}>
-                    <p>New student? <Link to="/register" style={{ color: '#003d7c', fontWeight: 'bold' }}>Register here</Link></p>
+        <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
+            <h2 style={{ textAlign: 'center', color: '#003d7c' }}>University Portal Login</h2>
+            {error && <p style={{ color: 'red', textAlign: 'center', fontWeight: 'bold' }}>{error}</p>}
+            
+            <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div>
+                    <label style={{ fontWeight: 'bold' }}>Email Address</label>
+                    <input 
+                        type="email" 
+                        value={email} 
+                        onChange={(e) => setEmail(e.target.value)} 
+                        required 
+                        style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px' }} 
+                    />
                 </div>
-            </div>
+                <div>
+                    <label style={{ fontWeight: 'bold' }}>Password</label>
+                    <input 
+                        type="password" 
+                        value={password} 
+                        onChange={(e) => setPassword(e.target.value)} 
+                        required 
+                        style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px' }} 
+                    />
+                </div>
+                <button type="submit" style={{ padding: '10px', backgroundColor: '#004085', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                    Log In
+                </button>
+            </form>
+            <p style={{ textAlign: 'center', marginTop: '15px' }}>
+                Don't have an account? <a href="/register" style={{ color: '#004085', fontWeight: 'bold' }}>Register here</a>
+            </p>
         </div>
     );
 };
