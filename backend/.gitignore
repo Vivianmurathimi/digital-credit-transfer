@@ -1,0 +1,8 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (NEVER PUSH THIS TO GITHUB)
+.env
+
+# Optional npm logs
+npm-debug.log*
