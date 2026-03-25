@@ -44,5 +44,25 @@ router.put('/applications/:id/status', async (req, res) => {
         res.status(500).json({ error: "Update failed" });
     }
 });
-
+router.put('/applications/:id/resubmit', async (req, res) => {
+    const { id } = req.params;
+    const { new_files } = req.body;
+    try {
+        // 1. Get the current files the student already uploaded
+        const current = await pool.query('SELECT syllabus_file FROM applications WHERE id = $1', [id]);
+        
+        // 2. Append the new missing files to the old ones
+        const updatedFiles = current.rows[0].syllabus_file 
+            ? current.rows[0].syllabus_file + ',' + new_files 
+            : new_files;
+            
+        // 3. Force the status back to 'pending' so the Reviewer sees it again!
+        await pool.query("UPDATE applications SET status = 'pending', syllabus_file = $1 WHERE id = $2", [updatedFiles, id]);
+        
+        res.json({ success: true });
+    } catch (err) { 
+        console.error("❌ Resubmit error:", err.message);
+        res.status(500).json({ error: "Resubmit failed" }); 
+    }
+});
 module.exports = router;

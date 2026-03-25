@@ -9,7 +9,7 @@ function App() {
     <Router>
       <div className="App">
         <header style={{ backgroundColor: '#003d7c', padding: '20px', color: 'white', textAlign: 'center' }}>
-          <h1>PTE Digital Credit Transfer</h1>
+          <h1>PTE Credit Transfer</h1>
         </header>
         
         <main>

@@ -23,7 +23,7 @@ const StudentDashboard = ({ userId }) => {
     const [myApplications, setMyApplications] = useState([]); 
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
-    const [isNoteExpanded, setIsNoteExpanded] = useState(false); // 🆕 For the "See More" toggle
+    const [isNoteExpanded, setIsNoteExpanded] = useState(false);
 
     // --- SMART AUDITOR STATES ---
     const [evidenceRequiredMsg, setEvidenceRequiredMsg] = useState('');
@@ -184,7 +184,7 @@ const StudentDashboard = ({ userId }) => {
             if (res.data.success) {
                 alert("🎉 Successfully returned to Reviewer!");
                 setResubmitModal({ isOpen: false, app: null });
-                setIsNoteExpanded(false); // Reset toggle
+                setIsNoteExpanded(false); 
                 setResubmitFiles([]); 
                 setUploadStatus(''); 
                 fetchMyApplications(); 
@@ -220,7 +220,6 @@ const StudentDashboard = ({ userId }) => {
                                 <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
                                     <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.fulfilled_course}</td>
                                     
-                                    {/* Mapped Courses Bulleted List */}
                                     <td style={{ padding: '12px', color: '#004085', verticalAlign: 'top' }}>
                                         <ul style={{ margin: 0, paddingLeft: '15px', listStyleType: 'disc' }}>
                                             {app.pte_course_names ? app.pte_course_names.split(' + ').map((courseName, idx) => (
@@ -270,6 +269,10 @@ const StudentDashboard = ({ userId }) => {
                             </p>
                         </div>
 
+                        {/* 🆕 CLEAR INSTRUCTIONS FOR RESUBMISSION */}
+                        <label style={{ fontWeight: 'bold', color: '#004085', display: 'block', marginBottom: '8px', marginTop: '10px' }}>
+                            📎 Add the syllabus to support your proof of completion of work:
+                        </label>
                         <input type="file" onChange={handleResubmitFileUpload} style={{ marginBottom: '15px' }} />
                         {uploadStatus && <p style={{ color: '#004085', fontWeight: 'bold', marginBottom: '10px' }}>{uploadStatus}</p>}
                         
