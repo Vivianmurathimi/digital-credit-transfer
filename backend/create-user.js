@@ -8,7 +8,7 @@ const createFirstUser = async () => {
     
     // The SQL command to insert data. The $1, $2 are placeholders for security!
     const insertQuery = `
-        INSERT INTO users (full_name, email, password, role) 
+        INSERT INTO users (name, email, password, role) 
         VALUES ($1, $2, $3, $4) 
         RETURNING *;
     `;

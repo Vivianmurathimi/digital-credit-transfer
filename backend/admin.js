@@ -12,7 +12,7 @@ async function crownAdmin() {
         console.log('✅ Database connected.');
 
         const result = await pool.query(
-            "UPDATE users SET role = 'superadmin' WHERE email = $1 RETURNING full_name, email, role",
+            "UPDATE users SET role = 'superadmin' WHERE email = $1 RETURNING name, email, role",
             [adminEmail]
         );
 

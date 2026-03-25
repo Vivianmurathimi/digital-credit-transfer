@@ -20,7 +20,7 @@ const resetApplicationsTable = async () => {
                 fulfilled_grade VARCHAR(50) NOT NULL,
                 
                 -- Target Course Reference
-                pte_course_id INTEGER REFERENCES courses(id),
+                pte_course_names TEXT,
                 
                 -- Evidence (Upgraded to TEXT to allow multiple files)
                 syllabus_file TEXT NOT NULL,

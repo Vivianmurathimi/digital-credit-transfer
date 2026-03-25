@@ -13,19 +13,19 @@ async function setupUsers() {
 
         // 1. Student (All values passed safely in the array)
         await pool.query(
-            `INSERT INTO users (full_name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
             ['Alex Student', 'student@example.com', hashedPassword, 'student']
         );
 
         // 2. Reviewer
         await pool.query(
-            `INSERT INTO users (full_name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
             ['Professor Smith', 'reviewer@example.com', hashedPassword, 'reviewer']
         );
 
         // 3. Super Admin
         await pool.query(
-            `INSERT INTO users (full_name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
             ['Chief Admin', 'admin@example.com', hashedPassword, 'superadmin']
         );
 
