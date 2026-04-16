@@ -8,9 +8,11 @@ const SuperAdminDashboard = () => {
     const [studentSearch, setStudentSearch] = useState('');
     const [reviewerSearch, setReviewerSearch] = useState('');
     
-    // 🆕 NEW STATES: Controls when the floating lists are visible
     const [showStudentDropdown, setShowStudentDropdown] = useState(false);
     const [showReviewerDropdown, setShowReviewerDropdown] = useState(false);
+
+    // Master Switch State
+    const [isSystemOpen, setIsSystemOpen] = useState(true);
 
     const fetchSystemUsers = useCallback(async () => {
         try {
@@ -18,24 +20,28 @@ const SuperAdminDashboard = () => {
             if (res.data.success) {
                 setSystemUsers(res.data.users);
             }
-        } catch (err) { 
-            console.error("Error fetching users", err); 
-        }
+        } catch (err) { console.error("Error fetching users", err); }
     }, []);
 
     const fetchApplications = useCallback(async () => {
         try {
             const res = await axios.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
-        } catch (err) { 
-            console.error("Error fetching apps", err); 
-        }
+        } catch (err) { console.error("Error fetching apps", err); }
+    }, []);
+
+    const fetchSystemStatus = useCallback(async () => {
+        try {
+            const res = await axios.get('/api/settings/status');
+            if (res.data.success) setIsSystemOpen(res.data.isOpen);
+        } catch (err) { console.error("Error fetching system status", err); }
     }, []);
 
     useEffect(() => {
         fetchSystemUsers();
         fetchApplications();
-    }, [fetchSystemUsers, fetchApplications]);
+        fetchSystemStatus();
+    }, [fetchSystemUsers, fetchApplications, fetchSystemStatus]);
 
     const handleImpersonateSpecificUser = (user) => {
         localStorage.setItem('originalRole', 'superadmin');
@@ -47,70 +53,71 @@ const SuperAdminDashboard = () => {
 
     const handleUpdateStatus = async (appId, newStatus) => {
         try {
-            const res = await axios.put(`/api/applications/${appId}/status`, { 
-                status: newStatus, 
-                note: 'System Override by Super Admin' 
-            });
+            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: 'System Override by Super Admin' });
             if (res.data.success) { 
                 alert(`Status successfully forced to ${newStatus}!`); 
                 fetchApplications(); 
             }
-        } catch (err) { 
-            alert("Update failed."); 
+        } catch (err) { alert("Update failed."); }
+    };
+
+    const handleToggleSystem = async () => {
+        const confirmMsg = isSystemOpen 
+            ? "Are you sure you want to CLOSE the credit transfer window? Students will be locked out." 
+            : "Are you sure you want to OPEN the credit transfer window for late submissions?";
+        
+        if (window.confirm(confirmMsg)) {
+            try {
+                const res = await axios.put('/api/settings/toggle', { isOpen: !isSystemOpen });
+                if (res.data.success) setIsSystemOpen(res.data.isOpen);
+            } catch (err) { alert("Failed to toggle system."); }
         }
     };
 
     const filteredStudents = systemUsers.filter(u => 
-        u.role === 'student' && 
-        (u.name.toLowerCase().includes(studentSearch.toLowerCase()) || 
-         u.email.toLowerCase().includes(studentSearch.toLowerCase()))
+        u.role === 'student' && (u.name.toLowerCase().includes(studentSearch.toLowerCase()) || u.email.toLowerCase().includes(studentSearch.toLowerCase()))
     );
 
     const filteredReviewers = systemUsers.filter(u => 
-        u.role === 'reviewer' && 
-        (u.name.toLowerCase().includes(reviewerSearch.toLowerCase()) || 
-         u.email.toLowerCase().includes(reviewerSearch.toLowerCase()))
+        u.role === 'reviewer' && (u.name.toLowerCase().includes(reviewerSearch.toLowerCase()) || u.email.toLowerCase().includes(reviewerSearch.toLowerCase()))
     );
 
     return (
         <div style={{ marginTop: '10px' }}>
             
+            {/* 🛑 CLEANER MASTER SYSTEM SWITCH */}
+            <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid #ccc', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+                <div>
+                    <h2 style={{ margin: 0, color: isSystemOpen ? '#28a745' : '#dc3545' }}>
+                        {isSystemOpen ? '🟢 Submission Window: OPEN' : '🔴 Submission Window: CLOSED'}
+                    </h2>
+                    <p style={{ margin: '5px 0 0 0', color: '#555' }}>
+                        {isSystemOpen ? 'Students can currently submit new credit transfer packages.' : 'The system is locked. Students cannot submit new applications.'}
+                    </p>
+                </div>
+                <button onClick={handleToggleSystem} style={{ padding: '12px 20px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: isSystemOpen ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '5px' }}>
+                    {isSystemOpen ? '🔒 Lock System (Close Window)' : '🔓 Unlock System (Allow Late Submissions)'}
+                </button>
+            </div>
+
             {/* 🎭 IMPERSONATION PANEL */}
             <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed #004085' }}>
                 <h2 style={{ marginTop: 0, color: '#004085' }}>🎭 Impersonate User</h2>
                 <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>Type a name or email to instantly filter and select a user.</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
-                    
-                    {/* 🆕 MODERN AUTOCOMPLETE: STUDENT */}
+                    {/* STUDENT AUTOCOMPLETE */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
                         <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>👨‍🎓 Impersonate Student</label>
-                        
                         <input 
-                            type="text" 
-                            placeholder="🔍 Search or choose..." 
-                            value={studentSearch}
-                            onChange={(e) => setStudentSearch(e.target.value)}
-                            onFocus={() => setShowStudentDropdown(true)}
-                            // We use a tiny delay on blur so the user's click registers before the list vanishes!
-                            onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
+                            type="text" placeholder="🔍 Search or choose..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid #004085', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
-
-                        {/* Floating Dropdown List */}
                         {showStudentDropdown && (
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #004085', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-                                {filteredStudents.length === 0 ? (
-                                    <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No students found.</div>
-                                ) : (
+                                {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No students found.</div> : (
                                     filteredStudents.map(user => (
-                                        <div 
-                                            key={user.id}
-                                            onClick={() => handleImpersonateSpecificUser(user)}
-                                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f8ff'}
-                                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'}
-                                            style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left', transition: 'background-color 0.2s' }}
-                                        >
+                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f8ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: '#004085', fontSize: '14px' }}>{user.name}</div>
                                             <div style={{ color: '#666', fontSize: '11px' }}>{user.email}</div>
                                         </div>
@@ -120,34 +127,18 @@ const SuperAdminDashboard = () => {
                         )}
                     </div>
 
-                    {/* 🆕 MODERN AUTOCOMPLETE: REVIEWER */}
+                    {/* REVIEWER AUTOCOMPLETE */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
                         <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>👨‍🏫 Impersonate Reviewer</label>
-                        
                         <input 
-                            type="text" 
-                            placeholder="🔍 Search or choose..." 
-                            value={reviewerSearch}
-                            onChange={(e) => setReviewerSearch(e.target.value)}
-                            onFocus={() => setShowReviewerDropdown(true)}
-                            onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
+                            type="text" placeholder="🔍 Search or choose..." value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid #28a745', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
-
-                        {/* Floating Dropdown List */}
                         {showReviewerDropdown && (
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #28a745', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-                                {filteredReviewers.length === 0 ? (
-                                    <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No reviewers found.</div>
-                                ) : (
+                                {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No reviewers found.</div> : (
                                     filteredReviewers.map(user => (
-                                        <div 
-                                            key={user.id}
-                                            onClick={() => handleImpersonateSpecificUser(user)}
-                                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e2f0d9'}
-                                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'}
-                                            style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left', transition: 'background-color 0.2s' }}
-                                        >
+                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e2f0d9'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: '#155724', fontSize: '14px' }}>{user.name}</div>
                                             <div style={{ color: '#666', fontSize: '11px' }}>{user.email}</div>
                                         </div>
@@ -156,7 +147,6 @@ const SuperAdminDashboard = () => {
                             </div>
                         )}
                     </div>
-
                 </div>
             </div>
 

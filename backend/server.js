@@ -12,6 +12,8 @@ const dataRoutes = require('./routes/data');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 
+const settingsRoutes = require('./routes/settings');
+
 const app = express();
 
 // Middleware
@@ -38,6 +40,7 @@ app.use('/api', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', applicationRoutes);
 app.use('/', uploadRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Start Server
 const PORT = process.env.PORT || 5000;
