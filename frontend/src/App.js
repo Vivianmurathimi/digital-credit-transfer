@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Register from './components/Register';
+import VerifyEmail from './components/VerifyEmail';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/verify/:token" element={<VerifyEmail />} />
             
             {/* THIS is the line that uses Navigate! It fixes the blank screen. */}
             <Route path="/" element={<Navigate to="/login" />} />
