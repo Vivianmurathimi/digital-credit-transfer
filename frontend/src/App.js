@@ -4,6 +4,8 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Register from './components/Register';
 import VerifyEmail from './components/VerifyEmail';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 
 function App() {
   return (
@@ -19,6 +21,8 @@ function App() {
             <Route path="/register" element={<Register />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/verify/:token" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
             
             {/* THIS is the line that uses Navigate! It fixes the blank screen. */}
             <Route path="/" element={<Navigate to="/login" />} />
