@@ -56,7 +56,12 @@ const Login = () => {
             <p style={{ textAlign: 'center', marginTop: '15px' }}>
                 Don't have an account? <a href="/register" style={{ color: '#004085', fontWeight: 'bold' }}>Register here</a>
             </p>
+            <div style={{ textAlign: 'center', marginTop: '-10px', marginBottom: '10px' }}>
+                <a href="/forgot-password" style={{ fontSize: '13px', color: '#004085', textDecoration: 'none' }}>Forgot Password?</a>
+            </div>
         </div>
+        
+        
     );
 };
 
