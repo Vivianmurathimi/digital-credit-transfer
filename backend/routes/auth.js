@@ -29,7 +29,7 @@ router.post('/register', async (req, res) => {
 
         if (lowerEmail.endsWith('@mik.pte.hu')) assignedRole = 'reviewer';
         else if (lowerEmail.endsWith('@tr.pte.hu')) assignedRole = 'student';
-        else if (lowerEmail.endsWith('@admin.pte.hu')) assignedRole = 'superadmin';
+        else if (lowerEmail.endsWith('@adminisztracio.pte.hu')) assignedRole = 'superadmin';
         else return res.status(400).json({ error: "Invalid domain. Use @mik or @tr email." });
 
         const salt = await bcrypt.genSalt(10);

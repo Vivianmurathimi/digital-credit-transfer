@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useTranslation } from 'react-i18next';
 
 const SuperAdminDashboard = () => {
+    const { t } = useTranslation();
     const [systemUsers, setSystemUsers] = useState([]);
     const [applications, setApplications] = useState([]);
 
@@ -11,7 +13,6 @@ const SuperAdminDashboard = () => {
     const [showStudentDropdown, setShowStudentDropdown] = useState(false);
     const [showReviewerDropdown, setShowReviewerDropdown] = useState(false);
 
-    // Master Switch State
     const [isSystemOpen, setIsSystemOpen] = useState(true);
 
     const fetchSystemUsers = useCallback(async () => {
@@ -20,21 +21,21 @@ const SuperAdminDashboard = () => {
             if (res.data.success) {
                 setSystemUsers(res.data.users);
             }
-        } catch (err) { console.error("Error fetching users", err); }
+        } catch (err) { console.error('Error fetching users', err); }
     }, []);
 
     const fetchApplications = useCallback(async () => {
         try {
             const res = await axios.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
-        } catch (err) { console.error("Error fetching apps", err); }
+        } catch (err) { console.error('Error fetching apps', err); }
     }, []);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
             const res = await axios.get('/api/settings/status');
             if (res.data.success) setIsSystemOpen(res.data.isOpen);
-        } catch (err) { console.error("Error fetching system status", err); }
+        } catch (err) { console.error('Error fetching system status', err); }
     }, []);
 
     useEffect(() => {
@@ -53,24 +54,24 @@ const SuperAdminDashboard = () => {
 
     const handleUpdateStatus = async (appId, newStatus) => {
         try {
-            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: 'System Override by Super Admin' });
+            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
             if (res.data.success) { 
-                alert(`Status successfully forced to ${newStatus}!`); 
+                alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 
             }
-        } catch (err) { alert("Update failed."); }
+        } catch (err) { alert(t('superadmin_update_failed')); }
     };
 
     const handleToggleSystem = async () => {
         const confirmMsg = isSystemOpen 
-            ? "Are you sure you want to CLOSE the credit transfer window? Students will be locked out." 
-            : "Are you sure you want to OPEN the credit transfer window for late submissions?";
+            ? t('superadmin_confirm_close') 
+            : t('superadmin_confirm_open');
         
         if (window.confirm(confirmMsg)) {
             try {
                 const res = await axios.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
-            } catch (err) { alert("Failed to toggle system."); }
+            } catch (err) { alert(t('superadmin_toggle_failed')); }
         }
     };
 
@@ -84,38 +85,34 @@ const SuperAdminDashboard = () => {
 
     return (
         <div style={{ marginTop: '10px' }}>
-            
-            {/* 🛑 CLEANER MASTER SYSTEM SWITCH */}
             <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid #ccc', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
                 <div>
                     <h2 style={{ margin: 0, color: isSystemOpen ? '#28a745' : '#dc3545' }}>
-                        {isSystemOpen ? '🟢 Submission Window: OPEN' : '🔴 Submission Window: CLOSED'}
+                        {isSystemOpen ? t('superadmin_window_open') : t('superadmin_window_closed')}
                     </h2>
                     <p style={{ margin: '5px 0 0 0', color: '#555' }}>
-                        {isSystemOpen ? 'Students can currently submit new credit transfer packages.' : 'The system is locked. Students cannot submit new applications.'}
+                        {isSystemOpen ? t('superadmin_window_open_body') : t('superadmin_window_closed_body')}
                     </p>
                 </div>
                 <button onClick={handleToggleSystem} style={{ padding: '12px 20px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: isSystemOpen ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '5px' }}>
-                    {isSystemOpen ? '🔒 Lock System (Close Window)' : '🔓 Unlock System (Allow Late Submissions)'}
+                    {isSystemOpen ? t('superadmin_lock_system') : t('superadmin_unlock_system')}
                 </button>
             </div>
 
-            {/* 🎭 IMPERSONATION PANEL */}
             <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed #004085' }}>
-                <h2 style={{ marginTop: 0, color: '#004085' }}>🎭 Impersonate User</h2>
-                <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>Type a name or email to instantly filter and select a user.</p>
+                <h2 style={{ marginTop: 0, color: '#004085' }}>{t('superadmin_impersonate_title')}</h2>
+                <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
-                    {/* STUDENT AUTOCOMPLETE */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>👨‍🎓 Impersonate Student</label>
+                        <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
                         <input 
-                            type="text" placeholder="🔍 Search or choose..." value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
+                            type="text" placeholder={t('superadmin_search_placeholder')} value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid #004085', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
                         {showStudentDropdown && (
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #004085', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-                                {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No students found.</div> : (
+                                {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_students')}</div> : (
                                     filteredStudents.map(user => (
                                         <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f8ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: '#004085', fontSize: '14px' }}>{user.name}</div>
@@ -127,16 +124,15 @@ const SuperAdminDashboard = () => {
                         )}
                     </div>
 
-                    {/* REVIEWER AUTOCOMPLETE */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>👨‍🏫 Impersonate Reviewer</label>
+                        <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
                         <input 
-                            type="text" placeholder="🔍 Search or choose..." value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
+                            type="text" placeholder={t('superadmin_search_placeholder')} value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid #28a745', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
                         {showReviewerDropdown && (
-                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #28a745', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-                                {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>No reviewers found.</div> : (
+                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #28a745', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4x 8px rgba(0,0,0,0.1)' }}>
+                                {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_reviewers')}</div> : (
                                     filteredReviewers.map(user => (
                                         <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e2f0d9'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: '#155724', fontSize: '14px' }}>{user.name}</div>
@@ -150,27 +146,26 @@ const SuperAdminDashboard = () => {
                 </div>
             </div>
 
-            {/* 🛡️ MASTER OVERRIDE TABLE */}
             <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
-                <h2 style={{ marginTop: 0, color: '#003d7c' }}>🛡️ Admin Application Overrides</h2>
+                <h2 style={{ marginTop: 0, color: '#003d7c' }}>{t('superadmin_application_overrides_title')}</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                         <tr style={{ backgroundColor: '#003d7c', color: 'white' }}>
-                            <th style={{ padding: '12px', textAlign: 'left' }}>Student</th>
-                            <th style={{ padding: '12px', textAlign: 'left' }}>Mapped Package</th>
-                            <th style={{ padding: '12px', textAlign: 'center' }}>Status</th>
-                            <th style={{ padding: '12px', textAlign: 'center' }}>Action</th>
+                            <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
+                            <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
+                            <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_action_column')}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {applications.length === 0 ? (
-                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>No applications in system yet.</td></tr>
+                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
                         ) : applications.map(app => (
                             <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '12px', fontWeight: 'bold' }}>{app.student_name}</td>
                                 <td style={{ padding: '12px', color: '#555', fontSize: '13px' }}>
                                     {app.pte_course_names && app.pte_course_names.length > 50 
-                                        ? app.pte_course_names.substring(0, 50) + '...' 
+                                        ? `${app.pte_course_names.substring(0, 50)}...` 
                                         : app.pte_course_names}
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center' }}>
@@ -181,12 +176,12 @@ const SuperAdminDashboard = () => {
                                         backgroundColor: app.status === 'approved' ? '#d4edda' : app.status === 'rejected' ? '#f8d7da' : '#fff3cd',
                                         color: app.status === 'approved' ? '#155724' : app.status === 'rejected' ? '#721c24' : '#856404' 
                                     }}>
-                                        {app.status.toUpperCase()}
+                                        {t(`status_${app.status}`)}
                                     </span>
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center' }}>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>🔄 Reset</button>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>🚀 Force Approve</button>
+                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
+                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
                                 </td>
                             </tr>
                         ))}

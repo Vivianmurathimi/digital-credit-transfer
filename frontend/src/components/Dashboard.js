@@ -1,15 +1,15 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 
-// Import our new sub-components!
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
 import SuperAdminDashboard from './SuperAdminDashboard';
 
 const Dashboard = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
     
-    // Universal Authentication & Role Logic
     const token = localStorage.getItem('token');
     if (!token) {
         navigate('/login');
@@ -38,26 +38,21 @@ const Dashboard = () => {
 
     return (
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif' }}>
-            
-            {/* ⚠️ UNIVERSAL GOD MODE BANNER */}
             {originalRole && (
                 <div style={{ backgroundColor: '#ffc107', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
-                    <span>⚠️ You are actively impersonating <strong>{impersonatedName}</strong> ({role.toUpperCase()})</span>
-                    <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>End Impersonation</button>
+                    <span>{t('impersonation_banner', { name: impersonatedName, role: t(`role_${role}`) })}</span>
+                    <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>{t('end_impersonation')}</button>
                 </div>
             )}
 
-            {/* UNIVERSAL HEADER */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #ddd', paddingBottom: '10px', marginBottom: '30px' }}>
-                <h1 style={{ color: '#003d7c', margin: 0 }}>University Portal</h1>
-                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>Log Out</button>
+                <h1 style={{ color: '#003d7c', margin: 0 }}>{t('dashboard_title')}</h1>
+                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
             </div>
 
-            {/* 🚦 THE TRAFFIC COP: Route to the correct dashboard based on role */}
             {role === 'superadmin' && !originalRole && <SuperAdminDashboard userId={userId} />}
             {role === 'reviewer' && <ReviewerDashboard />}
             {role === 'student' && <StudentDashboard userId={userId} />}
-
         </div>
     );
 };
