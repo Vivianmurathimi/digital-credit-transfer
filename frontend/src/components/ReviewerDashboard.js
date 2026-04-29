@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useTranslation } from 'react-i18next';
 
 const ReviewerDashboard = () => {
+    const { t } = useTranslation();
     const [applications, setApplications] = useState([]);
     const [reviewerTab, setReviewerTab] = useState('pending');
     const [feedbackModal, setFeedbackModal] = useState({ isOpen: false, appId: null, type: '' });
@@ -13,7 +15,7 @@ const ReviewerDashboard = () => {
             const res = await axios.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
         } catch (err) { 
-            console.error("Error fetching apps", err); 
+            console.error('Error fetching apps', err); 
         }
     }, []);
 
@@ -27,27 +29,35 @@ const ReviewerDashboard = () => {
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
-            link.href = url; link.download = fileName; 
-            document.body.appendChild(link); link.click(); document.body.removeChild(link);
-        } catch (err) { alert("Download failed."); }
+            link.href = url; link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (err) {
+            alert(t('reviewer_download_failed'));
+        }
     };
 
     const submitReviewerDecision = async () => {
         if (feedbackModal.type !== 'approved' && !reviewerNote.trim()) {
-            return alert("A rationale note is mandatory for Rejections and Requests for Info.");
+            return alert(t('reviewer_note_required'));
         }
         
         try {
-            setFeedbackUploadStatus('⏳ Submitting decision...');
-            const noteToSend = feedbackModal.type === 'approved' ? 'Approved automatically' : reviewerNote;
+            setFeedbackUploadStatus(t('reviewer_decision_submitting'));
+            const noteToSend = feedbackModal.type === 'approved' ? t('reviewer_confirm_approve_text') : reviewerNote;
             
             const res = await axios.put(`/api/applications/${feedbackModal.appId}/status`, { status: feedbackModal.type, note: noteToSend });
             if (res.data.success) {
-                alert(`Application marked as ${feedbackModal.type.toUpperCase()}`);
+                alert(t('reviewer_application_marked', { status: t(`status_${feedbackModal.type}`) }));
                 setFeedbackModal({ isOpen: false, appId: null, type: '' });
-                setReviewerNote(''); setFeedbackUploadStatus(''); fetchApplications(); 
+                setReviewerNote('');
+                setFeedbackUploadStatus('');
+                fetchApplications(); 
             }
-        } catch (err) { setFeedbackUploadStatus('❌ Failed to save decision.'); }
+        } catch (err) {
+            setFeedbackUploadStatus(t('reviewer_decision_failed'));
+        }
     };
 
     const pendingApps = applications.filter(a => a.status === 'pending');
@@ -55,29 +65,41 @@ const ReviewerDashboard = () => {
     const completedApps = applications.filter(a => a.status === 'approved' || a.status === 'rejected');
     const activeReviewerApps = reviewerTab === 'pending' ? pendingApps : reviewerTab === 'needs_info' ? needsInfoApps : completedApps;
 
+    const getModalTitle = () => {
+        if (feedbackModal.type === 'approved') return t('reviewer_confirm_title_approved');
+        if (feedbackModal.type === 'needs_info') return t('reviewer_confirm_title_needs_info');
+        return t('reviewer_confirm_title_rejected');
+    };
+
     return (
         <div style={{ backgroundColor: '#e2f0d9', padding: '20px', borderRadius: '10px' }}>
-            <h2 style={{ marginTop: 0, color: '#155724' }}>👨‍🏫 Administrative Review Board</h2>
+            <h2 style={{ marginTop: 0, color: '#155724' }}>{t('reviewer_title')}</h2>
             
             <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #c3e6cb', paddingBottom: '10px' }}>
-                <button onClick={() => setReviewerTab('pending')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'pending' ? '#fff' : 'transparent', color: '#155724' }}>🟡 Pending Review <span style={{ backgroundColor: '#ffc107', color: '#000', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{pendingApps.length}</span></button>
-                <button onClick={() => setReviewerTab('needs_info')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'needs_info' ? '#fff' : 'transparent', color: '#155724' }}>🟠 Pending (Need Info) <span style={{ backgroundColor: '#fd7e14', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{needsInfoApps.length}</span></button>
-                <button onClick={() => setReviewerTab('completed')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'completed' ? '#fff' : 'transparent', color: '#155724' }}>✅ Completed <span style={{ backgroundColor: '#28a745', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{completedApps.length}</span></button>
+                <button onClick={() => setReviewerTab('pending')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'pending' ? '#fff' : 'transparent', color: '#155724' }}>
+                    {t('reviewer_pending_tab')} <span style={{ backgroundColor: '#ffc107', color: '#000', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{pendingApps.length}</span>
+                </button>
+                <button onClick={() => setReviewerTab('needs_info')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'needs_info' ? '#fff' : 'transparent', color: '#155724' }}>
+                    {t('reviewer_needs_info_tab')} <span style={{ backgroundColor: '#fd7e14', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{needsInfoApps.length}</span>
+                </button>
+                <button onClick={() => setReviewerTab('completed')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'completed' ? '#fff' : 'transparent', color: '#155724' }}>
+                    {t('reviewer_completed_tab')} <span style={{ backgroundColor: '#28a745', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{completedApps.length}</span>
+                </button>
             </div>
 
             <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
                 <thead>
                     <tr style={{ backgroundColor: '#28a745', color: 'white' }}>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Student</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Fulfilled Course</th>
-                        <th style={{ padding: '10px', textAlign: 'left' }}>Mapped Target Courses</th>
-                        <th style={{ padding: '10px', textAlign: 'center' }}>Evidence</th>
-                        <th style={{ padding: '10px', textAlign: 'center' }}>Actions</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>{t('reviewer_student')}</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>{t('reviewer_fulfilled_course')}</th>
+                        <th style={{ padding: '10px', textAlign: 'left' }}>{t('reviewer_target_courses')}</th>
+                        <th style={{ padding: '10px', textAlign: 'center' }}>{t('reviewer_evidence')}</th>
+                        <th style={{ padding: '10px', textAlign: 'center' }}>{t('reviewer_actions')}</th>
                     </tr>
                 </thead>
                 <tbody>
                     {activeReviewerApps.length === 0 ? (
-                        <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>No applications in this category.</td></tr>
+                        <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>{t('reviewer_no_apps')}</td></tr>
                     ) : activeReviewerApps.map(app => (
                         <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
                             <td style={{ padding: '10px', verticalAlign: 'top' }}><strong>{app.student_name}</strong></td>
@@ -86,15 +108,15 @@ const ReviewerDashboard = () => {
                                 <ul style={{ margin: 0, paddingLeft: '15px', listStyleType: 'disc' }}>
                                     {app.pte_course_names ? app.pte_course_names.split(' + ').map((courseName, idx) => (
                                         <li key={idx} style={{ marginBottom: '5px' }}>{courseName}</li>
-                                    )) : <li>No courses listed</li>}
+                                    )) : <li>{t('reviewer_no_courses_listed')}</li>}
                                 </ul>
                             </td>
                             <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
                                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
                                     {app.syllabus_file && app.syllabus_file.split(',').map((file, idx) => (
                                         <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '1px solid #ddd', padding: '5px', borderRadius: '6px', backgroundColor: '#f8f9fa' }}>
-                                            <img src={`http://localhost:5000/transcripts/${file}`} alt="Proof" onClick={() => window.open(`http://localhost:5000/transcripts/${file}`)} style={{ width: '50px', height: '50px', objectFit: 'cover', border: '1px solid #ccc', cursor: 'pointer' }} />
-                                            <button onClick={() => handleDownload(file)} title="Download File" style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
+                                            <img src={`http://localhost:5000/transcripts/${file}`} alt={t('reviewer_evidence')} onClick={() => window.open(`http://localhost:5000/transcripts/${file}`)} style={{ width: '50px', height: '50px', objectFit: 'cover', border: '1px solid #ccc', cursor: 'pointer' }} />
+                                            <button onClick={() => handleDownload(file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
                                         </div>
                                     ))}
                                 </div>
@@ -102,12 +124,12 @@ const ReviewerDashboard = () => {
                             <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
                                 {reviewerTab !== 'completed' ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'approved' })} style={{ backgroundColor: '#28a745', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>✅ Approve</button>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'needs_info' })} style={{ backgroundColor: '#fd7e14', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>🟠 Request Info</button>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'rejected' })} style={{ backgroundColor: '#dc3545', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>❌ Reject</button>
+                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'approved' })} style={{ backgroundColor: '#28a745', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_approve')}</button>
+                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'needs_info' })} style={{ backgroundColor: '#fd7e14', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_request_info')}</button>
+                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'rejected' })} style={{ backgroundColor: '#dc3545', color: 'white', cursor: 'pointer', padding: '6px', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_reject')}</button>
                                     </div>
                                 ) : (
-                                    <strong style={{ color: app.status === 'approved' ? 'green' : 'red' }}>{app.status.toUpperCase()}</strong>
+                                    <strong style={{ color: app.status === 'approved' ? 'green' : 'red' }}>{t(`status_${app.status}`)}</strong>
                                 )}
                             </td>
                         </tr>
@@ -119,22 +141,22 @@ const ReviewerDashboard = () => {
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
                     <div style={{ backgroundColor: '#fff', padding: '25px', borderRadius: '10px', width: '400px', boxShadow: '0 5px 15px rgba(0,0,0,0.3)' }}>
                         <h3 style={{ marginTop: 0, color: feedbackModal.type === 'needs_info' ? '#fd7e14' : feedbackModal.type === 'approved' ? '#28a745' : '#dc3545' }}>
-                            {feedbackModal.type === 'needs_info' ? 'Request Information' : `Confirm ${feedbackModal.type.toUpperCase()}`}
+                            {getModalTitle()}
                         </h3>
                         
                         {feedbackModal.type === 'approved' ? (
-                            <p style={{ color: '#28a745', fontWeight: 'bold', fontSize: '15px' }}>✅ You are about to approve this mapping package. No note is required.</p>
+                            <p style={{ color: '#28a745', fontWeight: 'bold', fontSize: '15px' }}>{t('reviewer_confirm_approve_text')}</p>
                         ) : (
                             <>
-                                <label style={{ fontWeight: 'bold', fontSize: '14px' }}>Mandatory Rationale Note:</label>
-                                <textarea value={reviewerNote} onChange={(e) => setReviewerNote(e.target.value)} placeholder="Explain what the student needs to fix..." style={{ width: '100%', height: '100px', marginTop: '8px', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                <label style={{ fontWeight: 'bold', fontSize: '14px' }}>{t('reviewer_rationale_note_label')}</label>
+                                <textarea value={reviewerNote} onChange={(e) => setReviewerNote(e.target.value)} placeholder={t('reviewer_note_placeholder')} style={{ width: '100%', height: '100px', marginTop: '8px', padding: '10px', boxSizing: 'border-box', border: '1px solid #ccc', borderRadius: '4px' }} />
                             </>
                         )}
 
                         {feedbackUploadStatus && <p style={{ color: '#004085', fontWeight: 'bold', marginTop: '10px' }}>{feedbackUploadStatus}</p>}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-                            <button onClick={() => { setFeedbackModal({ isOpen: false }); setReviewerNote(''); }} style={{ padding: '8px 15px', cursor: 'pointer', border: '1px solid #ccc', borderRadius: '4px' }}>Cancel</button>
-                            <button onClick={submitReviewerDecision} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: feedbackModal.type === 'approved' ? '#28a745' : '#004085', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>Confirm Decision</button>
+                            <button onClick={() => { setFeedbackModal({ isOpen: false }); setReviewerNote(''); }} style={{ padding: '8px 15px', cursor: 'pointer', border: '1px solid #ccc', borderRadius: '4px' }}>{t('reviewer_cancel')}</button>
+                            <button onClick={submitReviewerDecision} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: feedbackModal.type === 'approved' ? '#28a745' : '#004085', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_confirm_decision')}</button>
                         </div>
                     </div>
                 </div>
