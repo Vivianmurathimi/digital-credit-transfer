@@ -44,6 +44,13 @@ const SuperAdminDashboard = () => {
         fetchSystemStatus();
     }, [fetchSystemUsers, fetchApplications, fetchSystemStatus]);
 
+    // --- Helper to safely parse the Phase 1 JSON array ---
+    const parseCourses = (jsonStringOrArray) => {
+        if (!jsonStringOrArray) return [];
+        if (Array.isArray(jsonStringOrArray)) return jsonStringOrArray;
+        try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
+    };
+
     const handleImpersonateSpecificUser = (user) => {
         localStorage.setItem('originalRole', 'superadmin');
         localStorage.setItem('impersonatedRole', user.role);
@@ -85,6 +92,7 @@ const SuperAdminDashboard = () => {
 
     return (
         <div style={{ marginTop: '10px' }}>
+            {/* System Status Banner */}
             <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid #ccc', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
                 <div>
                     <h2 style={{ margin: 0, color: isSystemOpen ? '#28a745' : '#dc3545' }}>
@@ -99,11 +107,13 @@ const SuperAdminDashboard = () => {
                 </button>
             </div>
 
+            {/* Impersonation Engine */}
             <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed #004085' }}>
                 <h2 style={{ marginTop: 0, color: '#004085' }}>{t('superadmin_impersonate_title')}</h2>
                 <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
+                    {/* Student Impersonation */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
                         <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
                         <input 
@@ -124,6 +134,7 @@ const SuperAdminDashboard = () => {
                         )}
                     </div>
 
+                    {/* Reviewer Impersonation */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
                         <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
                         <input 
@@ -146,6 +157,7 @@ const SuperAdminDashboard = () => {
                 </div>
             </div>
 
+            {/* Application Overrides Engine */}
             <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
                 <h2 style={{ marginTop: 0, color: '#003d7c' }}>{t('superadmin_application_overrides_title')}</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -160,15 +172,26 @@ const SuperAdminDashboard = () => {
                     <tbody>
                         {applications.length === 0 ? (
                             <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
-                        ) : applications.map(app => (
+                        ) : applications.map(app => {
+                            // --- NEW: Parse the JSON array to show what is actually being transferred ---
+                            const coursesList = parseCourses(app.fulfilled_courses_json);
+                            const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
+
+                            return (
                             <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>{app.student_name}</td>
-                                <td style={{ padding: '12px', color: '#555', fontSize: '13px' }}>
-                                    {app.pte_course_names && app.pte_course_names.length > 50 
-                                        ? `${app.pte_course_names.substring(0, 50)}...` 
-                                        : app.pte_course_names}
+                                <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.student_name}</td>
+                                
+                                {/* --- NEW: Upgraded Mapped Package Column --- */}
+                                <td style={{ padding: '12px', color: '#333', fontSize: '13px', verticalAlign: 'top' }}>
+                                    <div style={{ marginBottom: '5px' }}>
+                                        <strong style={{ color: '#004085' }}>From:</strong> {fulfilledNames || 'N/A'}
+                                    </div>
+                                    <div>
+                                        <strong style={{ color: '#28a745' }}>To:</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}
+                                    </div>
                                 </td>
-                                <td style={{ padding: '12px', textAlign: 'center' }}>
+
+                                <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                     <span style={{ 
                                         fontWeight: 'bold', 
                                         padding: '4px 8px', 
@@ -179,12 +202,12 @@ const SuperAdminDashboard = () => {
                                         {t(`status_${app.status}`)}
                                     </span>
                                 </td>
-                                <td style={{ padding: '12px', textAlign: 'center' }}>
+                                <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                     <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
                                     <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
                                 </td>
                             </tr>
-                        ))}
+                        )})}
                     </tbody>
                 </table>
             </div>

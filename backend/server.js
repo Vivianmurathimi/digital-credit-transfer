@@ -11,7 +11,6 @@ const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
-
 const settingsRoutes = require('./routes/settings');
 
 const app = express();
@@ -34,12 +33,24 @@ minioClient.bucketExists(BUCKET_NAME, (err, exists) => {
     }
 });
 
+const ensureApplicationResubmitColumns = async () => {
+    try {
+        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS student_resubmit_note TEXT;`);
+        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS supplemental_files TEXT;`);
+        console.log('✅ Ensured applications table has resubmit columns');
+    } catch (err) {
+        console.error('❌ Could not ensure resubmit columns:', err.message);
+    }
+};
+
+ensureApplicationResubmitColumns();
+
 // Use the routes! 
 // Note: We mount 'uploadRoutes' at the root ('/') because the routes inside already say '/api/upload' and '/transcripts'
 app.use('/api', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', applicationRoutes);
-app.use('/', uploadRoutes);
+app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);
 
 // Start Server
