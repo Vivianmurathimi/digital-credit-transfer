@@ -1,26 +1,28 @@
 const nodemailer = require('nodemailer');
 
-const sendEmail = async (options) => {
-    // 1. Create the transporter using your Mailtrap credentials
-    const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST,
-        port: process.env.EMAIL_PORT,
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-    });
+const sendEmail = async (to, subject, text) => {
+    try {
+        // Use your existing Mailtrap credentials from your .env file
+        const transporter = nodemailer.createTransport({
+            host: process.env.EMAIL_HOST || "sandbox.smtp.mailtrap.io",
+            port: process.env.EMAIL_PORT || 2525,
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS
+            }
+        });
 
-    // 2. Define the email options
-    const mailOptions = {
-        from: '"PTE Credit Transfer System" <noreply@pte.hu>', 
-        to: options.email,
-        subject: options.subject,
-        html: options.html, 
-    };
-
-    // 3. Send the email
-    await transporter.sendMail(mailOptions);
+        await transporter.sendMail({
+            from: '"PTE Credit Transfer" <noreply@adminisztracio.pte.hu>',
+            to,
+            subject,
+            text
+        });
+        
+        console.log(`✅ Email sent to ${to}`);
+    } catch (error) {
+        console.error("❌ Email sending failed:", error);
+    }
 };
 
 module.exports = sendEmail;
