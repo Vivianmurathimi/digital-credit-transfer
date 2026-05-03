@@ -3,7 +3,7 @@ const pool = require('./db');
 
 async function crownAdmin() {
     // ⚙️ Change this to the exact email you just registered!
-    const adminEmail = 'tate@gmail.com'; 
+    const adminEmail = 'tate@adminisztracio.pte.hu'; 
 
     try {
         console.log(`👑 Attempting to make ${adminEmail} a verified Super Admin...`);

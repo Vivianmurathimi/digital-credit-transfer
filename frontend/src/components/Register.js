@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 const Register = () => {
@@ -9,7 +8,6 @@ const Register = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
-    const navigate = useNavigate();
     const [isRegistered, setIsRegistered] = useState(false);
 
     const handleRegister = async (e) => {
