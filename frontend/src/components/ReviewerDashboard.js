@@ -31,7 +31,7 @@ const ReviewerDashboard = () => {
     };
 
     const getUploadLink = (fileName) => {
-        return `http://localhost:5000/api/uploads/${fileName}`;
+        return `/api/uploads/${fileName}`;
     };
 
     const handleDownload = async (fileName) => {

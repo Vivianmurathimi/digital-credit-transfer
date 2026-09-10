@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-const sendEmail = async (to, subject, text) => {
+const sendEmail = async ({ email, subject, html }) => {
     try {
         // Use your existing Mailtrap credentials from your .env file
         const transporter = nodemailer.createTransport({
@@ -14,12 +14,12 @@ const sendEmail = async (to, subject, text) => {
 
         await transporter.sendMail({
             from: '"PTE Credit Transfer" <noreply@adminisztracio.pte.hu>',
-            to,
+            to: email,
             subject,
-            text
+            html
         });
         
-        console.log(`✅ Email sent to ${to}`);
+        console.log(`✅ Email sent to ${email}`);
     } catch (error) {
         console.error("❌ Email sending failed:", error);
     }
