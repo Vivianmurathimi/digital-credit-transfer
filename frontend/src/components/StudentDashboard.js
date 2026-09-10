@@ -111,7 +111,7 @@ const StudentDashboard = ({ userId }) => {
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
     
     const getUploadEndpoint = (fileName = '') => `/api/uploads${fileName ? `/${encodeURIComponent(fileName)}` : ''}`;
-    const getUploadLink = (fileName) => `http://localhost:5000/api/uploads/${encodeURIComponent(fileName)}`;
+    const getUploadLink = (fileName) => `/api/uploads/${encodeURIComponent(fileName)}`;
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
     const clearUploadSelection = (isResubmit = false) => {
