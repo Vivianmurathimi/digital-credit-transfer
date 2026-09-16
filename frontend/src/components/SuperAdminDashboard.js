@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTranslation } from 'react-i18next';
 
 const SuperAdminDashboard = () => {
@@ -17,7 +17,7 @@ const SuperAdminDashboard = () => {
 
     const fetchSystemUsers = useCallback(async () => {
         try {
-            const res = await axios.get('/api/users');
+            const res = await api.get('/api/users');
             if (res.data.success) {
                 setSystemUsers(res.data.users);
             }
@@ -26,14 +26,14 @@ const SuperAdminDashboard = () => {
 
     const fetchApplications = useCallback(async () => {
         try {
-            const res = await axios.get('/api/applications');
+            const res = await api.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
         } catch (err) { console.error('Error fetching apps', err); }
     }, []);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
-            const res = await axios.get('/api/settings/status');
+            const res = await api.get('/api/settings/status');
             if (res.data.success) setIsSystemOpen(res.data.isOpen);
         } catch (err) { console.error('Error fetching system status', err); }
     }, []);
@@ -61,7 +61,7 @@ const SuperAdminDashboard = () => {
 
     const handleUpdateStatus = async (appId, newStatus) => {
         try {
-            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
+            const res = await api.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
             if (res.data.success) { 
                 alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 
@@ -76,7 +76,7 @@ const SuperAdminDashboard = () => {
         
         if (window.confirm(confirmMsg)) {
             try {
-                const res = await axios.put('/api/settings/toggle', { isOpen: !isSystemOpen });
+                const res = await api.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
             } catch (err) { alert(t('superadmin_toggle_failed')); }
         }
