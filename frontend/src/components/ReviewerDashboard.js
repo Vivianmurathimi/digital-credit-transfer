@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTranslation } from 'react-i18next';
 
 const ReviewerDashboard = () => {
@@ -12,7 +12,7 @@ const ReviewerDashboard = () => {
 
     const fetchApplications = useCallback(async () => {
         try {
-            const res = await axios.get('/api/applications');
+            const res = await api.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
         } catch (err) { 
             console.error('Error fetching apps', err); 
@@ -61,7 +61,7 @@ const ReviewerDashboard = () => {
             setFeedbackUploadStatus(t('reviewer_decision_submitting'));
             const noteToSend = feedbackModal.type === 'approved' ? t('reviewer_confirm_approve_text') : reviewerNote;
             
-            const res = await axios.put(`/api/applications/${feedbackModal.appId}/status`, { status: feedbackModal.type, note: noteToSend });
+            const res = await api.put(`/api/applications/${feedbackModal.appId}/status`, { status: feedbackModal.type, note: noteToSend });
             if (res.data.success) {
                 alert(t('reviewer_application_marked', { status: t(`status_${feedbackModal.type}`) }));
                 setFeedbackModal({ isOpen: false, appId: null, type: '' });
