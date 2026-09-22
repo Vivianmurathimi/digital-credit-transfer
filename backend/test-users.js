@@ -11,21 +11,21 @@ async function setupUsers() {
 
         console.log("👥 Creating Test Users...");
 
-        // 1. Student (All values passed safely in the array)
+        // 1. Student
         await pool.query(
-            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, $4, true) ON CONFLICT (email) DO UPDATE SET role = $4, is_verified = true`, 
             ['Alex Student', 'student@example.com', hashedPassword, 'student']
         );
 
         // 2. Reviewer
         await pool.query(
-            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, $4, true) ON CONFLICT (email) DO UPDATE SET role = $4, is_verified = true`, 
             ['Professor Smith', 'reviewer@example.com', hashedPassword, 'reviewer']
         );
 
         // 3. Super Admin
         await pool.query(
-            `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO UPDATE SET role = $4`, 
+            `INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, $4, true) ON CONFLICT (email) DO UPDATE SET role = $4, is_verified = true`, 
             ['Chief Admin', 'admin@example.com', hashedPassword, 'superadmin']
         );
 

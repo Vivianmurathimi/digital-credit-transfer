@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTranslation } from 'react-i18next';
 
 const SuperAdminDashboard = () => {
@@ -15,9 +15,13 @@ const SuperAdminDashboard = () => {
 
     const [isSystemOpen, setIsSystemOpen] = useState(true);
 
+    // --- NEW: Role Management State ---
+    const [allUsers, setAllUsers] = useState([]);
+    const [roleUpdateStatus, setRoleUpdateStatus] = useState('');
+
     const fetchSystemUsers = useCallback(async () => {
         try {
-            const res = await axios.get('/api/users');
+            const res = await api.get('/api/users');
             if (res.data.success) {
                 setSystemUsers(res.data.users);
             }
@@ -26,23 +30,32 @@ const SuperAdminDashboard = () => {
 
     const fetchApplications = useCallback(async () => {
         try {
-            const res = await axios.get('/api/applications');
+            const res = await api.get('/api/applications');
             if (res.data.success) setApplications(res.data.applications);
         } catch (err) { console.error('Error fetching apps', err); }
     }, []);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
-            const res = await axios.get('/api/settings/status');
+            const res = await api.get('/api/settings/status');
             if (res.data.success) setIsSystemOpen(res.data.isOpen);
         } catch (err) { console.error('Error fetching system status', err); }
+    }, []);
+
+    // --- NEW: Fetch full user list including superadmins ---
+    const fetchAllUsers = useCallback(async () => {
+        try {
+            const res = await api.get('/api/users/all');
+            if (res.data.success) setAllUsers(res.data.users);
+        } catch (err) { console.error('Error fetching all users', err); }
     }, []);
 
     useEffect(() => {
         fetchSystemUsers();
         fetchApplications();
         fetchSystemStatus();
-    }, [fetchSystemUsers, fetchApplications, fetchSystemStatus]);
+        fetchAllUsers();
+    }, [fetchSystemUsers, fetchApplications, fetchSystemStatus, fetchAllUsers]);
 
     // --- Helper to safely parse the Phase 1 JSON array ---
     const parseCourses = (jsonStringOrArray) => {
@@ -61,7 +74,7 @@ const SuperAdminDashboard = () => {
 
     const handleUpdateStatus = async (appId, newStatus) => {
         try {
-            const res = await axios.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
+            const res = await api.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
             if (res.data.success) { 
                 alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 
@@ -76,9 +89,43 @@ const SuperAdminDashboard = () => {
         
         if (window.confirm(confirmMsg)) {
             try {
-                const res = await axios.put('/api/settings/toggle', { isOpen: !isSystemOpen });
+                const res = await api.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
             } catch (err) { alert(t('superadmin_toggle_failed')); }
+        }
+    };
+
+    // --- NEW: Handle a role change from the dropdown ---
+    const handleRoleChange = async (user, newRole) => {
+        if (newRole === user.role) return; // no actual change
+
+        // Extra confirmation specifically for promoting someone TO superadmin
+        if (newRole === 'superadmin') {
+            const confirmed = window.confirm(
+                `Are you sure you want to make ${user.name} a Super Admin? This grants them full control over the entire system.`
+            );
+            if (!confirmed) return;
+        } else {
+            // Normal confirmation for other role changes
+            const confirmed = window.confirm(`Change ${user.name}'s role from ${user.role} to ${newRole}?`);
+            if (!confirmed) return;
+        }
+
+        try {
+            setRoleUpdateStatus('Updating role...');
+            const res = await api.put(`/api/users/${user.id}/role`, { newRole });
+            if (res.data.success) {
+                setRoleUpdateStatus(`${user.name} is now ${newRole}.`);
+                fetchAllUsers(); // refresh the list to show the change
+                fetchSystemUsers(); // also refresh impersonation dropdowns in case role affects them
+                setTimeout(() => setRoleUpdateStatus(''), 3000);
+            }
+        } catch (err) {
+            // The backend sends a specific message (e.g. "Cannot remove the last remaining superadmin")
+            const errorMsg = err.response?.data?.error || 'Failed to update role.';
+            setRoleUpdateStatus(errorMsg);
+            alert(errorMsg);
+            setTimeout(() => setRoleUpdateStatus(''), 4000);
         }
     };
 
@@ -157,6 +204,64 @@ const SuperAdminDashboard = () => {
                 </div>
             </div>
 
+            {/* --- NEW: Role Management Engine --- */}
+            <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #6f42c1', marginBottom: '30px' }}>
+                <h2 style={{ marginTop: 0, color: '#6f42c1' }}>Role Management</h2>
+                <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+                    Change any user's role. Promoting someone to Super Admin requires extra confirmation.
+                </p>
+
+                {roleUpdateStatus && (
+                    <div style={{ backgroundColor: '#e2e3f0', color: '#004085', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
+                        {roleUpdateStatus}
+                    </div>
+                )}
+
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: '#6f42c1', color: 'white' }}>
+                            <th style={{ padding: '10px', textAlign: 'left' }}>Name</th>
+                            <th style={{ padding: '10px', textAlign: 'left' }}>Email</th>
+                            <th style={{ padding: '10px', textAlign: 'center' }}>Current Role</th>
+                            <th style={{ padding: '10px', textAlign: 'center' }}>Change Role To</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {allUsers.length === 0 ? (
+                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>No users found.</td></tr>
+                        ) : allUsers.map(user => (
+                            <tr key={user.id} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px' }}>{user.name}</td>
+                                <td style={{ padding: '10px', color: '#555', fontSize: '13px' }}>{user.email}</td>
+                                <td style={{ padding: '10px', textAlign: 'center' }}>
+                                    <span style={{
+                                        fontWeight: 'bold',
+                                        padding: '4px 10px',
+                                        borderRadius: '12px',
+                                        fontSize: '12px',
+                                        backgroundColor: user.role === 'superadmin' ? '#6f42c1' : user.role === 'reviewer' ? '#28a745' : '#007bff',
+                                        color: 'white'
+                                    }}>
+                                        {user.role}
+                                    </span>
+                                </td>
+                                <td style={{ padding: '10px', textAlign: 'center' }}>
+                                    <select
+                                        value={user.role}
+                                        onChange={(e) => handleRoleChange(user, e.target.value)}
+                                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }}
+                                    >
+                                        <option value="student">Student</option>
+                                        <option value="reviewer">Reviewer</option>
+                                        <option value="superadmin">Super Admin</option>
+                                    </select>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
             {/* Application Overrides Engine */}
             <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
                 <h2 style={{ marginTop: 0, color: '#003d7c' }}>{t('superadmin_application_overrides_title')}</h2>
@@ -173,15 +278,12 @@ const SuperAdminDashboard = () => {
                         {applications.length === 0 ? (
                             <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
                         ) : applications.map(app => {
-                            // --- NEW: Parse the JSON array to show what is actually being transferred ---
                             const coursesList = parseCourses(app.fulfilled_courses_json);
                             const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
 
                             return (
                             <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.student_name}</td>
-                                
-                                {/* --- NEW: Upgraded Mapped Package Column --- */}
                                 <td style={{ padding: '12px', color: '#333', fontSize: '13px', verticalAlign: 'top' }}>
                                     <div style={{ marginBottom: '5px' }}>
                                         <strong style={{ color: '#004085' }}>From:</strong> {fulfilledNames || 'N/A'}
@@ -190,7 +292,6 @@ const SuperAdminDashboard = () => {
                                         <strong style={{ color: '#28a745' }}>To:</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}
                                     </div>
                                 </td>
-
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                     <span style={{ 
                                         fontWeight: 'bold', 

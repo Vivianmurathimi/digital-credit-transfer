@@ -6,3 +6,4 @@ node_modules/
 
 # Optional npm logs
 npm-debug.log*
+.DS_Store

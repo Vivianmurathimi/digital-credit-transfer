@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTranslation } from 'react-i18next';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -48,7 +48,7 @@ const StudentDashboard = ({ userId }) => {
 
     const fetchCourses = useCallback(async () => {
         try {
-            const res = await axios.get('/api/pte-courses');
+            const res = await api.get('/api/pte-courses');
             if (res.data.success) setCourses(res.data.courses); 
         } catch (err) { console.error(err); }
     }, []);
@@ -56,14 +56,14 @@ const StudentDashboard = ({ userId }) => {
     const fetchMyApplications = useCallback(async () => {
         if (!userId) return;
         try {
-            const res = await axios.get(`/api/applications/student/${userId}`);
+            const res = await api.get(`/api/applications/student/${userId}`);
             if (res.data.success) setMyApplications(res.data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
     }, [userId]);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
-            const res = await axios.get('/api/settings/status');
+            const res = await api.get('/api/settings/status');
             if (res.data.success) setIsSubmissionsOpen(res.data.isOpen);
         } catch (err) {
             console.error('Error fetching system status', err);
@@ -128,7 +128,7 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteUploadedFile = async (courseId, fileName) => {
         if (!fileName) return;
         try {
-            await axios.delete(getUploadEndpoint(fileName));
+            await api.delete(getUploadEndpoint(fileName));
             // Only removes the file from the specific course row
             setFulfilledCourses(fulfilledCourses.map(c => c.id === courseId ? { ...c, file: null } : c));
             if (activeUploadId === courseId) setActiveUploadId(null);
@@ -142,7 +142,7 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteResubmitFile = async (fileName) => {
         if (!fileName) return;
         try {
-            await axios.delete(getUploadEndpoint(fileName));
+            await api.delete(getUploadEndpoint(fileName));
             // Remove the file from the resubmit array so it disappears from the UI
             setResubmitFiles(prev => prev.filter(f => f !== fileName));
         } catch (err) {
@@ -265,7 +265,7 @@ const StudentDashboard = ({ userId }) => {
     // Handles the actual API call and state update for the specific course
     const executeUpload = async (formData, isResubmit) => {
         try {
-            const res = await axios.post('/api/uploads', formData);
+            const res = await api.post('/api/uploads', formData);
             if (res.data.success) {
                 if (isResubmit) {
                     setResubmitFiles(prev => [...prev, res.data.fileName]);
@@ -292,7 +292,7 @@ const StudentDashboard = ({ userId }) => {
             setSubmitStatus(t('student_submit_saving'));
             const targetCourseNames = selectedCourses.map(c => `${c.course_code} (${c.course_name})`).join(' + ');
 
-            const response = await axios.post('/api/applications', {
+            const response = await api.post('/api/applications', {
                 student_id: userId, 
                 fulfilled_courses_json: fulfilledCourses, 
                 pte_course_names: targetCourseNames, 
@@ -315,7 +315,7 @@ const StudentDashboard = ({ userId }) => {
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
         try {
             setUploadStatus(t('student_resubmission_sending'));
-            const res = await axios.put(`/api/applications/${resubmitModal.app.id}/resubmit`, { 
+            const res = await api.put(`/api/applications/${resubmitModal.app.id}/resubmit`, { 
                 student_resubmit_note: resubmitNote,
                 new_files: resubmitFiles.join(',') 
             });
