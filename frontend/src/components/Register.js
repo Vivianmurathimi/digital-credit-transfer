@@ -33,13 +33,7 @@ const Register = () => {
                 <>
                     <h2 style={{ textAlign: 'center', color: '#28a745', marginTop: 0 }}>{t('register_title')}</h2>
                     
-                    <div style={{ backgroundColor: '#e2e3f0', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontSize: '13px', color: '#004085', border: '1px solid #b8daff' }}>
-                        <strong>{t('register_notice_label')}</strong> {t('register_notice_text')}
-                        <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px' }}>
-                            <li><code>@tr.pte.hu</code> ({t('register_notice_students')})</li>
-                            <li><code>@mik.pte.hu</code> ({t('register_notice_staff')})</li>
-                        </ul>
-                    </div>
+                    
 
                     {error && <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold', textAlign: 'center', border: '1px solid #f5c6cb' }}>{error}</div>}
                     
