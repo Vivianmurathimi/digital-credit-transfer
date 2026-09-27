@@ -28,11 +28,11 @@ const ForgotPassword = () => {
     };
 
     return (
-        <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', backgroundColor: '#f8f9fa' }}>
-            <h2 style={{ textAlign: 'center', color: '#004085', marginTop: 0 }}>{t('forgot_title')}</h2>
+        <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid var(--border-strong)', borderRadius: '8px', backgroundColor: 'var(--surface-2)' }}>
+            <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t('forgot_title')}</h2>
             
-            {message && <div style={{ backgroundColor: '#d4edda', color: '#155724', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid #c3e6cb', textAlign: 'center' }}>{message}</div>}
-            {error && <div style={{ backgroundColor: '#f8d7da', color: '#721c24', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid #f5c6cb', textAlign: 'center' }}>{error}</div>}
+            {message && <div style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--success-border)', textAlign: 'center' }}>{message}</div>}
+            {error && <div style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--danger-border)', textAlign: 'center' }}>{error}</div>}
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <div>
@@ -42,18 +42,18 @@ const ForgotPassword = () => {
                         value={email} 
                         onChange={(e) => setEmail(e.target.value)} 
                         required 
-                        style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid #ccc', borderRadius: '4px' }} 
+                        style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }} 
                         placeholder={t('forgot_email_placeholder')} 
                     />
                 </div>
                 
-                <button type="submit" disabled={isLoading} style={{ padding: '12px', backgroundColor: '#004085', color: 'white', border: 'none', borderRadius: '5px', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" disabled={isLoading} style={{ padding: '12px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {isLoading ? t('forgot_sending') : t('forgot_send_button')}
                 </button>
             </form>
 
             <p style={{ textAlign: 'center', marginTop: '20px', fontSize: '14px' }}>
-                {t('forgot_remember_password')} <Link to="/login" style={{ color: '#004085', fontWeight: 'bold', textDecoration: 'none' }}>{t('forgot_login_link')}</Link>
+                {t('forgot_remember_password')} <Link to="/login" style={{ color: 'var(--link)', fontWeight: 'bold', textDecoration: 'none' }}>{t('forgot_login_link')}</Link>
             </p>
         </div>
     );

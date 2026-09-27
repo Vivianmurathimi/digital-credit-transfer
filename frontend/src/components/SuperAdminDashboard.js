@@ -140,40 +140,40 @@ const SuperAdminDashboard = () => {
     return (
         <div style={{ marginTop: '10px' }}>
             {/* System Status Banner */}
-            <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid #ccc', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid var(--border-strong)', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
                 <div>
-                    <h2 style={{ margin: 0, color: isSystemOpen ? '#28a745' : '#dc3545' }}>
+                    <h2 style={{ margin: 0, color: isSystemOpen ? 'var(--success-accent)' : 'var(--danger-accent)' }}>
                         {isSystemOpen ? t('superadmin_window_open') : t('superadmin_window_closed')}
                     </h2>
-                    <p style={{ margin: '5px 0 0 0', color: '#555' }}>
+                    <p style={{ margin: '5px 0 0 0', color: 'var(--text-secondary)' }}>
                         {isSystemOpen ? t('superadmin_window_open_body') : t('superadmin_window_closed_body')}
                     </p>
                 </div>
-                <button onClick={handleToggleSystem} style={{ padding: '12px 20px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: isSystemOpen ? '#dc3545' : '#28a745', color: 'white', border: 'none', borderRadius: '5px' }}>
+                <button onClick={handleToggleSystem} style={{ padding: '12px 20px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer', backgroundColor: isSystemOpen ? 'var(--red)' : 'var(--accent)', color: 'white', border: 'none', borderRadius: '5px' }}>
                     {isSystemOpen ? t('superadmin_lock_system') : t('superadmin_unlock_system')}
                 </button>
             </div>
 
             {/* Impersonation Engine */}
-            <div style={{ backgroundColor: '#f8f9fa', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed #004085' }}>
-                <h2 style={{ marginTop: 0, color: '#004085' }}>{t('superadmin_impersonate_title')}</h2>
-                <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
+            <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed var(--link)' }}>
+                <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_impersonate_title')}</h2>
+                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
                     {/* Student Impersonation */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: '#004085', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
-                            style={{ width: '250px', padding: '10px', border: '1px solid #004085', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
+                            style={{ width: '250px', padding: '10px', border: '1px solid var(--link)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
                         {showStudentDropdown && (
-                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #004085', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
-                                {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_students')}</div> : (
+                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--link)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+                                {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_students')}</div> : (
                                     filteredStudents.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f0f8ff'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
-                                            <div style={{ fontWeight: 'bold', color: '#004085', fontSize: '14px' }}>{user.name}</div>
-                                            <div style={{ color: '#666', fontSize: '11px' }}>{user.email}</div>
+                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-info)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                            <div style={{ fontWeight: 'bold', color: 'var(--link)', fontSize: '14px' }}>{user.name}</div>
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
                                     ))
                                 )}
@@ -183,18 +183,18 @@ const SuperAdminDashboard = () => {
 
                     {/* Reviewer Impersonation */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: '#155724', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--success-text)', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
-                            style={{ width: '250px', padding: '10px', border: '1px solid #28a745', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
+                            style={{ width: '250px', padding: '10px', border: '1px solid var(--accent)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
                         />
                         {showReviewerDropdown && (
-                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: '#fff', border: '1px solid #28a745', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4x 8px rgba(0,0,0,0.1)' }}>
-                                {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: '#dc3545', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_reviewers')}</div> : (
+                            <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--accent)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4x 8px rgba(0,0,0,0.1)' }}>
+                                {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_reviewers')}</div> : (
                                     filteredReviewers.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e2f0d9'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#fff'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee', textAlign: 'left' }}>
-                                            <div style={{ fontWeight: 'bold', color: '#155724', fontSize: '14px' }}>{user.name}</div>
-                                            <div style={{ color: '#666', fontSize: '11px' }}>{user.email}</div>
+                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--success-surface)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                            <div style={{ fontWeight: 'bold', color: 'var(--success-text)', fontSize: '14px' }}>{user.name}</div>
+                                            <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
                                     ))
                                 )}
@@ -205,21 +205,21 @@ const SuperAdminDashboard = () => {
             </div>
 
             {/* --- NEW: Role Management Engine --- */}
-            <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #6f42c1', marginBottom: '30px' }}>
-                <h2 style={{ marginTop: 0, color: '#6f42c1' }}>Role Management</h2>
-                <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '1px solid var(--purple-text)', marginBottom: '30px' }}>
+                <h2 style={{ marginTop: 0, color: 'var(--purple-text)' }}>Role Management</h2>
+                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '15px' }}>
                     Change any user's role. Promoting someone to Super Admin requires extra confirmation.
                 </p>
 
                 {roleUpdateStatus && (
-                    <div style={{ backgroundColor: '#e2e3f0', color: '#004085', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
+                    <div style={{ backgroundColor: 'var(--surface-accent)', color: 'var(--link)', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
                         {roleUpdateStatus}
                     </div>
                 )}
 
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr style={{ backgroundColor: '#6f42c1', color: 'white' }}>
+                        <tr style={{ backgroundColor: 'var(--purple)', color: 'white' }}>
                             <th style={{ padding: '10px', textAlign: 'left' }}>Name</th>
                             <th style={{ padding: '10px', textAlign: 'left' }}>Email</th>
                             <th style={{ padding: '10px', textAlign: 'center' }}>Current Role</th>
@@ -230,16 +230,16 @@ const SuperAdminDashboard = () => {
                         {allUsers.length === 0 ? (
                             <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>No users found.</td></tr>
                         ) : allUsers.map(user => (
-                            <tr key={user.id} style={{ borderBottom: '1px solid #eee' }}>
+                            <tr key={user.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                 <td style={{ padding: '10px' }}>{user.name}</td>
-                                <td style={{ padding: '10px', color: '#555', fontSize: '13px' }}>{user.email}</td>
+                                <td style={{ padding: '10px', color: 'var(--text-secondary)', fontSize: '13px' }}>{user.email}</td>
                                 <td style={{ padding: '10px', textAlign: 'center' }}>
                                     <span style={{
                                         fontWeight: 'bold',
                                         padding: '4px 10px',
                                         borderRadius: '12px',
                                         fontSize: '12px',
-                                        backgroundColor: user.role === 'superadmin' ? '#6f42c1' : user.role === 'reviewer' ? '#28a745' : '#007bff',
+                                        backgroundColor: user.role === 'superadmin' ? 'var(--purple)' : user.role === 'reviewer' ? 'var(--brand)' : 'var(--blue)',
                                         color: 'white'
                                     }}>
                                         {user.role}
@@ -249,7 +249,7 @@ const SuperAdminDashboard = () => {
                                     <select
                                         value={user.role}
                                         onChange={(e) => handleRoleChange(user, e.target.value)}
-                                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc', cursor: 'pointer' }}
+                                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--border-strong)', cursor: 'pointer' }}
                                     >
                                         <option value="student">Student</option>
                                         <option value="reviewer">Reviewer</option>
@@ -263,11 +263,11 @@ const SuperAdminDashboard = () => {
             </div>
 
             {/* Application Overrides Engine */}
-            <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', border: '1px solid #003d7c' }}>
-                <h2 style={{ marginTop: 0, color: '#003d7c' }}>{t('superadmin_application_overrides_title')}</h2>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '1px solid var(--heading)' }}>
+                <h2 style={{ marginTop: 0, color: 'var(--heading)' }}>{t('superadmin_application_overrides_title')}</h2>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr style={{ backgroundColor: '#003d7c', color: 'white' }}>
+                        <tr style={{ backgroundColor: 'var(--header-bg)', color: 'white' }}>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
@@ -282,14 +282,14 @@ const SuperAdminDashboard = () => {
                             const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
 
                             return (
-                            <tr key={app.id} style={{ borderBottom: '1px solid #eee' }}>
+                            <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                                 <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.student_name}</td>
-                                <td style={{ padding: '12px', color: '#333', fontSize: '13px', verticalAlign: 'top' }}>
+                                <td style={{ padding: '12px', color: 'var(--text-strong)', fontSize: '13px', verticalAlign: 'top' }}>
                                     <div style={{ marginBottom: '5px' }}>
-                                        <strong style={{ color: '#004085' }}>From:</strong> {fulfilledNames || 'N/A'}
+                                        <strong style={{ color: 'var(--link)' }}>From:</strong> {fulfilledNames || 'N/A'}
                                     </div>
                                     <div>
-                                        <strong style={{ color: '#28a745' }}>To:</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}
+                                        <strong style={{ color: 'var(--success-accent)' }}>To:</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}
                                     </div>
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
@@ -297,15 +297,15 @@ const SuperAdminDashboard = () => {
                                         fontWeight: 'bold', 
                                         padding: '4px 8px', 
                                         borderRadius: '4px',
-                                        backgroundColor: app.status === 'approved' ? '#d4edda' : app.status === 'rejected' ? '#f8d7da' : '#fff3cd',
-                                        color: app.status === 'approved' ? '#155724' : app.status === 'rejected' ? '#721c24' : '#856404' 
+                                        backgroundColor: app.status === 'approved' ? 'var(--success-bg)' : app.status === 'rejected' ? 'var(--danger-bg)' : app.status === 'needs_info' ? 'var(--warning-bg)' : 'var(--info-bg)',
+                                        color: app.status === 'approved' ? 'var(--success-text)' : app.status === 'rejected' ? 'var(--danger-text)' : app.status === 'needs_info' ? 'var(--warning-text)' : 'var(--info-text)' 
                                     }}>
                                         {t(`status_${app.status}`)}
                                     </span>
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: '#ffc107', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
+                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
+                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
                                 </td>
                             </tr>
                         )})}
