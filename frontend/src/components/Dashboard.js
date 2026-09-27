@@ -23,8 +23,10 @@ const Dashboard = () => {
     const role = localStorage.getItem('impersonatedRole') || localStorage.getItem('role');
     const impersonatedName = localStorage.getItem('impersonatedName');
 
-    const handleLogout = () => { 
-        localStorage.clear(); 
+    const handleLogout = () => {
+        const theme = localStorage.getItem('theme'); // keep the light/dark choice across logout
+        localStorage.clear();
+        if (theme) localStorage.setItem('theme', theme);
         navigate('/login'); 
     };
 
@@ -39,15 +41,15 @@ const Dashboard = () => {
     return (
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif' }}>
             {originalRole && (
-                <div style={{ backgroundColor: '#ffc107', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
+                <div style={{ backgroundColor: 'var(--yellow)', color: '#000', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
                     <span>{t('impersonation_banner', { name: impersonatedName, role: t(`role_${role}`) })}</span>
-                    <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px' }}>{t('end_impersonation')}</button>
+                    <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('end_impersonation')}</button>
                 </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #ddd', paddingBottom: '10px', marginBottom: '30px' }}>
-                <h1 style={{ color: '#003d7c', margin: 0 }}>{t('dashboard_title')}</h1>
-                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid var(--border)', paddingBottom: '10px', marginBottom: '30px' }}>
+                <h1 style={{ color: 'var(--heading)', margin: 0 }}>{t('dashboard_title')}</h1>
+                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
             </div>
 
             {role === 'superadmin' && !originalRole && <SuperAdminDashboard userId={userId} />}
