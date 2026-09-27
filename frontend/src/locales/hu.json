@@ -190,5 +190,9 @@
   "errors": {
     "invalid_login": "Érvénytelen e-mail vagy jelszó.",
     "network_error": "Nem lehet csatlakozni a szerverhez."
+  },
+  "theme": {
+    "switchToDark": "Váltás sötét módra",
+    "switchToLight": "Váltás világos módra"
   }
 }
