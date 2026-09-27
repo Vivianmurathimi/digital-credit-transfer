@@ -190,5 +190,9 @@
   "errors": {
     "invalid_login": "Ungültige E-Mail oder Passwort.",
     "network_error": "Verbindung zum Server nicht möglich."
+  },
+  "theme": {
+    "switchToDark": "Zum dunklen Modus wechseln",
+    "switchToLight": "Zum hellen Modus wechseln"
   }
 }

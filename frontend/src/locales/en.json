@@ -190,5 +190,9 @@
   "errors": {
     "invalid_login": "Invalid email or password.",
     "network_error": "Cannot connect to server."
+  },
+  "theme": {
+    "switchToDark": "Switch to dark mode",
+    "switchToLight": "Switch to light mode"
   }
 }

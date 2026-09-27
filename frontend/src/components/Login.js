@@ -25,9 +25,9 @@ const Login = () => {
     };
 
     return (
-        <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-            <h2 style={{ textAlign: 'center', color: '#003d7c' }}>{t('login_title')}</h2>
-            {error && <p style={{ color: 'red', textAlign: 'center', fontWeight: 'bold' }}>{error}</p>}
+        <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid var(--border-strong)', borderRadius: '8px' }}>
+            <h2 style={{ textAlign: 'center', color: 'var(--heading)' }}>{t('login_title')}</h2>
+            {error && <p style={{ color: 'var(--error-text)', textAlign: 'center', fontWeight: 'bold' }}>{error}</p>}
             
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <div>
@@ -52,15 +52,15 @@ const Login = () => {
                         placeholder={t('login_password_placeholder')}
                     />
                 </div>
-                <button type="submit" style={{ padding: '10px', backgroundColor: '#004085', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" style={{ padding: '10px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {t('login')}
                 </button>
             </form>
             <p style={{ textAlign: 'center', marginTop: '15px' }}>
-                {t('login_register_prompt')} <a href="/register" style={{ color: '#004085', fontWeight: 'bold' }}>{t('login_register_link')}</a>
+                {t('login_register_prompt')} <a href="/register" style={{ color: 'var(--link)', fontWeight: 'bold' }}>{t('login_register_link')}</a>
             </p>
             <div style={{ textAlign: 'center', marginTop: '-10px', marginBottom: '10px' }}>
-                <a href="/forgot-password" style={{ fontSize: '13px', color: '#004085', textDecoration: 'none' }}>{t('login_forgot_password')}</a>
+                <a href="/forgot-password" style={{ fontSize: '13px', color: 'var(--link)', textDecoration: 'none' }}>{t('login_forgot_password')}</a>
             </div>
         </div>
     );
