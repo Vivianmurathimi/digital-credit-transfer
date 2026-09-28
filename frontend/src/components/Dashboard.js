@@ -39,7 +39,7 @@ const Dashboard = () => {
     };
 
     return (
-        <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <div style={{ padding: '20px', margin: '0 auto', fontFamily: 'sans-serif' }}>
             {originalRole && (
                 <div style={{ backgroundColor: 'var(--yellow)', color: '#000', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
                     <span>{t('impersonation_banner', { name: impersonatedName, role: t(`role_${role}`) })}</span>

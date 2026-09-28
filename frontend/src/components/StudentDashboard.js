@@ -336,15 +336,15 @@ const StudentDashboard = ({ userId }) => {
 
             {/* STATUS TAB */}
             {studentTab === 'dashboard' && (
-                <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '1px solid var(--border-strong)' }}>
-                    <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_my_applications')}</h2>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
+                    <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
                         <thead>
-                            <tr style={{ backgroundColor: 'var(--surface-2)' }}>
-                                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid var(--border)' }}>Fulfilled Courses</th>
-                                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid var(--border)' }}>{t('reviewer_target_courses')}</th>
-                                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid var(--border)' }}>Status</th>
-                                <th style={{ padding: '12px', textAlign: 'center', borderBottom: '2px solid var(--border)' }}>{t('reviewer_actions')}</th>
+                            <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
+                                <th style={{ padding: '12px', textAlign: 'left' }}>Fulfilled Courses</th>
+                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('reviewer_target_courses')}</th>
+                                <th style={{ padding: '12px', textAlign: 'center' }}>Status</th>
+                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('reviewer_actions')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -353,7 +353,7 @@ const StudentDashboard = ({ userId }) => {
                             ) : myApplications.map(app => {
                                 const coursesList = parseCourses(app.fulfilled_courses_json);
                                 return (
-                                <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                                <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
                                     <td style={{ padding: '12px', verticalAlign: 'top' }}>
                                         <ul style={{ margin: 0, paddingLeft: '15px' }}>
                                             {coursesList.map((c, idx) => <li key={idx}><strong>{c.course_name}</strong> ({c.credits} Cr)</li>)}
@@ -474,7 +474,7 @@ const StudentDashboard = ({ userId }) => {
 
             {/* SUBMIT NEW APPLICATION TAB */}
             {studentTab === 'submit' && (
-                <div style={{ backgroundColor: 'var(--surface-accent)', padding: '20px', borderRadius: '10px', border: '1px solid var(--info-border)', maxWidth: '800px' }}>
+                <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
                     
                     {fulfilledCourses.map((course, index) => (

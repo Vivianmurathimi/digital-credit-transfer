@@ -86,10 +86,10 @@ const ReviewerDashboard = () => {
     };
 
     return (
-        <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px' }}>
+        <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
             <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('reviewer_title')}</h2>
             
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid var(--success-border)', paddingBottom: '10px' }}>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '3px solid var(--success-border)', paddingBottom: '10px' }}>
                 <button onClick={() => setReviewerTab('pending')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'pending' ? 'var(--surface)' : 'transparent', color: 'var(--success-text)' }}>
                     {t('reviewer_pending_tab')} <span style={{ backgroundColor: 'var(--request)', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{pendingApps.length}</span>
                 </button>
@@ -101,7 +101,7 @@ const ReviewerDashboard = () => {
                 </button>
             </div>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
                 <thead>
                     <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
                         <th style={{ padding: '10px', textAlign: 'left', width: '20%' }}>{t('reviewer_student')}</th>
@@ -119,7 +119,7 @@ const ReviewerDashboard = () => {
                         const coursesList = parseCourses(app.fulfilled_courses_json);
                         
                         return (
-                        <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
                             
                             {/* --- PHASE 2: Student Name + Cover Letter Note --- */}
                             <td style={{ padding: '10px', verticalAlign: 'top' }}>
@@ -170,7 +170,7 @@ const ReviewerDashboard = () => {
                             <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
                                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
                                     {coursesList.map((course, idx) => course.file && (
-                                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '1px solid var(--border)', padding: '5px', borderRadius: '6px', backgroundColor: 'var(--surface-2)' }}>
+                                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '2px solid var(--border)', padding: '5px', borderRadius: '6px', backgroundColor: 'var(--surface-2)' }}>
                                             <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={course.course_name}>
                                                 📄 {course.course_name}
                                             </div>
