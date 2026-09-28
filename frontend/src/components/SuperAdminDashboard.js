@@ -140,7 +140,7 @@ const SuperAdminDashboard = () => {
     return (
         <div style={{ marginTop: '10px' }}>
             {/* System Status Banner */}
-            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '1px solid var(--border-strong)', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', border: '2px solid var(--border-strong)', boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
                 <div>
                     <h2 style={{ margin: 0, color: isSystemOpen ? 'var(--success-accent)' : 'var(--danger-accent)' }}>
                         {isSystemOpen ? t('superadmin_window_open') : t('superadmin_window_closed')}
@@ -155,7 +155,7 @@ const SuperAdminDashboard = () => {
             </div>
 
             {/* Impersonation Engine */}
-            <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '2px dashed var(--link)' }}>
+            <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>
                 <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_impersonate_title')}</h2>
                 <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
                 
@@ -205,7 +205,7 @@ const SuperAdminDashboard = () => {
             </div>
 
             {/* --- NEW: Role Management Engine --- */}
-            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '1px solid var(--purple-text)', marginBottom: '30px' }}>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--purple-text)', marginBottom: '30px' }}>
                 <h2 style={{ marginTop: 0, color: 'var(--purple-text)' }}>Role Management</h2>
                 <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '15px' }}>
                     Change any user's role. Promoting someone to Super Admin requires extra confirmation.
@@ -217,7 +217,7 @@ const SuperAdminDashboard = () => {
                     </div>
                 )}
 
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                     <thead>
                         <tr style={{ backgroundColor: 'var(--purple)', color: 'white' }}>
                             <th style={{ padding: '10px', textAlign: 'left' }}>Name</th>
@@ -230,7 +230,7 @@ const SuperAdminDashboard = () => {
                         {allUsers.length === 0 ? (
                             <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>No users found.</td></tr>
                         ) : allUsers.map(user => (
-                            <tr key={user.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                            <tr key={user.id} style={{ borderBottom: '2px solid var(--border)' }}>
                                 <td style={{ padding: '10px' }}>{user.name}</td>
                                 <td style={{ padding: '10px', color: 'var(--text-secondary)', fontSize: '13px' }}>{user.email}</td>
                                 <td style={{ padding: '10px', textAlign: 'center' }}>
@@ -263,9 +263,9 @@ const SuperAdminDashboard = () => {
             </div>
 
             {/* Application Overrides Engine */}
-            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '1px solid var(--heading)' }}>
+            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--heading)' }}>
                 <h2 style={{ marginTop: 0, color: 'var(--heading)' }}>{t('superadmin_application_overrides_title')}</h2>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                     <thead>
                         <tr style={{ backgroundColor: 'var(--header-bg)', color: 'white' }}>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
@@ -282,7 +282,7 @@ const SuperAdminDashboard = () => {
                             const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
 
                             return (
-                            <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                            <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
                                 <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.student_name}</td>
                                 <td style={{ padding: '12px', color: 'var(--text-strong)', fontSize: '13px', verticalAlign: 'top' }}>
                                     <div style={{ marginBottom: '5px' }}>
