@@ -24,9 +24,7 @@ const Dashboard = () => {
     const impersonatedName = localStorage.getItem('impersonatedName');
 
     const handleLogout = () => {
-        const theme = localStorage.getItem('theme'); // keep the light/dark choice across logout
         localStorage.clear();
-        if (theme) localStorage.setItem('theme', theme);
         navigate('/login'); 
     };
 
