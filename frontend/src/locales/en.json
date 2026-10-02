@@ -196,9 +196,5 @@
   "email_link_expired_message": "This link has expired. Please log in to continue. You will be redirected to the login page in {{seconds}} seconds.",
   "email_link_go_to_login": "Go to login",
   "reviewer_additional_evidence": "Additional evidence (missing info)",
-  "reviewer_additional_file": "Additional file {{number}}",
-  "theme": {
-    "switchToDark": "Switch to dark mode",
-    "switchToLight": "Switch to light mode"
-  }
+  "reviewer_additional_file": "Additional file {{number}}"
 }

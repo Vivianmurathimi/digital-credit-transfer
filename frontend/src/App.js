@@ -9,7 +9,6 @@ import VerifyEmail from './components/VerifyEmail';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import LanguageSwitcher from './components/LanguageSwitcher'; // 🆕 Import the flag UI
-import ThemeToggle from './components/ThemeToggle';
 import EmailLink from './components/EmailLink';
 
 function App() {
@@ -20,10 +19,7 @@ return (
       <div className="App">
         {/* 🆕 Updated Header with Flags and Translated Title */}
         <header style={{ backgroundColor: 'var(--header-bg)', padding: '10px 20px', color: 'white' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px' }}>
-            <LanguageSwitcher />
-            <ThemeToggle />
-          </div>
+          <LanguageSwitcher />
           <h1 style={{ textAlign: 'center', marginTop: '0' }}>{t('app_title')}</h1>
         </header>
         
