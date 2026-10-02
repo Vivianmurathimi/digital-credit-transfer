@@ -5,10 +5,12 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const crypto = require('crypto'); 
 const sendEmail = require('../utils/sendEmail');
+const { normalizeLanguage } = require('../utils/emailTemplates');
+const { checkEmailLink } = require('../utils/emailLink');
 
 // --- REGISTER ROUTE ---
 router.post('/register', async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password, language } = req.body;
     
     // 🆕 YOUR ADDITION: Check if fields are missing
     if (!email || !password || !name) {
@@ -37,8 +39,8 @@ router.post('/register', async (req, res) => {
         const verificationToken = crypto.randomBytes(32).toString('hex');
 
         const result = await pool.query(
-            'INSERT INTO users (name, email, password, role, verification_token) VALUES ($1,$2,$3,$4,$5) RETURNING id,name,role',
-            [name, lowerEmail, hashedPassword, assignedRole, verificationToken] 
+            'INSERT INTO users (name, email, password, role, verification_token, preferred_language) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,name,role',
+            [name, lowerEmail, hashedPassword, assignedRole, verificationToken, normalizeLanguage(language)] 
         );
 
         // 5. Build the verification link & send the email
@@ -62,6 +64,15 @@ router.post('/register', async (req, res) => {
         console.error(err.message);
         res.status(500).json({ error: "Server error during registration" });
     }
+});
+
+// --- EMAIL LINK ROUTE ---
+// Checks a link from a notification email. It never logs anyone in;
+// it only says whether the link is still valid (10 minutes).
+router.get('/email-link/:token', (req, res) => {
+    const result = checkEmailLink(req.params.token);
+    if (!result.valid) return res.status(410).json(result);
+    res.json(result);
 });
 
 // --- VERIFY ROUTE ---

@@ -10,6 +10,7 @@ import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import LanguageSwitcher from './components/LanguageSwitcher'; // 🆕 Import the flag UI
 import ThemeToggle from './components/ThemeToggle';
+import EmailLink from './components/EmailLink';
 
 function App() {
 
@@ -34,6 +35,7 @@ return (
             <Route path="/verify/:token" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
+            <Route path="/email-link/:token" element={<EmailLink />} />
             <Route path="/" element={<Navigate to="/login" />} />
           </Routes>
         </main>
