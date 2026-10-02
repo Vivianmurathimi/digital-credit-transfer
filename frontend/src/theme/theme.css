@@ -1,9 +1,8 @@
 /*
- * Theme tokens.
- * Light values are the exact colours the app used before theming, so light mode
- * looks unchanged. Dark values are their dark-mode counterparts.
+ * App colour tokens (school blue and white).
+ * Every page uses these names, so a colour can be changed in one place.
  */
-:root, :root[data-theme="light"] {
+:root {
   color-scheme: light;
 
   /* Page & surfaces */
@@ -73,81 +72,7 @@
   --grey: #6c757d;
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --bg: #0f172a;
-  --text: #e5e7eb;
-  --surface: #1e293b;
-  --surface-2: #273449;
-  --surface-accent: #1a2540;
-  --overlay: rgba(0, 0, 0, 0.7);
-
-  --text-strong: #e2e8f0;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-
-  --border-subtle: #334155;
-  --border: #3b4a61;
-  --border-strong: #475569;
-  --control-border: #64748b;
-  --control-active: #475569;
-
-  --header-bg: #0c2a4d;
-  --heading: #bfdbfe;
-  --brand: #2563eb;
-  --link: #93c5fd;
-  --link-alt: #7aa7e0;
-  --text-on-primary: #ffffff;
-  --purple-text: #b7a8e8;
-
-  --success-surface: #16233b;
-  --success-bg: rgba(59, 130, 246, 0.15);
-  --success-text: #a9c8f0;
-  --success-border: #2b4a7a;
-  --success-accent: #7aa7e0;
-  --ok-text: #7aa7e0;
-
-  --danger-bg: rgba(239, 68, 68, 0.15);
-  --danger-text: #e8a3a8;
-  --danger-border: #7f1d1d;
-  --danger-accent: #e07a80;
-  --error-text: #e07a80;
-
-  --warning-bg: rgba(234, 179, 8, 0.15);
-  --warning-text: #e8d49a;
-
-  --info-bg: rgba(96, 165, 250, 0.12);
-  --info-text: #9dbfe6;
-  --info-surface: rgba(59, 130, 246, 0.12);
-  --info-border: #1e40af;
-  --hover-info: #273449;
-
-  /* Toned-down accents: less saturated so they sit calmly on the dark page */
-  --accent: #2f5fa8;
-  --request: #4a79b8;
-  --red: #b4444f;
-  --red-pure: #b4444f;
-  --orange: #c26a2e;
-  --orange-text: #f0a060;
-  --yellow: #caa53a;
-  --purple: #6b52a8;
-  --teal: #36699f;
-  --blue: #3a6fc4;
-  --grey: #4b5563;
-}
-
 body {
   background: var(--bg);
   color: var(--text);
-}
-
-/* Dark mode: keep the fields you type into light (soft off-white) so they stand out as places to fill in */
-:root[data-theme="dark"] :is(input:not([type="file"]):not([type="checkbox"]):not([type="radio"]), select, textarea) {
-  color-scheme: light;
-  background-color: #b4bdcc;
-  color: #0f172a;
-}
-:root[data-theme="dark"] :is(input, textarea)::placeholder {
-  color: #434b5c;
 }
