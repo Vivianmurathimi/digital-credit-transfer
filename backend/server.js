@@ -45,6 +45,18 @@ const ensureApplicationResubmitColumns = async () => {
 
 ensureApplicationResubmitColumns();
 
+// Language used for the student's notification emails (Hungarian by default)
+const ensureUserLanguageColumn = async () => {
+    try {
+        await pool.query(`ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(5) DEFAULT 'hu';`);
+        console.log('✅ Ensured users table has preferred_language column');
+    } catch (err) {
+        console.error('❌ Could not ensure preferred_language column:', err.message);
+    }
+};
+
+ensureUserLanguageColumn();
+
 // Use the routes! 
 // Note: We mount 'uploadRoutes' at the root ('/') because the routes inside already say '/api/upload' and '/transcripts'
 app.use('/api', authRoutes);

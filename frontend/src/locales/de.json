@@ -191,6 +191,12 @@
     "invalid_login": "Ungültige E-Mail oder Passwort.",
     "network_error": "Verbindung zum Server nicht möglich."
   },
+  "email_link_checking": "Link wird überprüft...",
+  "email_link_expired_title": "Link abgelaufen",
+  "email_link_expired_message": "Dieser Link ist abgelaufen. Bitte melden Sie sich an, um fortzufahren. Sie werden in {{seconds}} Sekunden zur Anmeldeseite weitergeleitet.",
+  "email_link_go_to_login": "Zur Anmeldung",
+  "reviewer_additional_evidence": "Zusätzliche Nachweise (fehlende Informationen)",
+  "reviewer_additional_file": "Zusätzliche Datei {{number}}",
   "theme": {
     "switchToDark": "Zum dunklen Modus wechseln",
     "switchToLight": "Zum hellen Modus wechseln"
