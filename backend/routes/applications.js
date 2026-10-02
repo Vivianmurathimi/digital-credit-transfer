@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
+const notifyStudent = require('../utils/notifyStudent');
 
 
 const checkSubmissionsOpen = async () => {
@@ -33,6 +34,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             [student_id, JSON.stringify(fulfilled_courses_json), pte_course_names, system_note, student_note]
         );
         res.json({ success: true });
+
+        // Respond first, then email in the background (never blocks or fails the request)
+        notifyStudent(student_id, 'submitted');
     } catch (err) {
         console.error('❌ Submission error:', err.message);
         res.status(500).json({ error: 'Submission failed' });
@@ -70,9 +74,28 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
 });
 
 router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+    const { status, note } = req.body;
+
     try {
-        await pool.query('UPDATE applications SET status=$1, reviewer_note=$2 WHERE id=$3', [req.body.status, req.body.note, req.params.id]);
+        // Read the current status first, so we only email when it actually changes
+        const current = await pool.query('SELECT status FROM applications WHERE id=$1', [req.params.id]);
+        if (current.rows.length === 0) {
+            return res.status(404).json({ error: 'Application not found' });
+        }
+        const previousStatus = current.rows[0].status;
+
+        const updated = await pool.query(
+            'UPDATE applications SET status=$1, reviewer_note=$2 WHERE id=$3 RETURNING student_id, reviewer_note',
+            [status, note, req.params.id]
+        );
         res.json({ success: true });
+
+        // Respond first, then email in the background (never blocks or fails the request)
+        if (status !== previousStatus) {
+            const { student_id, reviewer_note } = updated.rows[0];
+            const type = status === 'needs_info' ? 'needsInfo' : 'statusUpdate';
+            notifyStudent(student_id, type, { status, note: reviewer_note });
+        }
     } catch (err) {
        console.error("❌ Status update error:", err.message);
         res.status(500).json({ error: "Update failed" });
@@ -107,6 +130,9 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             [student_resubmit_note, updatedFiles, id]
         );
         res.json({ success: true });
+
+        // Respond first, then email in the background (never blocks or fails the request)
+        notifyStudent(req.user.id, 'resubmitted');
     } catch (err) {
         console.error('❌ Resubmit error:', err.message);
         res.status(500).json({ error: 'Resubmit failed' });

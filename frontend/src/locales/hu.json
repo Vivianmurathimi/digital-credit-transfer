@@ -191,6 +191,12 @@
     "invalid_login": "Érvénytelen e-mail vagy jelszó.",
     "network_error": "Nem lehet csatlakozni a szerverhez."
   },
+  "email_link_checking": "A link ellenőrzése...",
+  "email_link_expired_title": "A link lejárt",
+  "email_link_expired_message": "Ez a link lejárt. A folytatáshoz jelentkezzen be. {{seconds}} másodperc múlva átirányítjuk a bejelentkezési oldalra.",
+  "email_link_go_to_login": "Tovább a bejelentkezéshez",
+  "reviewer_additional_evidence": "További bizonyítékok (hiányzó információ)",
+  "reviewer_additional_file": "További fájl {{number}}",
   "theme": {
     "switchToDark": "Váltás sötét módra",
     "switchToLight": "Váltás világos módra"

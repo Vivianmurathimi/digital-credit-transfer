@@ -1,11 +1,24 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import api from '../api';
 
 const LanguageSwitcher = () => {
   const { i18n } = useTranslation();
 
   const changeLanguage = (lng) => {
     i18n.changeLanguage(lng);
+
+    // Logged in? Save the choice so notification emails use this language.
+    // Uses the real account from the token (not an impersonated one).
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const userId = JSON.parse(atob(token.split('.')[1])).id;
+      api.put(`/api/users/${userId}/language`, { language: lng })
+        .catch((err) => console.error('Could not save language preference', err));
+    } catch {
+      /* malformed token: skip saving */
+    }
   };
 
   const buttonStyle = {

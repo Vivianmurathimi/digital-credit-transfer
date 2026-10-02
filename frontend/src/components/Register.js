@@ -3,7 +3,7 @@ import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 
 const Register = () => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -13,7 +13,7 @@ const Register = () => {
     const handleRegister = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('/api/register', { name, email, password });
+            const res = await axios.post('/api/register', { name, email, password, language: i18n.language });
             if (res.data.success) {
                 setIsRegistered(true);
             }

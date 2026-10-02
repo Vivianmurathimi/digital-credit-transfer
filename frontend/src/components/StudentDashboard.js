@@ -442,22 +442,25 @@ const StudentDashboard = ({ userId }) => {
 
                             {resubmitFiles.length > 0 && (
                                 <div style={{ marginTop: '15px' }}>
-                                    <strong style={{ color: 'var(--success-accent)' }}>Attached New Files (Click to Preview):</strong>
-                                    <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
-                                        {resubmitFiles.map((file, idx) => (
-                                            <li key={idx} style={{ color: 'var(--text-secondary)', wordBreak: 'break-all', marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                <a href={getUploadLink(file)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--link-alt)', textDecoration: 'none', fontWeight: 'bold' }}>
-                                                    {file} ↗
-                                                </a>
-                                                <button 
-                                                    onClick={() => handleDeleteResubmitFile(file)} 
-                                                    style={{ padding: '3px 8px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                                                >
-                                                    Remove
-                                                </button>
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    <strong style={{ color: 'var(--success-accent)' }}>Attached New Files:</strong>
+                                    {/* Same thumbnail + Open file + Remove layout as the first upload */}
+                                    {resubmitFiles.map((file, idx) => (
+                                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
+                                            <a href={getUploadLink(file)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
+                                                {isImageFile(file) ? (
+                                                    <img 
+                                                        src={getUploadLink(file)} 
+                                                        alt="Evidence Preview"
+                                                        style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
+                                                    />
+                                                ) : (
+                                                    <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {file}</span>
+                                                )}
+                                                <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>Open file</span>
+                                            </a>
+                                            <button onClick={() => handleDeleteResubmitFile(file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Remove</button>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                         </div>
