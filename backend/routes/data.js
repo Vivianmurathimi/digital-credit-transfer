@@ -24,6 +24,28 @@ router.get('/users/all', verifyToken, requireRole('superadmin'), async (req, res
     }
 });
 
+// Save a user's language choice (used for their notification emails).
+// Users can only change their own language.
+router.put('/users/:id/language', verifyToken, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const language = String(req.body.language || '').slice(0, 2).toLowerCase();
+
+    if (req.user.id !== id) {
+        return res.status(403).json({ error: 'You can only change your own language' });
+    }
+    if (!['hu', 'en', 'de'].includes(language)) {
+        return res.status(400).json({ error: 'Unsupported language' });
+    }
+
+    try {
+        await pool.query('UPDATE users SET preferred_language = $1 WHERE id = $2', [language, id]);
+        res.json({ success: true, language });
+    } catch (err) {
+        console.error('❌ Language update error:', err.message);
+        res.status(500).json({ error: 'Language update failed' });
+    }
+});
+
 // NEW: change a user's role — superadmin only
 router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req, res) => {
     const { id } = req.params;

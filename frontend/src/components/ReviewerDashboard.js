@@ -30,6 +30,8 @@ const ReviewerDashboard = () => {
         try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
     };
 
+    const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
+
     const getUploadLink = (fileName) => {
         return `/api/uploads/${fileName}`;
     };
@@ -184,18 +186,34 @@ const ReviewerDashboard = () => {
                                         </div>
                                     ))}
                                 </div>
-                                {app.supplemental_files && (
-                                    <div style={{ marginTop: '10px', textAlign: 'left', backgroundColor: 'var(--info-surface)', padding: '10px', borderRadius: '5px', border: '1px solid var(--info-border)', color: 'var(--link)' }}>
-                                        <strong style={{ display: 'block', marginBottom: '6px' }}>📎 Supplemental Files:</strong>
-                                        <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                                            {app.supplemental_files.split(',').map((file, idx) => (
-                                                <li key={idx} style={{ marginBottom: '4px' }}>
-                                                    <a href={getUploadLink(file)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--link-alt)', textDecoration: 'none' }}>
-                                                        {file}
-                                                    </a>
-                                                </li>
+                                {app.supplemental_files && app.supplemental_files.split(',').filter(Boolean).length > 0 && (
+                                    <div style={{ marginTop: '10px' }}>
+                                        <strong style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--link)' }}>📎 {t('reviewer_additional_evidence')}</strong>
+                                        {/* Same card layout as the original evidence above */}
+                                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                            {app.supplemental_files.split(',').filter(Boolean).map((file, idx) => (
+                                                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '2px solid var(--border)', padding: '5px', borderRadius: '6px', backgroundColor: 'var(--surface-2)' }}>
+                                                    <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file}>
+                                                        📄 {t('reviewer_additional_file', { number: idx + 1 })}
+                                                    </div>
+                                                    {isImageFile(file) ? (
+                                                        <img 
+                                                            src={getUploadLink(file)} 
+                                                            alt={t('reviewer_evidence')} 
+                                                            onClick={() => window.open(getUploadLink(file))} 
+                                                            style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
+                                                        />
+                                                    ) : (
+                                                        <div 
+                                                            onClick={() => window.open(getUploadLink(file))} 
+                                                            title={file}
+                                                            style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer', backgroundColor: 'var(--surface)' }}
+                                                        >📄</div>
+                                                    )}
+                                                    <button onClick={() => handleDownload(file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
+                                                </div>
                                             ))}
-                                        </ul>
+                                        </div>
                                     </div>
                                 )}
                             </td>

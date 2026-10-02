@@ -191,6 +191,12 @@
     "invalid_login": "Invalid email or password.",
     "network_error": "Cannot connect to server."
   },
+  "email_link_checking": "Checking your link...",
+  "email_link_expired_title": "Link expired",
+  "email_link_expired_message": "This link has expired. Please log in to continue. You will be redirected to the login page in {{seconds}} seconds.",
+  "email_link_go_to_login": "Go to login",
+  "reviewer_additional_evidence": "Additional evidence (missing info)",
+  "reviewer_additional_file": "Additional file {{number}}",
   "theme": {
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode"
