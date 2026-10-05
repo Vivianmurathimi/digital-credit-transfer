@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import PasswordInput from './PasswordInput';
 
 const Register = () => {
     const { t, i18n } = useTranslation();
@@ -48,7 +49,7 @@ const Register = () => {
                         </div>
                         <div>
                             <label style={{ fontWeight: 'bold' }}>{t('register_password')}</label>
-                            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }} placeholder={t('register_password_placeholder')} />
+                            <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }} placeholder={t('register_password_placeholder')} />
                         </div>
                         
                         <button type="submit" style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', marginTop: '10px' }}>

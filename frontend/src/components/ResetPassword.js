@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import PasswordInput from './PasswordInput';
 
 const ResetPassword = () => {
     const { t } = useTranslation();
@@ -41,24 +42,20 @@ const ResetPassword = () => {
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <div>
                     <label style={{ fontWeight: 'bold' }}>{t('reset_new_password_label')}</label>
-                    <input 
-                        type="password" 
+                    <PasswordInput 
                         value={newPassword} 
                         onChange={(e) => setNewPassword(e.target.value)} 
-                        required 
                         style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }} 
-                        placeholder={t('reset_password_placeholder')} 
+                        placeholder={t('reset_password_placeholder')}
                     />
                 </div>
                 <div>
                     <label style={{ fontWeight: 'bold' }}>{t('reset_confirm_password_label')}</label>
-                    <input 
-                        type="password" 
+                    <PasswordInput 
                         value={confirmPassword} 
                         onChange={(e) => setConfirmPassword(e.target.value)} 
-                        required 
                         style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }} 
-                        placeholder={t('reset_password_placeholder')} 
+                        placeholder={t('reset_password_placeholder')}
                     />
                 </div>
                 
