@@ -33,6 +33,8 @@
   "login_email_placeholder": "Universitäts-E-Mail",
   "login_password_label": "Passwort",
   "login_password_placeholder": "Passwort",
+  "password_show": "Passwort anzeigen",
+  "password_hide": "Passwort verbergen",
   "login": "Anmelden",
   "login_register_prompt": "Noch kein Konto?",
   "login_register_link": "Hier registrieren",
