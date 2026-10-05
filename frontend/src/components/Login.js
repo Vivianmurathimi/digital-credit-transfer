@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import PasswordInput from './PasswordInput';
 
 const Login = () => {
     const { t } = useTranslation();
@@ -43,11 +44,9 @@ const Login = () => {
                 </div>
                 <div>
                     <label style={{ fontWeight: 'bold' }}>{t('login_password_label')}</label>
-                    <input 
-                        type="password" 
+                    <PasswordInput 
                         value={password} 
                         onChange={(e) => setPassword(e.target.value)} 
-                        required 
                         style={{ width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px' }} 
                         placeholder={t('login_password_placeholder')}
                     />

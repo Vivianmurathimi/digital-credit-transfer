@@ -33,6 +33,8 @@
   "login_email_placeholder": "Egyetemi E-mail",
   "login_password_label": "Jelszó",
   "login_password_placeholder": "Jelszó",
+  "password_show": "Jelszó megjelenítése",
+  "password_hide": "Jelszó elrejtése",
   "login": "Bejelentkezés",
   "login_register_prompt": "Még nincs fiókja?",
   "login_register_link": "Regisztráljon itt",
