@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import TermArchive from './TermArchive';
 
 const SuperAdminDashboard = () => {
     const { t } = useTranslation();
@@ -312,6 +313,9 @@ const SuperAdminDashboard = () => {
                     </tbody>
                 </table>
             </div>
+
+            {/* Term Archive: semester PDF books for audits */}
+            <TermArchive />
         </div>
     );
 };

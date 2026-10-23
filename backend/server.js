@@ -12,6 +12,7 @@ const dataRoutes = require('./routes/data');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
+const archiveRoutes = require('./routes/archive');
 
 const app = express();
 
@@ -57,6 +58,19 @@ const ensureUserLanguageColumn = async () => {
 
 ensureUserLanguageColumn();
 
+// Who made the last status decision and when (shown in the term archive book)
+const ensureApplicationReviewColumns = async () => {
+    try {
+        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
+        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;`);
+        console.log('✅ Ensured applications table has reviewed_by / reviewed_at columns');
+    } catch (err) {
+        console.error('❌ Could not ensure review columns:', err.message);
+    }
+};
+
+ensureApplicationReviewColumns();
+
 // Use the routes! 
 // Note: We mount 'uploadRoutes' at the root ('/') because the routes inside already say '/api/upload' and '/transcripts'
 app.use('/api', authRoutes);
@@ -64,6 +78,7 @@ app.use('/api', dataRoutes);
 app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/archive', archiveRoutes);
 
 // Start Server
 const PORT = process.env.PORT || 5000;

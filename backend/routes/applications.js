@@ -84,9 +84,10 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
         }
         const previousStatus = current.rows[0].status;
 
+        // Record who made the decision and when (the logged-in reviewer or superadmin)
         const updated = await pool.query(
-            'UPDATE applications SET status=$1, reviewer_note=$2 WHERE id=$3 RETURNING student_id, reviewer_note',
-            [status, note, req.params.id]
+            'UPDATE applications SET status=$1, reviewer_note=$2, reviewed_by=$3, reviewed_at=NOW() WHERE id=$4 RETURNING student_id, reviewer_note',
+            [status, note, req.user.id, req.params.id]
         );
         res.json({ success: true });
 
