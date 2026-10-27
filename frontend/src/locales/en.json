@@ -218,5 +218,7 @@
   "archive_error_dates": "Choose both dates, with the start date on or before the end date.",
   "archive_error_generate": "Could not generate the term book. Please try again.",
   "archive_error_list": "Could not load the saved term books.",
-  "archive_error_download": "Could not download the term book."
+  "archive_error_download": "Could not download the term book.",
+  "file_open_failed": "Could not open the file.",
+  "reviewer_download_failed": "Could not download the file."
 }

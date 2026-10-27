@@ -4,6 +4,7 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const notifyStudent = require('../utils/notifyStudent');
+const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 
 
 const checkSubmissionsOpen = async () => {
@@ -27,6 +28,13 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             return res.status(403).json({ success: false, error: 'Submissions are currently closed' });
         }
 
+        // Only the student's own uploads may be attached as evidence
+        const courses = Array.isArray(fulfilled_courses_json) ? fulfilled_courses_json : [];
+        const attachedFiles = courses.map((course) => course && course.file).filter(Boolean);
+        if ((await findFilesNotOwnedBy(attachedFiles, student_id)).length > 0) {
+            return res.status(403).json({ error: 'You can only attach files you uploaded yourself' });
+        }
+
         await pool.query(
             `INSERT INTO applications 
             (student_id, fulfilled_courses_json, pte_course_names, system_note, student_note, status) 
@@ -43,12 +51,20 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
     }
 });
 
-router.get('/applications/student/:id', verifyToken, async (req, res) => {
-    const requestedId = parseInt(req.params.id, 10);
-
-    if (req.user.role === 'student' && req.user.id !== requestedId) {
-        return res.status(403).json({ error: 'You can only view your own applications' });
+// The logged-in student's own applications: the id comes from the token, never from the URL
+router.get('/applications/mine', verifyToken, requireRole('student'), async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM applications WHERE student_id=$1 ORDER BY created_at DESC', [req.user.id]);
+        res.json({ success: true, applications: result.rows });
+    } catch (err) {
+        console.error('❌ Fetch my apps error:', err.message);
+        res.status(500).json({ error: 'Fetch failed' });
     }
+});
+
+// One student's applications, for reviewers and the superadmin (e.g. the impersonation view)
+router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+    const requestedId = parseInt(req.params.id, 10);
 
     try {
         const result = await pool.query('SELECT * FROM applications WHERE student_id=$1 ORDER BY created_at DESC', [requestedId]);
@@ -108,12 +124,16 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
     const { student_resubmit_note, new_files } = req.body;
 
     try {
-        const ownerCheck = await pool.query('SELECT student_id, supplemental_files FROM applications WHERE id = $1', [id]);
+        const ownerCheck = await pool.query('SELECT student_id, status, supplemental_files FROM applications WHERE id = $1', [id]);
         if (ownerCheck.rows.length === 0) {
             return res.status(404).json({ error: 'Application not found' });
         }
         if (ownerCheck.rows[0].student_id !== req.user.id) {
             return res.status(403).json({ error: 'You can only resubmit your own applications' });
+        }
+        // Only an application the reviewer sent back for more information can be resubmitted
+        if (ownerCheck.rows[0].status !== 'needs_info') {
+            return res.status(409).json({ error: 'This application is not waiting for more information' });
         }
 
         const isOpen = await checkSubmissionsOpen();
@@ -121,10 +141,14 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             return res.status(403).json({ success: false, error: 'Submissions are currently closed' });
         }
 
-        let updatedFiles = new_files;
-        if (ownerCheck.rows[0].supplemental_files) {
-            updatedFiles = ownerCheck.rows[0].supplemental_files + ',' + new_files;
+        // Only the student's own uploads may be added as evidence
+        const newFiles = splitFileList(new_files);
+        if ((await findFilesNotOwnedBy(newFiles, req.user.id)).length > 0) {
+            return res.status(403).json({ error: 'You can only attach files you uploaded yourself' });
         }
+
+        // Append to the existing list without empty entries (no stray commas)
+        const updatedFiles = [...splitFileList(ownerCheck.rows[0].supplemental_files), ...newFiles].join(',');
 
         await pool.query(
             "UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2 WHERE id = $3", 

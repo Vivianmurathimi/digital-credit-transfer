@@ -4,8 +4,9 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 
-// Existing: used for impersonation dropdowns — superadmins intentionally excluded
-router.get('/users', verifyToken, async (req, res) => {
+// Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
+// Superadmin only: it lists every student's and reviewer's name and email.
+router.get('/users', verifyToken, requireRole('superadmin'), async (req, res) => {
     try {
         const result = await pool.query("SELECT id,name,email,role FROM users WHERE role!='superadmin'");
         res.json({ success: true, users: result.rows });
@@ -85,7 +86,8 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
     }
 });
 
-router.get('/pte-courses', async (req, res) => {
+// Course catalogue for the application form: any logged-in user
+router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM courses');
         res.json({ success: true, courses: result.rows });

@@ -1,4 +1,6 @@
 require('dotenv').config();
+// Checks JWT_SECRET first: the server refuses to start without it
+require('./config/jwt');
 const express = require('express');
 const cors = require('cors');
 

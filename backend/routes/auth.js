@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const { signSessionToken } = require('../config/jwt');
+const verifyToken = require('../middleware/verifyToken');
 const pool = require('../db');
 const crypto = require('crypto'); 
 const sendEmail = require('../utils/sendEmail');
@@ -119,17 +120,23 @@ router.post('/login', async (req, res) => {
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
-        const token = jwt.sign(
-            { id: user.id, role: user.role },
-            process.env.JWT_SECRET || 'secret_key',
-            { expiresIn: '1h' }
-        );
+        // 30-minute token, renewed by /refresh-token while the user is active
+        const token = signSessionToken(user);
         
         res.json({ success: true, token, role: user.role });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: "Login failed" });
     }
+});
+
+// --- REFRESH TOKEN ROUTE ---
+// Called by the frontend while the user is active, to replace a token before it expires.
+// verifyToken has already checked the token and re-read the user's current role.
+// The original login time is kept, so a session still ends 8 hours after login.
+router.post('/refresh-token', verifyToken, (req, res) => {
+    const token = signSessionToken(req.user, req.sessionStart);
+    res.json({ success: true, token, role: req.user.role });
 });
 
 // --- FORGOT PASSWORD ROUTE ---

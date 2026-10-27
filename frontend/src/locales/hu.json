@@ -218,5 +218,7 @@
   "archive_error_dates": "Adja meg mindkét dátumot; a kezdő dátum nem lehet későbbi a záró dátumnál.",
   "archive_error_generate": "A félévi könyv létrehozása nem sikerült. Kérjük, próbálja újra.",
   "archive_error_list": "A mentett félévi könyvek betöltése nem sikerült.",
-  "archive_error_download": "A félévi könyv letöltése nem sikerült."
+  "archive_error_download": "A félévi könyv letöltése nem sikerült.",
+  "file_open_failed": "A fájl megnyitása nem sikerült.",
+  "reviewer_download_failed": "A fájl letöltése nem sikerült."
 }

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import SecureImage from './SecureImage';
+import { openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Set up the worker for PDF.js to handle conversions
@@ -56,7 +58,10 @@ const StudentDashboard = ({ userId }) => {
     const fetchMyApplications = useCallback(async () => {
         if (!userId) return;
         try {
-            const res = await api.get(`/api/applications/student/${userId}`);
+            // A student reads "my applications" (id from the login token);
+            // the superadmin impersonating a student reads that student's list by id
+            const isImpersonating = !!localStorage.getItem('originalRole');
+            const res = await api.get(isImpersonating ? `/api/applications/student/${userId}` : '/api/applications/mine');
             if (res.data.success) setMyApplications(res.data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
     }, [userId]);
@@ -111,7 +116,11 @@ const StudentDashboard = ({ userId }) => {
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
     
     const getUploadEndpoint = (fileName = '') => `/api/uploads${fileName ? `/${encodeURIComponent(fileName)}` : ''}`;
-    const getUploadLink = (fileName) => `/api/uploads/${encodeURIComponent(fileName)}`;
+    // Evidence files need the login token, so they are opened through openSecureFile
+    const handleOpenFile = (e, fileName) => {
+        e.preventDefault();
+        openSecureFile(fileName).catch(() => alert(t('file_open_failed')));
+    };
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
     const clearUploadSelection = (isResubmit = false) => {
@@ -446,10 +455,10 @@ const StudentDashboard = ({ userId }) => {
                                     {/* Same thumbnail + Open file + Remove layout as the first upload */}
                                     {resubmitFiles.map((file, idx) => (
                                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
-                                            <a href={getUploadLink(file)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
+                                            <a href="#open-file" onClick={(e) => handleOpenFile(e, file)} style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
                                                 {isImageFile(file) ? (
-                                                    <img 
-                                                        src={getUploadLink(file)} 
+                                                    <SecureImage 
+                                                        fileName={file} 
                                                         alt="Evidence Preview"
                                                         style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                     />
@@ -500,10 +509,10 @@ const StudentDashboard = ({ userId }) => {
                                 {/* Clickable Thumbnail! */}
                                 {course.file && (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <a href={getUploadLink(course.file)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
+                                        <a href="#open-file" onClick={(e) => handleOpenFile(e, course.file)} style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
                                             {isImageFile(course.file) ? (
-                                                <img 
-                                                    src={getUploadLink(course.file)} 
+                                                <SecureImage 
+                                                    fileName={course.file} 
                                                     alt="Evidence Preview"
                                                     style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                 />

@@ -218,5 +218,7 @@
   "archive_error_dates": "Wählen Sie beide Daten; das Startdatum darf nicht nach dem Enddatum liegen.",
   "archive_error_generate": "Das Semesterbuch konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
   "archive_error_list": "Die gespeicherten Semesterbücher konnten nicht geladen werden.",
-  "archive_error_download": "Das Semesterbuch konnte nicht heruntergeladen werden."
+  "archive_error_download": "Das Semesterbuch konnte nicht heruntergeladen werden.",
+  "file_open_failed": "Die Datei konnte nicht geöffnet werden.",
+  "reviewer_download_failed": "Die Datei konnte nicht heruntergeladen werden."
 }
