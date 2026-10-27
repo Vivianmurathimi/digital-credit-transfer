@@ -210,7 +210,11 @@
     "NOT_WAITING_FOR_INFO": "Dieser Antrag wartet nicht auf weitere Informationen.",
     "INVALID_STATUS": "Dieser Status ist ungültig.",
     "NO_FILE": "Es wurde keine Datei empfangen. Bitte wählen Sie eine Datei und versuchen Sie es erneut.",
-    "FILE_NOT_FOUND": "Datei nicht gefunden."
+    "FILE_NOT_FOUND": "Datei nicht gefunden.",
+    "UNSUPPORTED_LANGUAGE": "Diese Sprache wird nicht unterstützt.",
+    "INVALID_ROLE": "Diese Rolle existiert nicht.",
+    "USER_NOT_FOUND": "Benutzer nicht gefunden.",
+    "LAST_SUPERADMIN": "Der letzte verbleibende Super-Admin kann nicht entfernt werden."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -240,5 +244,6 @@
   "archive_error_download": "Das Semesterbuch konnte nicht heruntergeladen werden.",
   "file_open_failed": "Die Datei konnte nicht geöffnet werden.",
   "file_remove_failed": "Die hochgeladene Datei konnte nicht entfernt werden. Bitte versuchen Sie es erneut.",
+  "superadmin_role_update_failed": "Die Rolle konnte nicht geändert werden.",
   "reviewer_download_failed": "Die Datei konnte nicht heruntergeladen werden."
 }

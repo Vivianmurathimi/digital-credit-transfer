@@ -123,8 +123,8 @@ const SuperAdminDashboard = () => {
                 setTimeout(() => setRoleUpdateStatus(''), 3000);
             }
         } catch (err) {
-            // The backend sends a specific message (e.g. "Cannot remove the last remaining superadmin")
-            const errorMsg = err.response?.data?.error || 'Failed to update role.';
+            // Translated reason from the backend code (e.g. LAST_SUPERADMIN), or a general message
+            const errorMsg = getErrorMessage(err, t, 'superadmin_role_update_failed');
             setRoleUpdateStatus(errorMsg);
             alert(errorMsg);
             setTimeout(() => setRoleUpdateStatus(''), 4000);

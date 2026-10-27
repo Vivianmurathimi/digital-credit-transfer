@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
+const sendError = require('../utils/sendError');
 
 // Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
 // Superadmin only: it lists every student's and reviewer's name and email.
@@ -11,7 +12,7 @@ router.get('/users', verifyToken, requireRole('superadmin'), async (req, res) =>
         const result = await pool.query("SELECT id,name,email,role FROM users WHERE role!='superadmin'");
         res.json({ success: true, users: result.rows });
     } catch (err) {
-        res.status(500).json({ error: "Fetch users failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch users failed');
     }
 });
 
@@ -21,7 +22,7 @@ router.get('/users/all', verifyToken, requireRole('superadmin'), async (req, res
         const result = await pool.query("SELECT id, name, email, role FROM users ORDER BY role, name");
         res.json({ success: true, users: result.rows });
     } catch (err) {
-        res.status(500).json({ error: "Fetch users failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch users failed');
     }
 });
 
@@ -32,10 +33,10 @@ router.put('/users/:id/language', verifyToken, async (req, res) => {
     const language = String(req.body.language || '').slice(0, 2).toLowerCase();
 
     if (req.user.id !== id) {
-        return res.status(403).json({ error: 'You can only change your own language' });
+        return sendError(res, 403, 'NOT_OWNER', 'You can only change your own language');
     }
     if (!['hu', 'en', 'de'].includes(language)) {
-        return res.status(400).json({ error: 'Unsupported language' });
+        return sendError(res, 400, 'UNSUPPORTED_LANGUAGE', 'Unsupported language');
     }
 
     try {
@@ -43,7 +44,7 @@ router.put('/users/:id/language', verifyToken, async (req, res) => {
         res.json({ success: true, language });
     } catch (err) {
         console.error('❌ Language update error:', err.message);
-        res.status(500).json({ error: 'Language update failed' });
+        sendError(res, 500, 'SERVER_ERROR', 'Language update failed');
     }
 });
 
@@ -54,13 +55,13 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
     const validRoles = ['student', 'reviewer', 'superadmin'];
 
     if (!validRoles.includes(newRole)) {
-        return res.status(400).json({ error: "Invalid role specified" });
+        return sendError(res, 400, 'INVALID_ROLE', 'Invalid role specified');
     }
 
     try {
         const userResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [id]);
         if (userResult.rows.length === 0) {
-            return res.status(404).json({ error: "User not found" });
+            return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
         }
         const targetUser = userResult.rows[0];
 
@@ -69,7 +70,7 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
             const superadminCount = parseInt(countResult.rows[0].count, 10);
 
             if (superadminCount <= 1) {
-                return res.status(400).json({ error: "Cannot remove the last remaining superadmin" });
+                return sendError(res, 400, 'LAST_SUPERADMIN', 'Cannot remove the last remaining superadmin');
             }
         }
 
@@ -82,7 +83,7 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
 
     } catch (err) {
         console.error('Role update error:', err.message);
-        res.status(500).json({ error: "Failed to update role" });
+        sendError(res, 500, 'SERVER_ERROR', 'Failed to update role');
     }
 });
 
@@ -92,7 +93,7 @@ router.get('/pte-courses', verifyToken, async (req, res) => {
         const result = await pool.query('SELECT * FROM courses');
         res.json({ success: true, courses: result.rows });
     } catch {
-        res.status(500).json({ error: "Fetch failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
     }
 });
 

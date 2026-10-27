@@ -210,7 +210,11 @@
     "NOT_WAITING_FOR_INFO": "Ez a kérelem nem vár további információra.",
     "INVALID_STATUS": "Ez az állapot érvénytelen.",
     "NO_FILE": "Nem érkezett fájl. Kérjük, válasszon fájlt, és próbálja újra.",
-    "FILE_NOT_FOUND": "A fájl nem található."
+    "FILE_NOT_FOUND": "A fájl nem található.",
+    "UNSUPPORTED_LANGUAGE": "Ez a nyelv nem támogatott.",
+    "INVALID_ROLE": "Ez a szerepkör nem létezik.",
+    "USER_NOT_FOUND": "A felhasználó nem található.",
+    "LAST_SUPERADMIN": "Az utolsó szuperadminisztrátor nem távolítható el."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -240,5 +244,6 @@
   "archive_error_download": "A félévi könyv letöltése nem sikerült.",
   "file_open_failed": "A fájl megnyitása nem sikerült.",
   "file_remove_failed": "A feltöltött fájl eltávolítása nem sikerült. Kérjük, próbálja újra.",
+  "superadmin_role_update_failed": "A szerepkör módosítása nem sikerült.",
   "reviewer_download_failed": "A fájl letöltése nem sikerült."
 }
