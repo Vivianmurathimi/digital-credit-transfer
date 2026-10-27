@@ -1,4 +1,5 @@
 import api from './api';
+import { unpackBlobError } from './errorMessage';
 
 // Evidence files need the login token, so plain <img src> and <a href> links cannot load them.
 // These helpers fetch a file WITH the token and hand the browser a temporary local copy.
@@ -13,11 +14,7 @@ export const fetchFileBlob = async (fileName) => {
         const res = await api.get(getUploadEndpoint(fileName), { responseType: 'blob' });
         return res.data;
     } catch (err) {
-        const data = err.response?.data;
-        if (data instanceof Blob && data.type.includes('application/json')) {
-            try { err.response.data = JSON.parse(await data.text()); } catch { /* leave as is */ }
-        }
-        throw err;
+        throw await unpackBlobError(err);
     }
 };
 

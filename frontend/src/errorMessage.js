@@ -15,5 +15,15 @@ export const getErrorMessage = (err, t, fallbackKey) => {
     return t(fallbackKey);
 };
 
+// File downloads use responseType 'blob', so an error answer arrives as a Blob too.
+// This turns it back into { error, code } so getErrorMessage can translate it.
+export const unpackBlobError = async (err) => {
+    const data = err?.response?.data;
+    if (data instanceof Blob && data.type.includes('application/json')) {
+        try { err.response.data = JSON.parse(await data.text()); } catch { /* leave as is */ }
+    }
+    return err;
+};
+
 // The machine code alone, for pages that react to a specific error
 export const getErrorCode = (err) => err?.response?.data?.code || null;

@@ -214,7 +214,10 @@
     "UNSUPPORTED_LANGUAGE": "Ez a nyelv nem támogatott.",
     "INVALID_ROLE": "Ez a szerepkör nem létezik.",
     "USER_NOT_FOUND": "A felhasználó nem található.",
-    "LAST_SUPERADMIN": "Az utolsó szuperadminisztrátor nem távolítható el."
+    "LAST_SUPERADMIN": "Az utolsó szuperadminisztrátor nem távolítható el.",
+    "INVALID_DATES": "Kérjük, adjon meg érvényes dátumokat; a kezdő dátum nem lehet későbbi a záró dátumnál.",
+    "INVALID_ARCHIVE_NAME": "Ez a félévi könyv neve érvénytelen.",
+    "ARCHIVE_NOT_FOUND": "A félévi könyv nem található."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

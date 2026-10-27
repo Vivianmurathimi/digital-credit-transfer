@@ -214,7 +214,10 @@
     "UNSUPPORTED_LANGUAGE": "This language is not supported.",
     "INVALID_ROLE": "This role does not exist.",
     "USER_NOT_FOUND": "User not found.",
-    "LAST_SUPERADMIN": "The last remaining super admin cannot be removed."
+    "LAST_SUPERADMIN": "The last remaining super admin cannot be removed.",
+    "INVALID_DATES": "Please choose valid dates, with the start date on or before the end date.",
+    "INVALID_ARCHIVE_NAME": "This term book name is not valid.",
+    "ARCHIVE_NOT_FOUND": "Term book not found."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
