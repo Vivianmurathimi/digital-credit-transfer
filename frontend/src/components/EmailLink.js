@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import { getErrorCode } from '../errorMessage';
 
 // Seconds before an expired link sends the user to the login page
 const REDIRECT_SECONDS = 5;
@@ -13,6 +14,7 @@ const EmailLink = () => {
     const { token } = useParams();
     const navigate = useNavigate();
     const [expired, setExpired] = useState(false);
+    const [invalid, setInvalid] = useState(false); // tampered link, not just an old one
     const hasChecked = useRef(false);
 
     useEffect(() => {
@@ -32,7 +34,8 @@ const EmailLink = () => {
                     loggedInId = null;
                 }
                 navigate(loggedInId === res.data.studentId ? '/dashboard' : '/login', { replace: true });
-            } catch {
+            } catch (err) {
+                setInvalid(getErrorCode(err) === 'INVALID_LINK');
                 setExpired(true);
             }
         };
@@ -54,7 +57,7 @@ const EmailLink = () => {
             ) : (
                 <>
                     <h2 style={{ color: 'var(--danger-accent)', marginTop: 0 }}>{t('email_link_expired_title')}</h2>
-                    <p>{t('email_link_expired_message', { seconds: REDIRECT_SECONDS })}</p>
+                    <p>{invalid ? t('errors.INVALID_LINK') : t('email_link_expired_message', { seconds: REDIRECT_SECONDS })}</p>
                     <button
                         onClick={() => navigate('/login', { replace: true })}
                         style={{ padding: '10px 20px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}

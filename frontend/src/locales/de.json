@@ -191,7 +191,17 @@
   "superadmin_no_applications": "Noch keine Anträge im System.",
   "errors": {
     "invalid_login": "Ungültige E-Mail oder Passwort.",
-    "network_error": "Verbindung zum Server nicht möglich."
+    "network_error": "Verbindung zum Server nicht möglich.",
+    "INVALID_CREDENTIALS": "E-Mail-Adresse oder Passwort ist falsch.",
+    "EMAIL_NOT_VERIFIED": "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse. Sehen Sie in Ihrem Posteingang nach.",
+    "MISSING_FIELDS": "Bitte füllen Sie alle Pflichtfelder aus.",
+    "EMAIL_TAKEN": "Diese E-Mail-Adresse ist bereits registriert.",
+    "INVALID_EMAIL_DOMAIN": "Bitte verwenden Sie Ihre Universitäts-E-Mail-Adresse.",
+    "INVALID_VERIFY_LINK": "Dieser Bestätigungslink ist ungültig oder wurde bereits verwendet.",
+    "INVALID_RESET_LINK": "Dieser Link zum Zurücksetzen des Passworts ist ungültig oder abgelaufen.",
+    "LINK_EXPIRED": "Dieser Link ist abgelaufen. Bitte melden Sie sich an, um fortzufahren.",
+    "INVALID_LINK": "Dieser Link ist ungültig. Bitte melden Sie sich an, um fortzufahren.",
+    "SERVER_ERROR": "Auf unserer Seite ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",

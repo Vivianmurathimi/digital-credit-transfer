@@ -191,7 +191,17 @@
   "superadmin_no_applications": "Még nincs rendszerben kérelem.",
   "errors": {
     "invalid_login": "Érvénytelen e-mail vagy jelszó.",
-    "network_error": "Nem lehet csatlakozni a szerverhez."
+    "network_error": "Nem lehet csatlakozni a szerverhez.",
+    "INVALID_CREDENTIALS": "Hibás e-mail-cím vagy jelszó.",
+    "EMAIL_NOT_VERIFIED": "Kérjük, előbb erősítse meg e-mail-címét. Nézze meg a beérkező leveleit.",
+    "MISSING_FIELDS": "Kérjük, töltse ki az összes kötelező mezőt.",
+    "EMAIL_TAKEN": "Ez az e-mail-cím már regisztrálva van.",
+    "INVALID_EMAIL_DOMAIN": "Kérjük, egyetemi e-mail-címét használja.",
+    "INVALID_VERIFY_LINK": "Ez a megerősítő link érvénytelen, vagy már felhasználták.",
+    "INVALID_RESET_LINK": "Ez a jelszó-visszaállító link érvénytelen vagy lejárt.",
+    "LINK_EXPIRED": "Ez a link lejárt. A folytatáshoz jelentkezzen be.",
+    "INVALID_LINK": "Ez a link érvénytelen. A folytatáshoz jelentkezzen be.",
+    "SERVER_ERROR": "Hiba történt a rendszerben. Kérjük, próbálja újra később."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

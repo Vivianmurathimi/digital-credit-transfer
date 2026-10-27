@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 
 const Register = () => {
@@ -19,7 +20,7 @@ const Register = () => {
                 setIsRegistered(true);
             }
         } catch (err) {
-            setError(err.response?.data?.error || t('register_error_default'));
+            setError(getErrorMessage(err, t, 'register_error_default'));
         }
     };
 

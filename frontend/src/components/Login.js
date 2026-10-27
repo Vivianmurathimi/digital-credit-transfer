@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 
 const Login = () => {
@@ -21,7 +22,7 @@ const Login = () => {
                 navigate('/dashboard');
             }
         } catch (err) {
-            setError(err.response?.data?.error || t('login_error_default'));
+            setError(getErrorMessage(err, t, 'login_error_default'));
         }
     };
 

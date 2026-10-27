@@ -191,7 +191,17 @@
   "superadmin_no_applications": "No applications in system yet.",
   "errors": {
     "invalid_login": "Invalid email or password.",
-    "network_error": "Cannot connect to server."
+    "network_error": "Cannot connect to server.",
+    "INVALID_CREDENTIALS": "Incorrect email or password.",
+    "EMAIL_NOT_VERIFIED": "Please verify your email first. Check your inbox.",
+    "MISSING_FIELDS": "Please fill in all required fields.",
+    "EMAIL_TAKEN": "This email is already registered.",
+    "INVALID_EMAIL_DOMAIN": "Please use your university email address.",
+    "INVALID_VERIFY_LINK": "This verification link is invalid or has already been used.",
+    "INVALID_RESET_LINK": "This password reset link is invalid or has expired.",
+    "LINK_EXPIRED": "This link has expired. Please log in to continue.",
+    "INVALID_LINK": "This link is not valid. Please log in to continue.",
+    "SERVER_ERROR": "Something went wrong on our side. Please try again later."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",

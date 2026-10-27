@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 
 const ResetPassword = () => {
@@ -28,7 +29,7 @@ const ResetPassword = () => {
             setMessage(res.data.message || t('reset_success_message'));
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
-            setError(err.response?.data?.error || t('reset_error_default'));
+            setError(getErrorMessage(err, t, 'reset_error_default'));
         }
     };
 

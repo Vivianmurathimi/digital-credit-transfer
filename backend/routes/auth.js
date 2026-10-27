@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 const { normalizeLanguage } = require('../utils/emailTemplates');
 const { checkEmailLink } = require('../utils/emailLink');
+const sendError = require('../utils/sendError');
 
 // --- REGISTER ROUTE ---
 router.post('/register', async (req, res) => {
@@ -15,7 +16,7 @@ router.post('/register', async (req, res) => {
     
     // 🆕 YOUR ADDITION: Check if fields are missing
     if (!email || !password || !name) {
-        return res.status(400).json({ error: "All fields required" });
+        return sendError(res, 400, 'MISSING_FIELDS', 'All fields required');
     }
 
     try {
@@ -24,7 +25,7 @@ router.post('/register', async (req, res) => {
 
         // 1. Check if user already exists
         const userExists = await pool.query('SELECT * FROM users WHERE email = $1', [lowerEmail]);
-        if (userExists.rows.length > 0) return res.status(400).json({ error: "Email already registered" });
+        if (userExists.rows.length > 0) return sendError(res, 400, 'EMAIL_TAKEN', 'Email already registered');
 
         // (Note: is_verified defaults to false automatically in the database schema)
 
@@ -33,7 +34,7 @@ router.post('/register', async (req, res) => {
         if (lowerEmail.endsWith('@mik.pte.hu')) assignedRole = 'reviewer';
         else if (lowerEmail.endsWith('@tr.pte.hu')) assignedRole = 'student';
         else if (lowerEmail.endsWith('@adminisztracio.pte.hu')) assignedRole = 'superadmin';
-        else return res.status(400).json({ error: "Invalid domain. Use @mik or @tr email." });
+        else return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -63,7 +64,7 @@ router.post('/register', async (req, res) => {
 
     } catch (err) {
         console.error(err.message);
-        res.status(500).json({ error: "Server error during registration" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error during registration');
     }
 });
 
@@ -72,7 +73,11 @@ router.post('/register', async (req, res) => {
 // it only says whether the link is still valid (10 minutes).
 router.get('/email-link/:token', (req, res) => {
     const result = checkEmailLink(req.params.token);
-    if (!result.valid) return res.status(410).json(result);
+    if (!result.valid) {
+        return result.reason === 'expired'
+            ? sendError(res, 410, 'LINK_EXPIRED', 'This link has expired')
+            : sendError(res, 410, 'INVALID_LINK', 'This link is not valid');
+    }
     res.json(result);
 });
 
@@ -87,13 +92,13 @@ router.get('/verify/:token', async (req, res) => {
         );
 
         if (result.rows.length === 0) {
-            return res.status(400).send("Invalid or expired token");
+            return sendError(res, 400, 'INVALID_VERIFY_LINK', 'Invalid or already used verification link');
         }
 
-        res.send("Email verified successfully! You may now close this tab and log in.");
+        res.json({ success: true, message: 'Email verified successfully! You may now close this tab and log in.' });
     } catch (err) {
         console.error(err.message);
-        res.status(500).send("Verification failed");
+        sendError(res, 500, 'SERVER_ERROR', 'Verification failed');
     }
 });
 
@@ -103,22 +108,22 @@ router.post('/login', async (req, res) => {
 
     // 🆕 Quick validation for login
     if (!email || !password) {
-        return res.status(400).json({ error: "All fields required" });
+        return sendError(res, 400, 'MISSING_FIELDS', 'All fields required');
     }
 
     try {
         const result = await pool.query('SELECT * FROM users WHERE email=$1', [email.toLowerCase()]);
-        if (result.rows.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+        if (result.rows.length === 0) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
         const user = result.rows[0];
         
         // 🆕 YOUR ADDITION: Block unverified users right here!
         if (!user.is_verified) {
-            return res.status(403).json({ error: "Please verify your email first. Check your inbox!" });
+            return sendError(res, 403, 'EMAIL_NOT_VERIFIED', 'Please verify your email first. Check your inbox!');
         }
 
         const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(401).json({ error: "Invalid credentials" });
+        if (!match) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
         // 30-minute token, renewed by /refresh-token while the user is active
         const token = signSessionToken(user);
@@ -126,7 +131,7 @@ router.post('/login', async (req, res) => {
         res.json({ success: true, token, role: user.role });
     } catch (err) {
         console.error(err.message);
-        res.status(500).json({ error: "Login failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Login failed');
     }
 });
 
@@ -142,7 +147,7 @@ router.post('/refresh-token', verifyToken, (req, res) => {
 // --- FORGOT PASSWORD ROUTE ---
 router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
+    if (!email) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
 
     try {
         // 1. Check if user exists
@@ -182,7 +187,7 @@ router.post('/forgot-password', async (req, res) => {
 
     } catch (err) {
         console.error("Forgot password error:", err.message);
-        res.status(500).json({ error: "Server error" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error');
     }
 });
 
@@ -191,7 +196,7 @@ router.post('/reset-password/:token', async (req, res) => {
     const { token } = req.params;
     const { newPassword } = req.body;
 
-    if (!newPassword) return res.status(400).json({ error: "New password is required" });
+    if (!newPassword) return sendError(res, 400, 'MISSING_FIELDS', 'New password is required');
 
     try {
         // 1. Find user by token AND ensure the token hasn't expired
@@ -201,7 +206,7 @@ router.post('/reset-password/:token', async (req, res) => {
         );
 
         if (result.rows.length === 0) {
-            return res.status(400).json({ error: "Password reset link is invalid or has expired." });
+            return sendError(res, 400, 'INVALID_RESET_LINK', 'Password reset link is invalid or has expired');
         }
 
         const user = result.rows[0];
@@ -220,7 +225,7 @@ router.post('/reset-password/:token', async (req, res) => {
 
     } catch (err) {
         console.error("Reset password error:", err.message);
-        res.status(500).json({ error: "Server error" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error');
     }
 });
 module.exports = router;
