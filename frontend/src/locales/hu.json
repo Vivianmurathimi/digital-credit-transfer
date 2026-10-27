@@ -217,7 +217,12 @@
     "LAST_SUPERADMIN": "Az utolsó szuperadminisztrátor nem távolítható el.",
     "INVALID_DATES": "Kérjük, adjon meg érvényes dátumokat; a kezdő dátum nem lehet későbbi a záró dátumnál.",
     "INVALID_ARCHIVE_NAME": "Ez a félévi könyv neve érvénytelen.",
-    "ARCHIVE_NOT_FOUND": "A félévi könyv nem található."
+    "ARCHIVE_NOT_FOUND": "A félévi könyv nem található.",
+    "NO_TOKEN": "A folytatáshoz jelentkezzen be.",
+    "INVALID_TOKEN": "A munkamenet érvénytelen. Kérjük, jelentkezzen be újra.",
+    "TOKEN_EXPIRED": "A munkamenet 30 perc inaktivitás után lejárt. Kérjük, jelentkezzen be újra.",
+    "SESSION_TOO_OLD": "Biztonsági okokból a munkamenet 8 óra után véget ér. Kérjük, jelentkezzen be újra.",
+    "ACCOUNT_GONE": "Ez a fiók már nem létezik."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -247,6 +252,7 @@
   "archive_error_download": "A félévi könyv letöltése nem sikerült.",
   "file_open_failed": "A fájl megnyitása nem sikerült.",
   "file_remove_failed": "A feltöltött fájl eltávolítása nem sikerült. Kérjük, próbálja újra.",
+  "notice_close": "Bez\u00e1r\u00e1s",
   "superadmin_role_update_failed": "A szerepkör módosítása nem sikerült.",
   "reviewer_download_failed": "A fájl letöltése nem sikerült."
 }

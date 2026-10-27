@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
+import { saveSession } from '../session';
 
 const Login = () => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
+    const location = useLocation();
+    // Set by clearSession, e.g. /login?reason=TOKEN_EXPIRED; translated here
+    const reason = new URLSearchParams(location.search).get('reason');
+    const reasonText = reason && i18n.exists(`errors.${reason}`) ? t(`errors.${reason}`) : null;
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -17,8 +22,7 @@ const Login = () => {
         try {
             const res = await axios.post('/api/login', { email, password });
             if (res.data.success) {
-                localStorage.setItem('token', res.data.token);
-                localStorage.setItem('role', res.data.role);
+                saveSession(res.data.token, res.data.role);
                 navigate('/dashboard');
             }
         } catch (err) {
@@ -29,6 +33,9 @@ const Login = () => {
     return (
         <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid var(--border-strong)', borderRadius: '8px' }}>
             <h2 style={{ textAlign: 'center', color: 'var(--heading)' }}>{t('login_title')}</h2>
+            {reasonText && !error && (
+                <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', textAlign: 'center' }}>{reasonText}</p>
+            )}
             {error && <p style={{ color: 'var(--error-text)', textAlign: 'center', fontWeight: 'bold' }}>{error}</p>}
             
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>

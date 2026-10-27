@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { clearSession } from '../session';
 
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
@@ -23,10 +24,8 @@ const Dashboard = () => {
     const role = localStorage.getItem('impersonatedRole') || localStorage.getItem('role');
     const impersonatedName = localStorage.getItem('impersonatedName');
 
-    const handleLogout = () => {
-        localStorage.clear();
-        navigate('/login'); 
-    };
+    // Removes only the session (keeps e.g. the chosen language) and goes to the login page
+    const handleLogout = () => clearSession();
 
     const stopImpersonation = () => {
         localStorage.removeItem('originalRole');
