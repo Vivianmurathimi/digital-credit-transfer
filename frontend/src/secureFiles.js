@@ -5,10 +5,20 @@ import api from './api';
 
 export const getUploadEndpoint = (fileName) => `/api/uploads/${encodeURIComponent(fileName)}`;
 
-// Downloads one file as a Blob (throws if not allowed or not found)
+// Downloads one file as a Blob (throws if not allowed or not found).
+// Error answers also arrive as a Blob, so they are unpacked back into
+// { error, code } for getErrorMessage to translate.
 export const fetchFileBlob = async (fileName) => {
-    const res = await api.get(getUploadEndpoint(fileName), { responseType: 'blob' });
-    return res.data;
+    try {
+        const res = await api.get(getUploadEndpoint(fileName), { responseType: 'blob' });
+        return res.data;
+    } catch (err) {
+        const data = err.response?.data;
+        if (data instanceof Blob && data.type.includes('application/json')) {
+            try { err.response.data = JSON.parse(await data.text()); } catch { /* leave as is */ }
+        }
+        throw err;
+    }
 };
 
 // Opens a file in a new tab. The tab is opened straight away (inside the click),

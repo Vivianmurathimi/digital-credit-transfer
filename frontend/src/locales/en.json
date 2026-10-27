@@ -208,7 +208,9 @@
     "SUBMISSIONS_CLOSED": "Submissions are currently closed.",
     "APPLICATION_NOT_FOUND": "Application not found.",
     "NOT_WAITING_FOR_INFO": "This application is not waiting for more information.",
-    "INVALID_STATUS": "This status is not valid."
+    "INVALID_STATUS": "This status is not valid.",
+    "NO_FILE": "No file was received. Please choose a file and try again.",
+    "FILE_NOT_FOUND": "File not found."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
@@ -237,5 +239,6 @@
   "archive_error_list": "Could not load the saved term books.",
   "archive_error_download": "Could not download the term book.",
   "file_open_failed": "Could not open the file.",
+  "file_remove_failed": "Could not remove the uploaded file. Please try again.",
   "reviewer_download_failed": "Could not download the file."
 }

@@ -120,7 +120,7 @@ const StudentDashboard = ({ userId }) => {
     // Evidence files need the login token, so they are opened through openSecureFile
     const handleOpenFile = (e, fileName) => {
         e.preventDefault();
-        openSecureFile(fileName).catch(() => alert(t('file_open_failed')));
+        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
     };
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
@@ -144,7 +144,7 @@ const StudentDashboard = ({ userId }) => {
             if (activeUploadId === courseId) setActiveUploadId(null);
         } catch (err) {
             console.error('Delete upload error', err);
-            alert('Could not remove the uploaded file. Please try again.');
+            alert(getErrorMessage(err, t, 'file_remove_failed'));
         }
     };
 
@@ -157,7 +157,7 @@ const StudentDashboard = ({ userId }) => {
             setResubmitFiles(prev => prev.filter(f => f !== fileName));
         } catch (err) {
             console.error('Delete resubmit upload error', err);
-            alert('Could not remove the uploaded file. Please try again.');
+            alert(getErrorMessage(err, t, 'file_remove_failed'));
         }
     };
 
@@ -289,7 +289,7 @@ const StudentDashboard = ({ userId }) => {
                 setUploadStatus(t('student_upload_saved'));
                 setTimeout(() => setUploadStatus(''), 2000);
             }
-        } catch (err) { setUploadStatus(t('student_upload_failed')); }
+        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_upload_failed')); }
     }
 
     const handleSubmitApplication = async () => {

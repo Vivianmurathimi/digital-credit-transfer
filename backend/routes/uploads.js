@@ -6,6 +6,7 @@ const minioClient = require('../minio');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const { getFileOwner } = require('../utils/fileOwner');
+const sendError = require('../utils/sendError');
 
 const BUCKET_NAME = 'transcripts';
 const upload = multer({ storage: multer.memoryStorage() });
@@ -41,7 +42,7 @@ ensureBucket().catch(err => console.error("MinIO Bucket Error:", err));
  */
 router.post('/', verifyToken, requireRole('student'), upload.single('file'), async (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ error: "No file received by backend" });
+        return sendError(res, 400, 'NO_FILE', 'No file received by backend');
     }
 
     const fileName = `${Date.now()}-${req.file.originalname.replace(/\s/g, '_')}`;
@@ -63,7 +64,7 @@ router.post('/', verifyToken, requireRole('student'), upload.single('file'), asy
         res.json({ success: true, fileName });
     } catch (err) {
         console.error("❌ MinIO PutObject Error:", err.message);
-        res.status(500).json({ error: "Upload failed at storage server" });
+        sendError(res, 500, 'SERVER_ERROR', 'Upload failed at storage server');
     }
 });
 
@@ -75,18 +76,18 @@ router.delete('/:filename', verifyToken, requireRole('student'), async (req, res
     try {
         const { exists, ownerId } = await getFileOwner(req.params.filename);
         if (!exists) {
-            return res.status(404).json({ error: 'File not found' });
+            return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
         }
 
         if (ownerId !== req.user.id) {
-            return res.status(403).json({ error: 'You can only delete your own files' });
+            return sendError(res, 403, 'NOT_OWNER', 'You can only delete your own files');
         }
 
         await minioClient.removeObject(BUCKET_NAME, req.params.filename);
         res.json({ success: true });
     } catch (err) {
         console.error("❌ Delete error:", err.message);
-        res.status(500).json({ error: "Delete failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Delete failed');
     }
 });
 
@@ -99,13 +100,13 @@ router.get('/:filename', verifyToken, async (req, res) => {
     try {
         const { exists, ownerId } = await getFileOwner(req.params.filename);
         if (!exists) {
-            return res.status(404).json({ error: 'File not found' });
+            return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
         }
 
         const isOwner = ownerId === req.user.id;
         const isStaff = req.user.role === 'reviewer' || req.user.role === 'superadmin';
         if (!isOwner && !isStaff) {
-            return res.status(403).json({ error: 'You can only view your own files' });
+            return sendError(res, 403, 'NOT_OWNER', 'You can only view your own files');
         }
 
         const stream = await minioClient.getObject(BUCKET_NAME, req.params.filename);
@@ -117,7 +118,7 @@ router.get('/:filename', verifyToken, async (req, res) => {
         stream.pipe(res);
     } catch (err) {
         console.error("❌ File Fetch Error:", err.message);
-        res.status(500).json({ error: 'Could not load the file' });
+        sendError(res, 500, 'SERVER_ERROR', 'Could not load the file');
     }
 });
 

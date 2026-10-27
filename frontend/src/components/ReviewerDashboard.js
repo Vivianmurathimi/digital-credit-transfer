@@ -37,14 +37,14 @@ const ReviewerDashboard = () => {
 
     // Evidence files need the login token: open and download them through secureFiles
     const handleOpenFile = (fileName) => {
-        openSecureFile(fileName).catch(() => alert(t('file_open_failed')));
+        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
     };
 
     const handleDownload = async (fileName) => {
         try {
             await downloadSecureFile(fileName);
         } catch (err) {
-            alert(t('reviewer_download_failed'));
+            alert(getErrorMessage(err, t, 'reviewer_download_failed'));
         }
     };
 

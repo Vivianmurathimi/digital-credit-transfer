@@ -208,7 +208,9 @@
     "SUBMISSIONS_CLOSED": "Einreichungen sind derzeit geschlossen.",
     "APPLICATION_NOT_FOUND": "Antrag nicht gefunden.",
     "NOT_WAITING_FOR_INFO": "Dieser Antrag wartet nicht auf weitere Informationen.",
-    "INVALID_STATUS": "Dieser Status ist ungültig."
+    "INVALID_STATUS": "Dieser Status ist ungültig.",
+    "NO_FILE": "Es wurde keine Datei empfangen. Bitte wählen Sie eine Datei und versuchen Sie es erneut.",
+    "FILE_NOT_FOUND": "Datei nicht gefunden."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -237,5 +239,6 @@
   "archive_error_list": "Die gespeicherten Semesterbücher konnten nicht geladen werden.",
   "archive_error_download": "Das Semesterbuch konnte nicht heruntergeladen werden.",
   "file_open_failed": "Die Datei konnte nicht geöffnet werden.",
+  "file_remove_failed": "Die hochgeladene Datei konnte nicht entfernt werden. Bitte versuchen Sie es erneut.",
   "reviewer_download_failed": "Die Datei konnte nicht heruntergeladen werden."
 }

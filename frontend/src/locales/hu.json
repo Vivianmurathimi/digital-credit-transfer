@@ -208,7 +208,9 @@
     "SUBMISSIONS_CLOSED": "A beadás jelenleg le van zárva.",
     "APPLICATION_NOT_FOUND": "A kérelem nem található.",
     "NOT_WAITING_FOR_INFO": "Ez a kérelem nem vár további információra.",
-    "INVALID_STATUS": "Ez az állapot érvénytelen."
+    "INVALID_STATUS": "Ez az állapot érvénytelen.",
+    "NO_FILE": "Nem érkezett fájl. Kérjük, válasszon fájlt, és próbálja újra.",
+    "FILE_NOT_FOUND": "A fájl nem található."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -237,5 +239,6 @@
   "archive_error_list": "A mentett félévi könyvek betöltése nem sikerült.",
   "archive_error_download": "A félévi könyv letöltése nem sikerült.",
   "file_open_failed": "A fájl megnyitása nem sikerült.",
+  "file_remove_failed": "A feltöltött fájl eltávolítása nem sikerült. Kérjük, próbálja újra.",
   "reviewer_download_failed": "A fájl letöltése nem sikerült."
 }
