@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { openSecureFile, downloadSecureFile } from '../secureFiles';
 
@@ -65,7 +66,7 @@ const ReviewerDashboard = () => {
                 fetchApplications(); 
             }
         } catch (err) {
-            setFeedbackUploadStatus(t('reviewer_decision_failed'));
+            setFeedbackUploadStatus(getErrorMessage(err, t, 'reviewer_decision_failed'));
         }
     };
 

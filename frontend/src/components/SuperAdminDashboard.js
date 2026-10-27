@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import TermArchive from './TermArchive';
 
 const SuperAdminDashboard = () => {
@@ -80,7 +81,7 @@ const SuperAdminDashboard = () => {
                 alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 
             }
-        } catch (err) { alert(t('superadmin_update_failed')); }
+        } catch (err) { alert(getErrorMessage(err, t, 'superadmin_update_failed')); }
     };
 
     const handleToggleSystem = async () => {

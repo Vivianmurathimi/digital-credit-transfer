@@ -201,7 +201,13 @@
     "INVALID_RESET_LINK": "Ez a jelszó-visszaállító link érvénytelen vagy lejárt.",
     "LINK_EXPIRED": "Ez a link lejárt. A folytatáshoz jelentkezzen be.",
     "INVALID_LINK": "Ez a link érvénytelen. A folytatáshoz jelentkezzen be.",
-    "SERVER_ERROR": "Hiba történt a rendszerben. Kérjük, próbálja újra később."
+    "SERVER_ERROR": "Hiba történt a rendszerben. Kérjük, próbálja újra később.",
+    "FORBIDDEN_ROLE": "Ehhez nincs jogosultsága.",
+    "NOT_OWNER": "Ez egy másik felhasználóhoz tartozik, ezért nem érheti el.",
+    "FILES_NOT_OWNED": "Csak saját maga által feltöltött fájlokat csatolhat.",
+    "SUBMISSIONS_CLOSED": "A beadás jelenleg le van zárva.",
+    "APPLICATION_NOT_FOUND": "A kérelem nem található.",
+    "NOT_WAITING_FOR_INFO": "Ez a kérelem nem vár további információra."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

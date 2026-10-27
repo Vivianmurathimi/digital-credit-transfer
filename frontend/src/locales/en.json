@@ -201,7 +201,13 @@
     "INVALID_RESET_LINK": "This password reset link is invalid or has expired.",
     "LINK_EXPIRED": "This link has expired. Please log in to continue.",
     "INVALID_LINK": "This link is not valid. Please log in to continue.",
-    "SERVER_ERROR": "Something went wrong on our side. Please try again later."
+    "SERVER_ERROR": "Something went wrong on our side. Please try again later.",
+    "FORBIDDEN_ROLE": "You are not allowed to do this.",
+    "NOT_OWNER": "This belongs to another user, so you cannot access it.",
+    "FILES_NOT_OWNED": "You can only attach files you uploaded yourself.",
+    "SUBMISSIONS_CLOSED": "Submissions are currently closed.",
+    "APPLICATION_NOT_FOUND": "Application not found.",
+    "NOT_WAITING_FOR_INFO": "This application is not waiting for more information."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",

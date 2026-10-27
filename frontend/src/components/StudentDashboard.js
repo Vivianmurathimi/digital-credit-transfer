@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -316,7 +317,7 @@ const StudentDashboard = ({ userId }) => {
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
             }
-        } catch (err) { setSubmitStatus(t('student_submission_failed')); }
+        } catch (err) { setSubmitStatus(getErrorMessage(err, t, 'student_submission_failed')); }
     };
 
     const submitResubmission = async () => {
@@ -333,7 +334,7 @@ const StudentDashboard = ({ userId }) => {
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
             }
-        } catch (err) { setUploadStatus(t('student_resubmission_failed')); }
+        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed')); }
     };
 
     return (

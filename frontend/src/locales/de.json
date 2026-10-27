@@ -201,7 +201,13 @@
     "INVALID_RESET_LINK": "Dieser Link zum Zurücksetzen des Passworts ist ungültig oder abgelaufen.",
     "LINK_EXPIRED": "Dieser Link ist abgelaufen. Bitte melden Sie sich an, um fortzufahren.",
     "INVALID_LINK": "Dieser Link ist ungültig. Bitte melden Sie sich an, um fortzufahren.",
-    "SERVER_ERROR": "Auf unserer Seite ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
+    "SERVER_ERROR": "Auf unserer Seite ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut.",
+    "FORBIDDEN_ROLE": "Dazu sind Sie nicht berechtigt.",
+    "NOT_OWNER": "Dies gehört einem anderen Benutzer, daher haben Sie keinen Zugriff.",
+    "FILES_NOT_OWNED": "Sie können nur Dateien anhängen, die Sie selbst hochgeladen haben.",
+    "SUBMISSIONS_CLOSED": "Einreichungen sind derzeit geschlossen.",
+    "APPLICATION_NOT_FOUND": "Antrag nicht gefunden.",
+    "NOT_WAITING_FOR_INFO": "Dieser Antrag wartet nicht auf weitere Informationen."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
