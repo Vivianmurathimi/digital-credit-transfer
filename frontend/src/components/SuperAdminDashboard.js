@@ -93,7 +93,7 @@ const SuperAdminDashboard = () => {
             try {
                 const res = await api.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
-            } catch (err) { alert(t('superadmin_toggle_failed')); }
+            } catch (err) { alert(getErrorMessage(err, t, 'superadmin_toggle_failed')); }
         }
     };
 
