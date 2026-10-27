@@ -207,7 +207,8 @@
     "FILES_NOT_OWNED": "Csak saját maga által feltöltött fájlokat csatolhat.",
     "SUBMISSIONS_CLOSED": "A beadás jelenleg le van zárva.",
     "APPLICATION_NOT_FOUND": "A kérelem nem található.",
-    "NOT_WAITING_FOR_INFO": "Ez a kérelem nem vár további információra."
+    "NOT_WAITING_FOR_INFO": "Ez a kérelem nem vár további információra.",
+    "INVALID_STATUS": "Ez az állapot érvénytelen."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

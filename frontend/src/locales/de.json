@@ -207,7 +207,8 @@
     "FILES_NOT_OWNED": "Sie können nur Dateien anhängen, die Sie selbst hochgeladen haben.",
     "SUBMISSIONS_CLOSED": "Einreichungen sind derzeit geschlossen.",
     "APPLICATION_NOT_FOUND": "Antrag nicht gefunden.",
-    "NOT_WAITING_FOR_INFO": "Dieser Antrag wartet nicht auf weitere Informationen."
+    "NOT_WAITING_FOR_INFO": "Dieser Antrag wartet nicht auf weitere Informationen.",
+    "INVALID_STATUS": "Dieser Status ist ungültig."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",

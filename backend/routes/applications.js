@@ -8,6 +8,9 @@ const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 
 
+// The only statuses the app understands (badges, reviewer tabs, emails, term book)
+const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
+
 const checkSubmissionsOpen = async () => {
     const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
     return result.rows.length > 0 ? result.rows[0].is_submissions_open : false;
@@ -92,6 +95,10 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
 
 router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const { status, note } = req.body;
+
+    if (!VALID_STATUSES.includes(status)) {
+        return sendError(res, 400, 'INVALID_STATUS', 'This status is not valid');
+    }
 
     try {
         // Read the current status first, so we only email when it actually changes
