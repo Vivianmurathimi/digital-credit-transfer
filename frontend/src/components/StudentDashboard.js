@@ -12,6 +12,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const { t } = useTranslation();
     const [courses, setCourses] = useState([]);
+    const [coursesLoaded, setCoursesLoaded] = useState(false);
     const [studentTab, setStudentTab] = useState('dashboard');
     
     // --- PHASE 1: Dynamic Spreadsheet Data ---
@@ -52,7 +53,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const fetchCourses = useCallback(async () => {
         try {
             const data = await http.get('pte-courses').json();
-            if (data.success) setCourses(data.courses);
+            if (data.success) {
+                setCourses(data.courses);
+                setCoursesLoaded(true);
+            }
         } catch (err) { console.error(err); }
     }, []);
 
@@ -292,8 +296,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_upload_failed')); }
     }
 
+    // The programme has no target courses yet (e.g. before the admin imports them): nothing to apply for
+    const noCourses = coursesLoaded && courses.length === 0;
+    const canSubmit = isSubmissionsOpen && !noCourses;
+
     const handleSubmitApplication = async () => {
         if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
+        if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
 
         const isValid = fulfilledCourses.every(c => c.course_name.trim() !== '' && c.file !== null);
         if (!isValid || selectedCourses.length === 0) return setSubmitStatus(t('student_submit_complete_fields'));
@@ -569,10 +578,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                     <div style={{ marginBottom: '20px' }}>
                         <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_select_pte_courses_label')}</label>
+                        {noCourses ? (
+                            <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', margin: '5px 0 0' }}>{t('student_no_courses_for_programme')}</p>
+                        ) : (
                         <select value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course && !selectedCourses.find(sc => sc.id === course.id)) setSelectedCourses([...selectedCourses, course]); }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
                             {courses.map(c => <option key={c.id} value={c.id}>{c.course_code} - {c.course_name}</option>)}
                         </select>
+                        )}
                         <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                             {selectedCourses.map(sc => (
                                 <span key={sc.id} style={{ backgroundColor: 'var(--teal)', color: 'white', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>{sc.course_code} <button onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', marginLeft: '5px' }}>×</button></span>
@@ -602,14 +615,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                     <button
                         onClick={handleSubmitApplication}
-                        disabled={!isSubmissionsOpen}
+                        disabled={!canSubmit}
                         style={{
                             width: '100%',
                             padding: '15px',
-                            backgroundColor: isSubmissionsOpen ? 'var(--brand)' : 'var(--grey)',
+                            backgroundColor: canSubmit ? 'var(--brand)' : 'var(--grey)',
                             color: 'white',
                             fontWeight: 'bold',
-                            cursor: isSubmissionsOpen ? 'pointer' : 'not-allowed',
+                            cursor: canSubmit ? 'pointer' : 'not-allowed',
                             border: 'none',
                             borderRadius: '5px'
                         }}

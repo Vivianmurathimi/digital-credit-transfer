@@ -144,6 +144,7 @@
   "student_total_credits_label": "Összes kredit",
   "student_grade_label": "Jegy",
   "student_select_pte_courses_label": "Válassza ki a cél PTE kurzusokat:",
+  "student_no_courses_for_programme": "A szakjához még nincsenek elérhető kurzusok.",
   "student_select_pte_courses_placeholder": "-- Válasszon és adjon hozzá PTE kurzusokat --",
   "student_attached_evidence": "Mellékelt igazolás ({{count}})",
   "student_hide_uploader": "Feltöltő elrejtése",

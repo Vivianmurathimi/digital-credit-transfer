@@ -130,12 +130,26 @@ router.get('/programmes', async (req, res) => {
     }
 });
 
-// Course catalogue for the application form: any logged-in user
+// PTE target courses for the application form.
+// Students get only their own programme's courses: the programme is read from the database
+// for the id in the checked token, never from the request (any query is ignored).
+// Reviewers and the superadmin still get every course for now (also used while the superadmin
+// impersonates a student); the reviewer and admin rounds can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM courses');
+        const result = req.user.role === 'student'
+            ? await pool.query(
+                `SELECT c.id, c.course_code, c.course_name, c.credits
+                 FROM courses c
+                 JOIN users u ON u.programme_id = c.programme_id
+                 WHERE u.id = $1
+                 ORDER BY c.course_code`,
+                [req.user.id]
+            )
+            : await pool.query('SELECT id, course_code, course_name, credits FROM courses ORDER BY course_code');
         res.json({ success: true, courses: result.rows });
-    } catch {
+    } catch (err) {
+        console.error('Fetch courses error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
     }
 });

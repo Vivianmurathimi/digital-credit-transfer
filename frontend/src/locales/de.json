@@ -144,6 +144,7 @@
   "student_total_credits_label": "Gesamtcredits",
   "student_grade_label": "Note",
   "student_select_pte_courses_label": "Wählen Sie Ziel-PTE-Kurse aus:",
+  "student_no_courses_for_programme": "Für Ihren Studiengang sind noch keine Kurse verfügbar.",
   "student_select_pte_courses_placeholder": "-- PTE-Kurse auswählen und hinzufügen --",
   "student_attached_evidence": "Angehängte Nachweise ({{count}})",
   "student_hide_uploader": "Uploader ausblenden",

@@ -144,6 +144,7 @@
   "student_total_credits_label": "Total Credits",
   "student_grade_label": "Grade",
   "student_select_pte_courses_label": "Select Target PTE Courses (Build your package):",
+  "student_no_courses_for_programme": "No courses are available for your programme yet.",
   "student_select_pte_courses_placeholder": "-- Select & Add PTE Courses --",
   "student_attached_evidence": "Attached Evidence ({{count}})",
   "student_hide_uploader": "Hide Uploader",

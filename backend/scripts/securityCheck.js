@@ -137,7 +137,7 @@ const listFileOwners = async () => {
 };
 
 const loadTestData = async () => {
-    const users = (await pool.query('SELECT id, role, email, neptun_code FROM users ORDER BY id')).rows;
+    const users = (await pool.query('SELECT id, role, email, neptun_code, programme_id FROM users ORDER BY id')).rows;
     const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
@@ -264,6 +264,34 @@ const run = async () => {
     const extraFields = Object.keys(meA.body?.user || {}).filter((key) => !ALLOWED_PROFILE_FIELDS.includes(key));
     report(meA.body?.user && extraFields.length === 0, '/me returns no password, tokens or other hidden fields', extraFields.length ? `extra: ${extraFields.join(', ')}` : 'only name, email, role, Neptun code, programme');
     report((meA.headers.get('cache-control') || '').includes('no-store'), '/me is sent with Cache-Control: no-store', meA.headers.get('cache-control') || 'missing');
+
+    // Course list: a student only ever sees their own programme's courses
+    const courseIdsOf = async (programmeId) => (await pool.query(
+        'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
+    )).rows.map((c) => c.id);
+    const idsIn = (res) => (res.body?.courses || []).map((c) => c.id).sort((x, y) => x - y);
+    const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+    const coursesA = await call('GET', 'pte-courses', { token: A });
+    const ownA = await courseIdsOf(d.studentA.programme_id);
+    report(coursesA.status === 200 && same(idsIn(coursesA), ownA), "Student A sees exactly A's programme's courses", `${idsIn(coursesA).length} courses`);
+    const coursesB = await call('GET', 'pte-courses', { token: B });
+    report(same(idsIn(coursesB), await courseIdsOf(d.studentB.programme_id)), "Student B sees exactly B's programme's courses", `${idsIn(coursesB).length} courses`);
+    if (d.studentA.programme_id === d.studentB.programme_id) {
+        skip("A sees none of another programme's courses", 'students A and B are in the same programme');
+        skip('Course list ignores a programme in the address', 'same reason');
+    } else {
+        const otherIds = await courseIdsOf(d.studentB.programme_id);
+        report(!idsIn(coursesA).some((id) => otherIds.includes(id)), "A sees none of B's programme's courses");
+        const programmeB = (await pool.query('SELECT code FROM programmes WHERE id = $1', [d.studentB.programme_id])).rows[0].code;
+        const tricked = await call('GET', `pte-courses?programme=${programmeB}&programme_id=${d.studentB.programme_id}`, { token: A });
+        report(same(idsIn(tricked), ownA), 'Course list ignores a programme in the address', "still only A's programme");
+    }
+    const extraCourseFields = [...new Set((coursesA.body?.courses || []).flatMap(Object.keys))]
+        .filter((key) => !['id', 'course_code', 'course_name', 'credits'].includes(key));
+    report(extraCourseFields.length === 0, 'Course list sends only id, code, name and credits', extraCourseFields.join(', ') || 'ok');
+    const allCourses = (await pool.query('SELECT count(*)::int AS n FROM courses')).rows[0].n;
+    const coursesR = await call('GET', 'pte-courses', { token: R });
+    report(idsIn(coursesR).length === allCourses, 'Reviewer still sees every course (for now)', `${idsIn(coursesR).length} of ${allCourses}`);
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
