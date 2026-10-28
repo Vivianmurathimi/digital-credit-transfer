@@ -81,7 +81,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | | | Download file names are readable | `Content-Disposition` exposed |
 | | | A foreign website gets no CORS headers, and no server error | no CORS headers |
 | 8 | **Rate limits** | Forgot password: 5 requests for one unknown address, spelled differently (upper case, spaces) | same `200` reply each time; exactly 3 counted |
-| | | Forgot password: 10 requests for one address **at the same moment** | exactly 3 counted (no race) |
+| | | Forgot password: 5 requests for one address **at the same moment** | exactly 3 counted (no race) |
 | | | Forgot password: this computer's IP over 30 requests | same `200` reply; counting stops at 30 |
 | | | Register: this computer's IP over 30 attempts (empty forms, nothing created) | `429 TOO_MANY_REQUESTS` |
 
@@ -164,7 +164,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 - **CORS is a browser rule.** It stops other websites from reading API answers in a user's browser. It does not stop direct requests (curl, scripts); those are protected by the login token and role checks above.
 - **Register reveals registered addresses.** Signing up with an address that already has an account answers `400 EMAIL_TAKEN` ("Email already registered"), so anyone can check whether an address is registered. Closing this would mean always answering "check your inbox" and emailing the existing account owner instead; not done yet.
 - **Someone can use up another person's reset emails.** Sending 3 forgot-password requests for a classmate's address blocks reset emails to that address for up to one hour. This is the unavoidable trade-off of a per-address limit; the block always ends after an hour.
-- **Shared IPs.** A whole campus can share one IP (eduroam, computer labs), so the per-IP limits are generous (30 per hour). They can be changed in `.env`.
+- **Shared IPs.** A whole campus can share one IP (eduroam, computer labs). That is why the per-IP limits are generous (30 per hour); they can be changed in `.env`.
 - ~~Forgot password timing~~ **(fixed 2026-10-28).** A real address used to take about 1.9 s longer than an unknown one, because the email was sent before replying. The reply now comes straight after the lookup in both cases (see section 1).
 - **Older evidence files without an owner tag.** A few files uploaded before ownership tagging can be opened by reviewers and the superadmin, but not by the student who uploaded them. No other student can open them either.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

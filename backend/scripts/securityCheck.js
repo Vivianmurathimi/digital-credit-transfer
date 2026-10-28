@@ -50,6 +50,12 @@ const countHits = async (bucket, hashes) => (await pool.query(
     [bucket, hashes]
 )).rows[0].hits;
 
+// Clears this computer's IP rows from this run only, so the next test starts with a full quota
+const resetOwnIpRows = () => pool.query(
+    'DELETE FROM rate_limit_hits WHERE hit_at >= $1 AND key_hash = ANY($2)',
+    [runStartedAt, LOCAL_IP_HASHES]
+);
+
 // Deletes only rows from this run: this computer's IP and the test addresses, since the start
 const cleanupRateLimitRows = async () => {
     if (!runStartedAt) return 0;
@@ -276,14 +282,19 @@ const run = async () => {
     const sameForgotReply = (r) => r.status === 200 && r.body && r.body.success === true && r.body.message === FORGOT_MESSAGE;
     const forgotFor = (email) => call('POST', 'forgot-password', { json: { email } });
 
-    // Per address: 5 requests, spelled differently (case, spaces) -> one count, stopped at the limit
-    const ipUsed = await countHits('forgot_ip', LOCAL_IP_HASHES);
-    if (ipUsed + 15 > LIMITS.forgotPerIp) {
-        skip('Forgot password per-address limit', `this computer already used ${ipUsed} of ${LIMITS.forgotPerIp} forgot-password requests this hour`);
+    // The per-address tests need more requests than the per-address limit, from this one computer.
+    // Each test starts by clearing this run's IP rows, so earlier tests don't use up its quota.
+    const addressTries = LIMITS.forgotPerEmail + 2;
+    await resetOwnIpRows();
+    const ipUsed = await countHits('forgot_ip', LOCAL_IP_HASHES); // left from before this run
+    if (ipUsed + addressTries > LIMITS.forgotPerIp) {
+        skip('Forgot password per-address limit', `needs ${addressTries} requests from this computer, but only ${LIMITS.forgotPerIp - ipUsed} of the per-IP limit are left this hour`);
         skip('Simultaneous requests cannot exceed the limit', 'same reason');
     } else {
+        // Per address: requests spelled differently (case, spaces) -> one count, stopped at the limit
         const base = testEmail('address');
-        const spellings = [base, base.toUpperCase(), `  ${base}`, `${base}  `, base.replace(/^rl/, 'RL')];
+        const variants = [base, base.toUpperCase(), `  ${base}`, `${base}  `, base.replace(/^rl/, 'RL')];
+        const spellings = Array.from({ length: addressTries }, (_, i) => variants[i % variants.length]);
         const replies = [];
         for (const spelling of spellings) replies.push(await forgotFor(spelling));
         const counted = await countHits('forgot_email', [hashKey(normalizeEmail(base))]);
@@ -291,15 +302,17 @@ const run = async () => {
             `Forgot password per address: ${spellings.length} requests, same reply each time, ${LIMITS.forgotPerEmail} counted`,
             `counted ${counted}; spelling (case/spaces) does not matter`);
 
-        // 10 requests at the same moment for one address -> still only the limit
+        // The same number of requests at the same moment for one address -> still only the limit
+        await resetOwnIpRows();
         const parallel = testEmail('parallel');
-        const parallelReplies = await Promise.all(Array.from({ length: 10 }, () => forgotFor(parallel)));
+        const parallelReplies = await Promise.all(Array.from({ length: addressTries }, () => forgotFor(parallel)));
         const parallelCounted = await countHits('forgot_email', [hashKey(normalizeEmail(parallel))]);
         report(parallelReplies.every(sameForgotReply) && parallelCounted === LIMITS.forgotPerEmail,
-            'Simultaneous requests cannot exceed the limit', `10 at once, ${parallelCounted} counted`);
+            'Simultaneous requests cannot exceed the limit', `${addressTries} at once, ${parallelCounted} counted`);
     }
 
     // Per IP: fill up this computer's forgot-password quota (different unknown addresses), then one more
+    await resetOwnIpRows();
     const ipBefore = await countHits('forgot_ip', LOCAL_IP_HASHES);
     const ipRequests = Math.max(LIMITS.forgotPerIp - ipBefore, 0) + 1;
     const ipReplies = [];
