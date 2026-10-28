@@ -11,6 +11,7 @@ import ResetPassword from './components/ResetPassword';
 import LanguageSwitcher from './components/LanguageSwitcher'; // 🆕 Import the flag UI
 import EmailLink from './components/EmailLink';
 import Notice from './components/Notice';
+import { GuestOnly, RequireAuth } from './components/RouteGuards';
 import { startSessionKeeper, stopSessionKeeper } from './sessionKeeper';
 
 function App() {
@@ -35,14 +36,16 @@ return (
 
         <main>
           <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/login" element={<GuestOnly><Login /></GuestOnly>} />
+            <Route path="/register" element={<GuestOnly><Register /></GuestOnly>} />
+            <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/verify/:token" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
             <Route path="/email-link/:token" element={<EmailLink />} />
             <Route path="/" element={<Navigate to="/login" />} />
+            {/* Unknown address: to the login page (which forwards logged-in users to the dashboard) */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </main>
       </div>

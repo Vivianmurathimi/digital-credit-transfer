@@ -1,7 +1,6 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { clearSession, readTokenPayload } from '../session';
+import { clearSession, forgetImpersonation, getSessionState } from '../session';
 
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
@@ -9,35 +8,24 @@ import SuperAdminDashboard from './SuperAdminDashboard';
 
 const Dashboard = () => {
     const { t } = useTranslation();
-    const navigate = useNavigate();
-    
-    const payload = readTokenPayload();
-    if (!payload) {
-        navigate('/login');
-        return null;
-    }
 
-    const realUserId = payload.id;
-    const originalRole = localStorage.getItem('originalRole');
-    
-    const userId = localStorage.getItem('impersonatedUserId') || realUserId;
-    const role = localStorage.getItem('impersonatedRole') || localStorage.getItem('role');
-    const impersonatedName = localStorage.getItem('impersonatedName');
+    // RequireAuth has already checked the session; `view` is whose dashboard to show
+    // (the role comes from the token, impersonation only for a real superadmin)
+    const session = getSessionState();
+    if (!session.valid) return null;
+    const { userId, role, name: impersonatedName, impersonating } = session.view;
 
     // Removes only the session (keeps e.g. the chosen language) and goes to the login page
     const handleLogout = () => clearSession();
 
     const stopImpersonation = () => {
-        localStorage.removeItem('originalRole');
-        localStorage.removeItem('impersonatedRole');
-        localStorage.removeItem('impersonatedUserId');
-        localStorage.removeItem('impersonatedName');
+        forgetImpersonation();
         window.location.reload();
     };
 
     return (
         <div style={{ padding: '20px', margin: '0 auto', fontFamily: 'sans-serif' }}>
-            {originalRole && (
+            {impersonating && (
                 <div style={{ backgroundColor: 'var(--yellow)', color: '#000', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
                     <span>{t('impersonation_banner', { name: impersonatedName, role: t(`role_${role}`) })}</span>
                     <button onClick={stopImpersonation} style={{ cursor: 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('end_impersonation')}</button>
@@ -49,9 +37,9 @@ const Dashboard = () => {
                 <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
             </div>
 
-            {role === 'superadmin' && !originalRole && <SuperAdminDashboard userId={userId} />}
+            {role === 'superadmin' && !impersonating && <SuperAdminDashboard userId={userId} />}
             {role === 'reviewer' && <ReviewerDashboard />}
-            {role === 'student' && <StudentDashboard userId={userId} />}
+            {role === 'student' && <StudentDashboard userId={userId} isImpersonating={impersonating} />}
         </div>
     );
 };

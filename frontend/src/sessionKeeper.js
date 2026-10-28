@@ -1,5 +1,5 @@
 import http from './http';
-import { clearSession, getRole, msUntilExpiry, saveSession } from './session';
+import { clearSession, forgetSession, isPublicPage, msUntilExpiry, readTokenPayload, saveSession } from './session';
 
 // Keeps an active user logged in and ends the session after real inactivity.
 // Tokens last 30 minutes; while the user is active a fresh one is fetched shortly before expiry.
@@ -23,7 +23,7 @@ const markActive = () => {
 const renew = async () => {
     isRenewing = true;
     try {
-        const previousRole = getRole();
+        const previousRole = readTokenPayload()?.role;
         const { token, role } = await http.post('refresh-token').json();
         saveSession(token, role);
         // The admin changed this user's role: reload so the matching dashboard is shown
@@ -41,7 +41,10 @@ const check = () => {
     if (left === null) return; // not logged in
 
     if (left <= 0) {
-        clearSession('TOKEN_EXPIRED');
+        // On a public page (e.g. a reset link from an email) just forget the old session,
+        // so the page keeps working; anywhere else, log out with the reason
+        if (isPublicPage(window.location.pathname)) forgetSession();
+        else clearSession('TOKEN_EXPIRED');
         return;
     }
 

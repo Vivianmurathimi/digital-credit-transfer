@@ -4,14 +4,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
-import { saveSession } from '../session';
+import { SESSION_END_CODES, saveSession } from '../session';
 
 const Login = () => {
-    const { t, i18n } = useTranslation();
+    const { t } = useTranslation();
     const location = useLocation();
-    // Set by clearSession, e.g. /login?reason=TOKEN_EXPIRED; translated here
+    // Set by clearSession, e.g. /login?reason=TOKEN_EXPIRED; translated here.
+    // Only known session codes are shown: anyone can type a ?reason= into the address.
     const reason = new URLSearchParams(location.search).get('reason');
-    const reasonText = reason && i18n.exists(`errors.${reason}`) ? t(`errors.${reason}`) : null;
+    const reasonText = SESSION_END_CODES.includes(reason) ? t(`errors.${reason}`) : null;
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');

@@ -9,7 +9,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Set up the worker for PDF.js to handle conversions
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-const StudentDashboard = ({ userId }) => {
+const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const { t } = useTranslation();
     const [courses, setCourses] = useState([]);
     const [studentTab, setStudentTab] = useState('dashboard');
@@ -61,11 +61,10 @@ const StudentDashboard = ({ userId }) => {
         try {
             // A student reads "my applications" (id from the login token);
             // the superadmin impersonating a student reads that student's list by id
-            const isImpersonating = !!localStorage.getItem('originalRole');
             const data = await http.get(isImpersonating ? `applications/student/${userId}` : 'applications/mine').json();
             if (data.success) setMyApplications(data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
-    }, [userId]);
+    }, [userId, isImpersonating]);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
