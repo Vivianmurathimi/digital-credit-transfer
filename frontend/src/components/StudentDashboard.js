@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import api from '../api';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
@@ -304,15 +303,15 @@ const StudentDashboard = ({ userId }) => {
             setSubmitStatus(t('student_submit_saving'));
             const targetCourseNames = selectedCourses.map(c => `${c.course_code} (${c.course_name})`).join(' + ');
 
-            const response = await api.post('/api/applications', {
+            const data = await http.post('applications', { json: {
                 student_id: userId, 
                 fulfilled_courses_json: fulfilledCourses, 
                 pte_course_names: targetCourseNames, 
                 system_note: evidenceRequiredMsg,
                 student_note: studentNote 
-            });
+            } }).json();
             
-            if (response.data.success) {
+            if (data.success) {
                 alert(t('student_submission_success'));
                 setFulfilledCourses([{ id: Date.now(), course_name: '', course_code: '', credits: '', grade: '', file: null }]);
                 setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
@@ -327,11 +326,11 @@ const StudentDashboard = ({ userId }) => {
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
         try {
             setUploadStatus(t('student_resubmission_sending'));
-            const res = await api.put(`/api/applications/${resubmitModal.app.id}/resubmit`, { 
+            const data = await http.put(`applications/${resubmitModal.app.id}/resubmit`, { json: { 
                 student_resubmit_note: resubmitNote,
                 new_files: resubmitFiles.join(',') 
-            });
-            if (res.data.success) {
+            } }).json();
+            if (data.success) {
                 alert(t('student_resubmission_success'));
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
