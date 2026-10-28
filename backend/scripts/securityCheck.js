@@ -246,9 +246,35 @@ const run = async () => {
         if (!settings.body || settings.body.isOpen !== true) {
             skip("A submits an application with B's file", 'submissions are closed, so the server stops earlier');
         } else {
-            await expect("A submits an application with B's file",
-                call('POST', 'applications', { token: A, json: { fulfilled_courses_json: [{ course_name: 'Security check', file: d.fileOfB }], pte_course_names: 'Security check' } }),
-                403, 'FILES_NOT_OWNED');
+            const coursesOf = async (programmeId) => (await pool.query(
+                'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
+            )).rows.map((c) => c.id);
+            const ownCourses = await coursesOf(d.studentA.programme_id);
+            const otherCourses = (await pool.query(
+                'SELECT id FROM courses WHERE programme_id IS DISTINCT FROM $1 ORDER BY id', [d.studentA.programme_id]
+            )).rows.map((c) => c.id);
+            // Every submit below also attaches B's file: if a course check were ever broken,
+            // the file check still refuses, so these tests can never save an application
+            const submitAs = (targetIds) => call('POST', 'applications', { token: A, json: {
+                fulfilled_courses_json: [{ course_name: 'Security check', file: d.fileOfB }],
+                ...(targetIds === undefined ? {} : { target_course_ids: targetIds }),
+            } });
+
+            await expect("A submits an application with B's file", submitAs(ownCourses.slice(0, 1)), 403, 'FILES_NOT_OWNED');
+            if (otherCourses.length === 0) {
+                skip("Submit with another programme's course", 'there is only one programme with courses');
+            } else {
+                await expect("Submit with another programme's course", submitAs([otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
+                await expect("Submit with own and another programme's course mixed", submitAs([ownCourses[0], otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            }
+            await expect('Submit with a course id that does not exist', submitAs([2147483000]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            await expect('Submit without target courses', submitAs(undefined), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with an empty course list', submitAs([]), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with course ids as text', submitAs(['1', '2']), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with 11 different courses (limit is 10)', submitAs(Array.from({ length: 11 }, (_, i) => i + 1)), 400, 'INVALID_TARGET_COURSES');
+            // 12 copies of one own course count as 1 after removing duplicates, so they pass the limit
+            // and reach the file check
+            await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
         }
     }
 

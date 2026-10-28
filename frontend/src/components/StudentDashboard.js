@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
-import { getErrorMessage } from '../errorMessage';
+import { getErrorCode, getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -50,14 +50,17 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [isDrawing, setIsDrawing] = useState(false);
     const [activeTool, setActiveTool] = useState('pen'); 
 
+    // Returns the loaded list (or null), so a failed submit can compare against it
     const fetchCourses = useCallback(async () => {
         try {
             const data = await http.get('pte-courses').json();
             if (data.success) {
                 setCourses(data.courses);
                 setCoursesLoaded(true);
+                return data.courses;
             }
         } catch (err) { console.error(err); }
+        return null;
     }, []);
 
     const fetchMyApplications = useCallback(async () => {
@@ -309,12 +312,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
         try {
             setSubmitStatus(t('student_submit_saving'));
-            const targetCourseNames = selectedCourses.map(c => `${c.course_code} (${c.course_name})`).join(' + ');
-
+            // Only the course ids: the server checks them against the student's programme
+            // and stores their code, name and credits itself
             const data = await http.post('applications', { json: {
-                student_id: userId, 
                 fulfilled_courses_json: fulfilledCourses, 
-                pte_course_names: targetCourseNames, 
+                target_course_ids: selectedCourses.map(c => c.id),
                 system_note: evidenceRequiredMsg,
                 student_note: studentNote 
             } }).json();
@@ -326,7 +328,21 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
             }
-        } catch (err) { setSubmitStatus(getErrorMessage(err, t, 'student_submission_failed')); }
+        } catch (err) {
+            const message = getErrorMessage(err, t, 'student_submission_failed');
+            if (getErrorCode(err) !== 'COURSE_NOT_IN_PROGRAMME') return setSubmitStatus(message);
+
+            // The course list changed since the page loaded (e.g. a new import): reload it,
+            // keep the chosen courses that still exist and say which ones were removed
+            const fresh = await fetchCourses();
+            if (!fresh) return setSubmitStatus(message);
+            const freshIds = new Set(fresh.map(c => c.id));
+            const removed = selectedCourses.filter(c => !freshIds.has(c.id));
+            setSelectedCourses(selectedCourses.filter(c => freshIds.has(c.id)));
+            setSubmitStatus(removed.length
+                ? `${message} ${t('student_courses_removed', { courses: removed.map(c => c.course_code).join(', ') })}`
+                : message);
+        }
     };
 
     const submitResubmission = async () => {
