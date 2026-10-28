@@ -93,6 +93,32 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
     }
 });
 
+// The logged-in user's own profile. Takes NO id from the request (no :id, query or body):
+// only the id from the checked token, so it can never return another user.
+// Explicit columns only: never the password or any token.
+router.get('/me', verifyToken, async (req, res) => {
+    // Shared lab computers: the browser must not keep a copy of these details
+    res.set('Cache-Control', 'no-store');
+    try {
+        const result = await pool.query(
+            `SELECT u.name, u.email, u.role, u.neptun_code,
+                    p.code AS programme_code, p.name_en, p.name_hu, p.name_de
+             FROM users u
+             LEFT JOIN programmes p ON p.id = u.programme_id
+             WHERE u.id = $1`,
+            [req.user.id]
+        );
+        // verifyToken has just found this user, so a missing row means it was deleted in between
+        if (result.rows.length === 0) return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
+
+        const { programme_code: code, name_en, name_hu, name_de, ...user } = result.rows[0];
+        res.json({ success: true, user: { ...user, programme: code ? { code, name_en, name_hu, name_de } : null } });
+    } catch (err) {
+        console.error('Fetch own profile error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
 // Study programmes for the registration form: public (no login), names in EN/HU/DE
 router.get('/programmes', async (req, res) => {
     try {

@@ -3,6 +3,7 @@ import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
+import { programmeName } from '../programmeName';
 
 // The role comes from the email domain, exactly like the backend (routes/auth.js):
 // only @tr.pte.hu addresses are students and give a Neptun code and programme.
@@ -51,10 +52,6 @@ const Register = () => {
             .then((data) => setProgrammes(data.programmes || []))
             .catch(() => setProgrammesFailed(true));
     }, []);
-
-    // Programme names in the current language (English if a name is missing)
-    const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
-    const programmeName = (p) => p[`name_${language}`] || p.name_en;
 
     const setFieldError = (field, message) => setFieldErrors((prev) => ({ ...prev, [field]: message }));
 
@@ -155,7 +152,7 @@ const Register = () => {
                                         style={inputStyle(!!fieldErrors.programme)}
                                     >
                                         <option value="">{t('register_programme_placeholder')}</option>
-                                        {programmes.map((p) => <option key={p.code} value={p.code}>{programmeName(p)}</option>)}
+                                        {programmes.map((p) => <option key={p.code} value={p.code}>{programmeName(p, i18n)}</option>)}
                                     </select>
                                     <FieldError id="register-programme-error" message={programmesFailed ? t('register_programmes_load_failed') : fieldErrors.programme} />
                                 </div>

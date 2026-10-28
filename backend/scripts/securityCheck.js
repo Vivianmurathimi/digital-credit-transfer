@@ -200,7 +200,7 @@ const run = async () => {
         ['GET', 'users'], ['GET', 'users/all'], ['PUT', `users/${d.studentB.id}/language`], ['PUT', `users/${d.studentB.id}/role`],
         ['GET', 'pte-courses'], ['GET', 'settings/status'], ['PUT', 'settings/toggle'],
         ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'],
-        ['POST', 'refresh-token'],
+        ['POST', 'refresh-token'], ['GET', 'me'],
     ];
     for (const [method, path] of protectedRoutes) {
         await expect(`${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
@@ -251,6 +251,19 @@ const run = async () => {
                 403, 'FILES_NOT_OWNED');
         }
     }
+
+    // /me: only ever the logged-in person, never cached, never secrets
+    const ALLOWED_PROFILE_FIELDS = ['name', 'email', 'role', 'neptun_code', 'programme'];
+    const meA = await call('GET', 'me', { token: A });
+    report(meA.status === 200 && meA.body?.user?.email === d.studentA.email && meA.body.user.neptun_code === d.studentA.neptun_code,
+        "/me returns the logged-in student's own profile", `${meA.status}`);
+    const meWithId = await call('GET', `me?id=${d.studentB.id}&user_id=${d.studentB.id}`, { token: A });
+    report(meWithId.body?.user?.email === d.studentA.email, "/me ignores another user's id in the address", 'still student A');
+    const meB = await call('GET', 'me', { token: B });
+    report(meB.body?.user?.email === d.studentB.email && meB.body.user.email !== meA.body?.user?.email, '/me with B\'s token returns B, not A');
+    const extraFields = Object.keys(meA.body?.user || {}).filter((key) => !ALLOWED_PROFILE_FIELDS.includes(key));
+    report(meA.body?.user && extraFields.length === 0, '/me returns no password, tokens or other hidden fields', extraFields.length ? `extra: ${extraFields.join(', ')}` : 'only name, email, role, Neptun code, programme');
+    report((meA.headers.get('cache-control') || '').includes('no-store'), '/me is sent with Cache-Control: no-store', meA.headers.get('cache-control') || 'missing');
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
