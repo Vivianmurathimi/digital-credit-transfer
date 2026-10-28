@@ -308,6 +308,57 @@ const run = async () => {
                 && mistakePaths === 'institutions[0].country INVALID_COUNTRY, fulfilled_courses[0].grade INVALID_GRADE, fulfilled_courses[0].credits INVALID_CREDITS'
                 && threeMistakes.code === threeMistakes.body.errors[0].code && threeMistakes.body.field === threeMistakes.body.errors[0].field,
                 'Three mistakes in one submit: all three reported with their fields', mistakePaths || `${threeMistakes.status} ${threeMistakes.code}`);
+            // --- Group 4: every field rule, proven from both sides (B's file stays the safety net) ---
+            const inst = (o = {}) => ({ name: 'Security Check University', country: 'AT', grading_file: d.fileOfB, ...o });
+            const row = (o = {}) => ({ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, ...o });
+            const formWith = ({ institutions = [inst()], rows = [row()] } = {}) => validForm({ institutions, fulfilled_courses: rows });
+            // Refused with this code at this path; the first error is also at the top level
+            const fieldError = async (name, body, path, code, params) => {
+                const r = await submitForm(body);
+                const hit = (r.body?.errors || []).find((e) => e.field === path && e.code === code);
+                const paramsOk = !params || JSON.stringify(hit?.params) === JSON.stringify(params);
+                const topOk = r.body?.code === r.body?.errors?.[0]?.code && r.body?.field === r.body?.errors?.[0]?.field;
+                report(r.status === 400 && !!hit && paramsOk && topOk, name,
+                    hit ? `${path} ${code}${hit.params ? ' ' + JSON.stringify(hit.params) : ''}` : `${r.status} ${JSON.stringify((r.body?.errors || []).map((e) => `${e.field} ${e.code}`))}`);
+            };
+            // Valid on every field: gets past all field rules and stops at the file check (B's file)
+            const passesFields = async (name, body) => {
+                const r = await submitForm(body);
+                report(r.status === 403 && r.code === 'FILES_NOT_OWNED', name, `${r.status} ${r.code}: past all field rules`);
+            };
+
+            await fieldError('Credits as text "5"', formWith({ rows: [row({ credits: '5' })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS', { max: 60 });
+            await fieldError('Credits 0', formWith({ rows: [row({ credits: 0 })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS');
+            await fieldError('Credits -1', formWith({ rows: [row({ credits: -1 })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS');
+            await fieldError('Credits 2.3 (not a 0.5 step)', formWith({ rows: [row({ credits: 2.3 })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS');
+            await fieldError('60.5 ECTS (max 60)', formWith({ rows: [row({ credits: 60.5 })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS', { max: 60 });
+            await fieldError('30.5 US credit hours (max 30)', formWith({ rows: [row({ credits: 30.5, credit_system: 'US_CREDIT_HOURS' })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS', { max: 30 });
+            await fieldError('120.5 UK credits (max 120)', formWith({ rows: [row({ credits: 120.5, credit_system: 'UK_CATS' })] }), 'fulfilled_courses[0].credits', 'INVALID_CREDITS', { max: 120 });
+            await passesFields('Exactly 60 ECTS is allowed', formWith({ rows: [row({ credits: 60 })] }));
+            await passesFields('Exactly 30 US credit hours is allowed', formWith({ rows: [row({ credits: 30, credit_system: 'US_CREDIT_HOURS' })] }));
+            await passesFields('Exactly 120 UK credits is allowed', formWith({ rows: [row({ credits: 120, credit_system: 'UK_CATS' })] }));
+            await passesFields('2.5 ECTS (a half step) is allowed', formWith({ rows: [row({ credits: 2.5 })] }));
+            await fieldError('No credit system', formWith({ rows: [row({ credit_system: '' })] }), 'fulfilled_courses[0].credit_system', 'INVALID_CREDIT_SYSTEM');
+            await fieldError('Unknown credit system', formWith({ rows: [row({ credit_system: 'POINTS' })] }), 'fulfilled_courses[0].credit_system', 'INVALID_CREDIT_SYSTEM');
+            await fieldError('"Other" without a name', formWith({ rows: [row({ credit_system: 'OTHER' })] }), 'fulfilled_courses[0].credit_system_other', 'INVALID_CREDIT_SYSTEM_OTHER');
+            await passesFields('An "Other" name sent with ECTS is accepted (and ignored)', formWith({ rows: [row({ credit_system_other: 'Ignored points' })] }));
+            await fieldError('Institution without a name', formWith({ institutions: [inst({ name: '  ' })] }), 'institutions[0].name', 'INVALID_INSTITUTION_NAME');
+            await fieldError('Institution without a country', formWith({ institutions: [inst({ country: '' })] }), 'institutions[0].country', 'INVALID_COUNTRY');
+            await fieldError('Institution with country code XX', formWith({ institutions: [inst({ country: 'XX' })] }), 'institutions[0].country', 'INVALID_COUNTRY');
+            await fieldError('Institution without a grading document', formWith({ institutions: [inst({ grading_file: '' })] }), 'institutions[0].grading_file', 'GRADING_FILE_MISSING');
+            await fieldError('Same institution twice (other case and spaces)', formWith({ institutions: [inst(), inst({ name: '  security CHECK   university ' })], rows: [row(), row({ institution: 1 })] }), 'institutions[1].name', 'DUPLICATE_INSTITUTION');
+            await fieldError('Institution no course uses', formWith({ institutions: [inst(), inst({ name: 'Unused University' })] }), 'institutions[1].name', 'INSTITUTION_UNUSED');
+            await fieldError('Row pointing to a missing institution', formWith({ rows: [row({ institution: 5 })] }), 'fulfilled_courses[0].institution', 'INVALID_INSTITUTION_CHOICE');
+            await fieldError('Row without a course name', formWith({ rows: [row({ course_name: '' })] }), 'fulfilled_courses[0].course_name', 'INVALID_COURSE_NAME');
+            await fieldError('Row without a grade', formWith({ rows: [row({ grade: '' })] }), 'fulfilled_courses[0].grade', 'INVALID_GRADE');
+            await fieldError('Grade of 21 characters', formWith({ rows: [row({ grade: 'g'.repeat(21) })] }), 'fulfilled_courses[0].grade', 'INVALID_GRADE', { max: 20 });
+            await fieldError('Row without evidence', formWith({ rows: [row({ file: '' })] }), 'fulfilled_courses[0].file', 'EVIDENCE_MISSING');
+            await fieldError('11 institutions (limit 10)', formWith({ institutions: Array.from({ length: 11 }, (_, i) => inst({ name: `University ${i}` })) }), 'institutions', 'INVALID_INSTITUTIONS', { max: 10 });
+            await fieldError('21 course rows (limit 20)', formWith({ rows: Array(21).fill(row()) }), 'fulfilled_courses', 'INVALID_FULFILLED_COURSES', { max: 20 });
+            // Nothing the student typed comes back in an error answer
+            const marker = `ECHO-MARKER-${Date.now()}`;
+            const echoed = await submitForm(formWith({ institutions: [inst({ name: marker + 'x'.repeat(200) })], rows: [row({ grade: marker })] }));
+            report(echoed.status === 400 && !JSON.stringify(echoed.body).includes('ECHO-MARKER'), 'Error answers never repeat what the student typed', `${echoed.status}, ${echoed.body?.errors?.length} errors, no typed text`);
             await expect('Old request shape (fulfilled_courses_json) is refused',
                 submitForm({ fulfilled_courses_json: [{ course_name: 'x', file: d.fileOfB }], target_course_ids: ownCourses.slice(0, 1) }), 400, 'INVALID_INSTITUTIONS');
             if (otherCourses.length === 0) {
@@ -386,6 +437,10 @@ const run = async () => {
     report(programmes.status === 200 && Array.isArray(programmes.body?.programmes)
         && d.programmeCodes.every((code) => programmes.body.programmes.some((p) => p.code === code && p.name_en && p.name_hu && p.name_de)),
         'Programme list is public, with EN/HU/DE names', `${programmes.status}, ${programmes.body?.programmes?.length ?? 0} programmes`);
+    const countries = await call('GET', 'countries');
+    report(countries.status === 200 && Array.isArray(countries.body?.countries) && ['HU', 'AT', 'XK'].every((c) => countries.body.countries.includes(c))
+        && countries.body.countries.every((c) => /^[A-Z]{2}$/.test(c)),
+        'Country list is public, ISO codes only', `${countries.status}, ${countries.body?.countries?.length ?? 0} codes`);
     // Student registrations below are all refused before anything is saved (no account, no email)
     const newStudent = (extra) => ({ name: 'Security Check', email: `security-check-${Date.now()}@tr.pte.hu`, password: 'x-Security-Check-1', programme_code: d.programmeCodes[0], ...extra });
     await expect('Register student without Neptun code', call('POST', 'register', { json: newStudent({}) }), 400, 'INVALID_NEPTUN');

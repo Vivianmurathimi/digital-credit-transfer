@@ -20,6 +20,7 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "check:form-rules": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/formRulesCheck.mjs",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",

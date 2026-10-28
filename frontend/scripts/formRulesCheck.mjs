@@ -1,0 +1,71 @@
+/**
+ * Checks that the application form's rules in the browser and on the server agree.
+ *
+ *   cd frontend
+ *   npm run check:form-rules
+ *
+ * The browser rules (src/applicationForm.js) only exist for convenience; the server rules
+ * (backend/utils/applicationForm.js) are the real check. Both are written separately, so this
+ * script runs the same inputs through both and requires identical field paths, codes and limits.
+ * No server, database or network is needed.
+ */
+import { createRequire } from 'module';
+import * as browser from '../src/applicationForm.js';
+
+const require = createRequire(new URL('../../backend/utils/', import.meta.url));
+const server = require('./applicationForm.js');
+const { isCountryCode } = require('./countries.js');
+
+let failed = 0;
+const report = (ok, name, detail = '') => {
+    if (!ok) failed += 1;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
+};
+
+const inst = (o = {}) => ({ name: 'TU Berlin', country: 'DE', grading_file: 'g.pdf', ...o });
+const row = (o = {}) => ({ institution: 0, course_name: 'Statics', course_code: '', credits: 5, credit_system: 'ECTS', grade: 'A', file: 'e.pdf', ...o });
+const form = ({ institutions = [inst()], rows = [row()], targets = [1] } = {}) => ({ institutions, fulfilled_courses: rows, target_course_ids: targets });
+
+const cases = {
+    'valid application': form(),
+    'everything empty': form({ institutions: [inst({ name: '', country: '', grading_file: null })], rows: [row({ institution: null, course_name: '', credits: null, credit_system: '', grade: '', file: null })], targets: [] }),
+    'credits as text, 0, negative, 2.3': form({ rows: [row({ credits: '5' }), row({ credits: 0 }), row({ credits: -1 }), row({ credits: 2.3 })] }),
+    'credits over the limit per system': form({ rows: [row({ credits: 60.5 }), row({ credits: 30.5, credit_system: 'US_CREDIT_HOURS' }), row({ credits: 120.5, credit_system: 'UK_CATS' }), row({ credits: 120.5, credit_system: 'OTHER', credit_system_other: 'Points' })] }),
+    'credits exactly at the limits, and 2.5': form({ rows: [row({ credits: 60 }), row({ credits: 30, credit_system: 'US_CREDIT_HOURS' }), row({ credits: 120, credit_system: 'UK_CATS' }), row({ credits: 2.5 })] }),
+    'no or unknown credit system': form({ rows: [row({ credit_system: '' }), row({ credit_system: 'POINTS' })] }),
+    '"Other" without a name, and with a 51-character name': form({ rows: [row({ credit_system: 'OTHER' }), row({ credit_system: 'OTHER', credit_system_other: 'x'.repeat(51) })] }),
+    '"Other" name sent with ECTS': form({ rows: [row({ credit_system_other: 'Ignored' })] }),
+    'country missing, XX, and lower case "de"': form({ institutions: [inst({ country: '' }), inst({ name: 'B', country: 'XX' }), inst({ name: 'C', country: 'de' })], rows: [row(), row({ institution: 1 }), row({ institution: 2 })] }),
+    'same institution twice (case and spaces)': form({ institutions: [inst(), inst({ name: '  tu   BERLIN ' })], rows: [row(), row({ institution: 1 })] }),
+    'same name, different country': form({ institutions: [inst(), inst({ country: 'AT' })], rows: [row(), row({ institution: 1 })] }),
+    'institution no course uses': form({ institutions: [inst(), inst({ name: 'ELTE', country: 'HU' })] }),
+    'row pointing to a missing institution': form({ rows: [row({ institution: 4 })] }),
+    'texts too long (name 201, code 51, grade 21)': form({ institutions: [inst({ name: 'n'.repeat(201) })], rows: [row({ course_name: 'c'.repeat(201), course_code: 'k'.repeat(51), grade: 'g'.repeat(21) })] }),
+    'missing grade, evidence and grading file': form({ institutions: [inst({ grading_file: '' })], rows: [row({ grade: '  ', file: '' })] }),
+    '11 institutions': form({ institutions: Array.from({ length: 11 }, (_, i) => inst({ name: `U${i}` })) }),
+    '21 course rows': form({ rows: Array(21).fill(row()) }),
+    'target courses: text, 11, empty': form({ targets: ['1'] }),
+    'several mistakes at once': form({ institutions: [inst({ country: '' }), inst({ name: '', grading_file: '' })], rows: [row({ credits: 0 }), row({ institution: 1, grade: '', file: '' })] }),
+};
+
+console.log('Browser rules vs. server rules, same inputs\n');
+const fmt = (errors) => errors.map((e) => `${e.field} ${e.code}${e.params ? JSON.stringify(e.params) : ''}`).join(' | ');
+for (const [name, body] of Object.entries(cases)) {
+    const inBrowser = fmt(browser.validateSubmission(body, isCountryCode));
+    const onServer = fmt(server.validateApplicationForm(body).errors);
+    const count = onServer ? onServer.split(' | ').length : 0;
+    report(inBrowser === onServer, name, inBrowser === onServer
+        ? (count ? `${count} error${count > 1 ? 's' : ''}, identical` : 'valid in both')
+        : `\n      browser: ${inBrowser || 'valid'}\n      server:  ${onServer || 'valid'}`);
+}
+
+console.log('\nLimits and stored data\n');
+report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));
+report(JSON.stringify(browser.CREDIT_MAX) === JSON.stringify(server.CREDIT_MAX), 'Same credit maximum per system', JSON.stringify(server.CREDIT_MAX));
+const otherIgnored = server.validateApplicationForm(cases['"Other" name sent with ECTS']).fulfilledCourses[0];
+report(otherIgnored.credit_system_other === null, 'An "Other" name sent with ECTS is not stored', `stored: ${JSON.stringify(otherIgnored.credit_system_other)}`);
+const sent = browser.buildSubmission([{ key: 'k1', name: 'TU Wien', country: 'AT', grading_file: 'g' }], [{ id: 'r1', institutionKey: 'k1', course_name: 'X', course_code: '', credits: '5', credit_system: 'ECTS', credit_system_other: 'leftover', grade: 'A', file: 'e' }]);
+report(!('credit_system_other' in sent.fulfilled_courses[0]) && sent.fulfilled_courses[0].credits === 5, 'The form sends credits as numbers and no leftover "Other" name', JSON.stringify(sent.fulfilled_courses[0]));
+
+console.log(`\n${failed === 0 ? 'All checks passed' : `${failed} check(s) FAILED`}`);
+process.exitCode = failed === 0 ? 0 : 1;

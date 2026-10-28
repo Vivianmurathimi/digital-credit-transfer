@@ -1,15 +1,17 @@
-# Security tests: student side (Groups 1 and 2)
+# Security tests: student side (Groups 1, 2 and 4)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
 - what happens to missing, expired or forged login tokens
 - that one student can never read or change another student's data
 - that a student only sees and applies for their own study programme's courses (Group 2)
+- that every field of the application form is checked on the server, and errors name their field (Group 4)
 
-There are two parts:
+There are three parts:
 
-1. **Automated API check** (`npm run security-check`): 95 checks against the running backend.
-2. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, downloads).
+1. **Automated API check** (`npm run security-check`): 130 checks against the running backend.
+2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
+3. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
 
 ---
 
@@ -91,6 +93,23 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | **Submission** | Another programme's course; own and other mixed; a course id that does not exist | `400 COURSE_NOT_IN_PROGRAMME` |
 | | | No course list, an empty list, ids as text, 11 different courses (limit 10) | `400 INVALID_TARGET_COURSES` |
 | | | 12 copies of one course (duplicates removed first, so within the limit) | passes the course checks |
+| | **Application form (Group 4)** | Someone else's file used as evidence and as grading document | `403 FILES_NOT_OWNED` at **both** `fulfilled_courses[0].file` and `institutions[0].grading_file` |
+| | | Someone else's file vs. a file that doesn't exist | identical answer (no way to probe file names) |
+| | | Three mistakes in one submit | all three in `errors`, each with its field path, in form order; the first also at the top level |
+| | | Credits as text `"5"`, `0`, `-1`, `2.3` | `400 INVALID_CREDITS` |
+| | | 60.5 ECTS / 30.5 US credit hours / 120.5 UK credits | `400 INVALID_CREDITS` with `max` 60 / 30 / 120 |
+| | | Exactly 60 ECTS, 30 US credit hours, 120 UK credits, and 2.5 ECTS | accepted by every field rule |
+| | | No credit system, an unknown one | `400 INVALID_CREDIT_SYSTEM` |
+| | | "Other" without a name | `400 INVALID_CREDIT_SYSTEM_OTHER` |
+| | | An "Other" name sent with ECTS | accepted (and not stored: see section 1b) |
+| | | Institution without a name / country / with country `XX` / without a grading document | `INVALID_INSTITUTION_NAME` / `INVALID_COUNTRY` / `INVALID_COUNTRY` / `GRADING_FILE_MISSING` |
+| | | Same institution twice (other case and spaces) | `400 DUPLICATE_INSTITUTION` on the second |
+| | | An institution no course uses | `400 INSTITUTION_UNUSED` |
+| | | A row pointing to a missing institution | `400 INVALID_INSTITUTION_CHOICE` |
+| | | Row without course name / grade / evidence; grade of 21 characters | `INVALID_COURSE_NAME` / `INVALID_GRADE` / `EVIDENCE_MISSING` / `INVALID_GRADE` |
+| | | 11 institutions; 21 course rows | `INVALID_INSTITUTIONS` / `INVALID_FULFILLED_COURSES` |
+| | | Text the student typed | never repeated in an error answer |
+| | | The old request shape (`fulfilled_courses_json`) | refused |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -103,6 +122,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Email notification link, bad link | `410 INVALID_LINK` |
 | | | A stale token sent to a public route is ignored | `401 INVALID_CREDENTIALS` |
 | | | Programme list without a token (for the registration form) | `200`, every programme with EN/HU/DE names |
+| | | Country list without a token (for the application form) | `200`, ISO codes only |
 | | | Register a student without a Neptun code, with 5 characters, or with symbols | `400 INVALID_NEPTUN` |
 | | | Register a student with an unknown programme, or without one | `400 INVALID_PROGRAMME` |
 | | | Register with an email that is not text | `400 MISSING_FIELDS` |
@@ -135,6 +155,26 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, with rate limiting | **67 passed, 0 failed, 0 skipped**; 0 emails sent; all 81 test rate-limit rows removed |
 | 2026-10-28 | local development backend, Group 2 (programmes), seeded data | **95 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
+| 2026-10-28 | local development backend, Group 4 (application form), seeded data | **130 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
+
+---
+
+## 1b. Form rules: browser and server agree
+
+The application form checks every field in the browser first (`frontend/src/applicationForm.js`), only for convenience; the server checks everything again (`backend/utils/applicationForm.js`). The two are written separately, so a script runs the same inputs through both and requires **identical field paths, codes and limits**. It needs no server or database:
+
+```bash
+cd frontend
+npm run check:form-rules
+```
+
+It covers 19 inputs (valid, every kind of error, values exactly at each limit, several mistakes at once), compares the limits and the credit maximum per system, and checks that an "Other" credit-system name sent with ECTS is not stored and that the form sends credits as numbers.
+
+| Date | Result |
+|---|---|
+| 2026-10-28 | **23 passed, 0 failed**: all 19 inputs identical in browser and server |
+
+**Term book with Group 4 data** (one-time test on a throwaway copy of the database): an application with a 160-character course name, ECTS credits 7.5, a grade "1,3 (sehr gut)" and an image as evidence was submitted and the term book built with the real code. The book contained the course name (wrapped onto several lines, never past the right margin), code, credits, grade, target course and the embedded image. Institutions, countries and grading documents are not in the term book yet: planned for the admin round (see [PLANNED.md](PLANNED.md)).
 
 ---
 
@@ -197,6 +237,25 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id` or `pte_course_names`; application appears with both courses |
 | B26 | Course removed while the page is open | Choose CS305 and CS101, delete CS305 in the database, press Submit; then `npm run seed:dev` | "…not part of your programme… Removed from your choice: CS305."; CS101 stays chosen |
 
+**Group 4: application form** (as `student.cs@tr.pte.hu`, submit tab; check the errors in EN, HU and DE)
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| B27 | Institutions | Add a second institution, give both a name and country | Course rows list them as "Name (Country)", so same-named institutions can be told apart |
+| B28 | Remove an institution | Remove an unused one; then one that a course uses | Unused: removed at once. Used: "1 course uses this institution. Remove it anyway?"; OK clears only that row's institution choice |
+| B29 | Institution limit | Add institutions until there are 10 | Button greyed out with "Maximum 10 institutions" |
+| B30 | Grading document once per institution | Upload, open, replace, remove; then remove an institution that has one | Translated "Upload document" / "Replace document" buttons; the file is replaced, removed, and deleted with its institution |
+| B31 | Remove a course row | Remove an empty row; a typed row; a row with evidence; try the last row | Empty: at once. Typed: "Remove this course?". With evidence: warns that the evidence is deleted. The last row has no remove button |
+| B32 | Course row limit | Add rows until there are 20 | Button greyed out with "Maximum 20 courses" |
+| B33 | Credit system | New row; choose "Other"; switch back | Starts on "Choose the credit system"; "Other" shows a name field that disappears again |
+| B34 | Credit comparison | All rows ECTS; then one row US credit hours | ✅ and evidence note as before; then "Different credit systems: the reviewer will compare the credits." |
+| B35 | Empty submit | Press Submit on the empty form | An error under every required field, "No evidence uploaded for this course" next to the evidence button, "Please correct the 11 marked fields." under Submit, first field focused, **no request sent** |
+| B36 | Leaving a field | Tab through the empty form; then type 60.5 in ECTS credits and leave | No errors while tabbing; then "…at most 60, in steps of 0.5." |
+| B37 | Errors clear | Fix a marked field; change a credit system; upload evidence | Its error disappears and the count under Submit goes down |
+| B38 | Duplicate and unused | Two "TU Wien (Austria)" both used; an institution no course uses | "This institution is already in the list." / "No course is linked to this institution…" under the name |
+| B39 | Screen reader | VoiceOver on (Cmd+F5), press Submit on the empty form | "Please correct the … marked fields." is announced |
+| B40 | Reviewer screen and term book | Submit a complete application; open it as `reviewer.cs@mik.pte.hu`; as admin generate a term book for today and open the PDF | The reviewer screen shows course name, credits, grade and evidence as before; the term book shows the application and long course names wrap inside the page |
+
 ---
 
 ## 3. Pending for the reviewer round
@@ -206,6 +265,8 @@ Every application now records its programme (Group 2), so the data supports thes
 | Test | Expected | Status |
 |---|---|---|
 | A reviewer cannot see another programme's applications (list, single application, evidence files) | `403` / filtered list | **Pending (reviewer round).** Today every reviewer can see every application. |
+| The reviewer screen shows institution, country, credit system and grading document | shown, files opened only by staff | **Pending (reviewer round).** The data is stored since Group 4. |
+| The term book includes institutions, countries and grading documents | included | **Pending (admin round).** |
 
 ---
 
