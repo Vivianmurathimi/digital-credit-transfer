@@ -1,24 +1,37 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
+import { CREDIT_SYSTEMS, newInstitution, newCourseRow, allEcts, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission } from '../applicationForm';
 
 // Set up the worker for PDF.js to handle conversions
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
+const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
+const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
+
 const StudentDashboard = ({ userId, isImpersonating = false }) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const [courses, setCourses] = useState([]);
     const [coursesLoaded, setCoursesLoaded] = useState(false);
     const [studentTab, setStudentTab] = useState('dashboard');
     
-    // --- PHASE 1: Dynamic Spreadsheet Data ---
-    const [fulfilledCourses, setFulfilledCourses] = useState([
-        { id: Date.now(), course_name: '', course_code: '', credits: '', grade: '', file: null }
-    ]);
+    // --- PHASE 1: Previous institutions and the courses completed there ---
+    // Each institution has a stable internal key; course rows point to it by that key
+    // (turned into a position only when submitting, see applicationForm.js)
+    const [institutions, setInstitutions] = useState(() => [newInstitution()]);
+    const [fulfilledCourses, setFulfilledCourses] = useState(() => [newCourseRow()]);
+    const [countryCodes, setCountryCodes] = useState([]);
+    // Positions -> keys/ids of the last submit, to place server errors under the right field
+    const lastSubmitMap = useRef(null);
+    // Grading-document upload state per institution key: { uploading: true } or { message: '…' }
+    const [gradingStatus, setGradingStatus] = useState({});
+    // The current institutions, for uploads that finish after the list has changed
+    const institutionsRef = useRef(institutions);
+    institutionsRef.current = institutions;
     const [selectedCourses, setSelectedCourses] = useState([]); 
     
     // --- PHASE 2: Student Cover Letter ---
@@ -88,9 +101,33 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         fetchSystemStatus();
     }, [fetchCourses, fetchMyApplications, fetchSystemStatus]);
 
+    // Country codes from the server; the names come from the browser in the current language
+    useEffect(() => {
+        http.get('countries').json()
+            .then((data) => setCountryCodes(data.countries || []))
+            .catch((err) => console.error('Could not load countries', err));
+    }, []);
+
+    const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
+    const countries = useMemo(() => countryOptions(countryCodes, language), [countryCodes, language]);
+    const countryName = (code) => countries.find((c) => c.code === code)?.name || code;
+    // "TU Berlin (Germany)", so institutions with the same name can be told apart
+    const institutionLabel = (inst, index) => {
+        const name = inst.name.trim() || t('student_institution_unnamed', { n: index + 1 });
+        return inst.country ? `${name} (${countryName(inst.country)})` : name;
+    };
+
     // Validation & Credit Math
     useEffect(() => {
         if (selectedCourses.length > 0 && fulfilledCourses[0].course_name) {
+            // Different credit systems can't be added up: no comparison, the reviewer judges
+            if (!allEcts(fulfilledCourses)) {
+                setMatches({ credits: false });
+                setEvidenceRequiredMsg(selectedCourses.length > 1
+                    ? t('student_evidence_notice', { reason: t('student_evidence_reason_package') })
+                    : t('student_credits_compare_skipped'));
+                return;
+            }
             const totalTargetCredits = selectedCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
             const totalInputCredits = fulfilledCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
             
@@ -118,9 +155,72 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     };
 
     // Row Management
-    const handleAddCourseRow = () => setFulfilledCourses([...fulfilledCourses, { id: Date.now(), course_name: '', course_code: '', credits: '', grade: '', file: null }]);
+    const handleAddCourseRow = () => setFulfilledCourses([...fulfilledCourses, newCourseRow()]);
     const handleRemoveCourseRow = (id) => setFulfilledCourses(fulfilledCourses.filter(c => c.id !== id));
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
+
+    // Institutions
+    const handleAddInstitution = () => setInstitutions([...institutions, newInstitution()]);
+    const handleInstitutionChange = (key, field, value) => setInstitutions(institutions.map(i => i.key === key ? { ...i, [field]: value } : i));
+    const setGradingState = (key, state) => setGradingStatus((prev) => ({ ...prev, [key]: state }));
+
+    const handleRemoveInstitution = async (key) => {
+        // Ask first if courses use it: their institution choice would be cleared
+        const used = rowsUsingInstitution(fulfilledCourses, key);
+        if (used > 0 && !window.confirm(t('student_remove_institution_confirm', { count: used }))) return;
+
+        // Its grading document is deleted from storage too. If that fails, the institution stays,
+        // so no file is left behind unnoticed.
+        const file = institutions.find((i) => i.key === key)?.grading_file;
+        if (file) {
+            try {
+                await http.delete(getUploadEndpoint(file));
+            } catch (err) {
+                console.error('Could not delete grading document', err);
+                setGradingState(key, { message: t('student_grading_doc_remove_failed') });
+                return;
+            }
+        }
+        const next = removeInstitution(institutionsRef.current, fulfilledCourses, key);
+        setInstitutions(next.institutions);
+        setFulfilledCourses(next.rows);
+    };
+
+    // Grading-system document: uploaded as soon as it is chosen (no highlighter).
+    // Replacing uploads the new file first and deletes the old one only after that worked.
+    const handleGradingFileChosen = async (key, file) => {
+        if (!file) return;
+        setGradingState(key, { uploading: true });
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const data = await http.post('uploads', { body: formData, timeout: false }).json();
+            const current = institutionsRef.current.find((i) => i.key === key);
+            if (!current) {
+                // The institution was removed while uploading: don't leave the new file behind
+                http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
+                return;
+            }
+            const previous = current.grading_file;
+            setInstitutions((list) => list.map((i) => (i.key === key ? { ...i, grading_file: data.fileName } : i)));
+            setGradingState(key, {});
+            if (previous) {
+                http.delete(getUploadEndpoint(previous)).catch((err) => console.error('Could not delete replaced grading document', err));
+            }
+        } catch (err) {
+            setGradingState(key, { message: getErrorMessage(err, t, 'student_upload_failed') });
+        }
+    };
+
+    const handleRemoveGradingFile = async (key, file) => {
+        try {
+            await http.delete(getUploadEndpoint(file));
+            setInstitutions((list) => list.map((i) => (i.key === key ? { ...i, grading_file: null } : i)));
+            setGradingState(key, {});
+        } catch (err) {
+            setGradingState(key, { message: getErrorMessage(err, t, 'file_remove_failed') });
+        }
+    };
     
     // Evidence files need the login token, so they are opened through openSecureFile
     const handleOpenFile = (e, fileName) => {
@@ -314,8 +414,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             setSubmitStatus(t('student_submit_saving'));
             // Only the course ids: the server checks them against the student's programme
             // and stores their code, name and credits itself
+            // Institution keys -> positions, credits -> numbers (see applicationForm.js)
+            const { institutionKeyAt, rowIdAt, ...form } = buildSubmission(institutions, fulfilledCourses);
+            lastSubmitMap.current = { institutionKeyAt, rowIdAt };
             const data = await http.post('applications', { json: {
-                fulfilled_courses_json: fulfilledCourses, 
+                ...form,
                 target_course_ids: selectedCourses.map(c => c.id),
                 system_note: evidenceRequiredMsg,
                 student_note: studentNote 
@@ -323,7 +426,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             
             if (data.success) {
                 alert(t('student_submission_success'));
-                setFulfilledCourses([{ id: Date.now(), course_name: '', course_code: '', credits: '', grade: '', file: null }]);
+                setInstitutions([newInstitution()]);
+                setFulfilledCourses([newCourseRow()]);
+                setGradingStatus({});
                 setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
@@ -452,16 +557,16 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {resubmitPreviewUrl && (
                                 <div style={{ marginTop: '10px' }}>
                                     <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                        <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>Pen</button>
-                                        <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>Eraser</button>
-                                        <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>Clear</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>Remove Selected File</button>
+                                        <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
+                                        <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
+                                        <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
+                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
                                     </div>
                                     <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                        <img ref={imgRef} src={resubmitPreviewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt="Syllabus" />
+                                        <img ref={imgRef} src={resubmitPreviewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
                                         <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
                                     </div><br/>
-                                    <button onClick={() => handleUploadHighlighted(true)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Save Highlighted Image</button>
+                                    <button onClick={() => handleUploadHighlighted(true)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_save_highlighted')}</button>
                                 </div>
                             )}
 
@@ -469,8 +574,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
                                     <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{resubmitRawFile.name}</strong></p>
                                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        <button onClick={() => handleStandardUpload(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Attach Document</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Remove Selected File</button>
+                                        <button onClick={() => handleStandardUpload(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
+                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
                                     </div>
                                 </div>
                             )}
@@ -485,15 +590,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                                 {isImageFile(file) ? (
                                                     <SecureImage 
                                                         fileName={file} 
-                                                        alt="Evidence Preview"
+                                                        alt={t('student_evidence_preview_alt')}
                                                         style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                     />
                                                 ) : (
                                                     <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {file}</span>
                                                 )}
-                                                <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>Open file</span>
+                                                <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                             </a>
-                                            <button onClick={() => handleDeleteResubmitFile(file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Remove</button>
+                                            <button onClick={() => handleDeleteResubmitFile(file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                         </div>
                                     ))}
                                 </div>
@@ -514,22 +619,106 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {studentTab === 'submit' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
+
+                    {/* Previous institutions: entered once, then chosen on each course row */}
+                    <section aria-labelledby="institutions-title" style={{ backgroundColor: 'var(--surface)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                        <h3 id="institutions-title" style={{ margin: '0 0 5px 0', color: 'var(--link)' }}>{t('student_institutions_title')}</h3>
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 10px 0' }}>{t('student_institutions_help')}</p>
+                        {institutions.map((inst, i) => (
+                            <div key={inst.key} style={{ border: '1px solid var(--border)', borderRadius: '5px', padding: '10px', marginBottom: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                                    <h4 style={{ margin: 0, color: 'var(--link)' }}>{t('student_institution_heading', { n: i + 1 })}</h4>
+                                    {institutions.length > 1 && (
+                                        <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveInstitution(inst.key)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_institution')}</button>
+                                    )}
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+                                    <div>
+                                        <label htmlFor={`inst-name-${inst.key}`} style={fieldLabelStyle}>{t('student_institution_name')}</label>
+                                        <input id={`inst-name-${inst.key}`} type="text" value={inst.name} onChange={(e) => handleInstitutionChange(inst.key, 'name', e.target.value)} style={fieldInputStyle} />
+                                    </div>
+                                    <div>
+                                        <label htmlFor={`inst-country-${inst.key}`} style={fieldLabelStyle}>{t('student_institution_country')}</label>
+                                        <select id={`inst-country-${inst.key}`} value={inst.country} onChange={(e) => handleInstitutionChange(inst.key, 'country', e.target.value)} style={fieldInputStyle}>
+                                            <option value="">{t('student_country_placeholder')}</option>
+                                            {countries.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Grading-system document: one per institution, no highlighting */}
+                                <div style={{ marginTop: '12px' }}>
+                                    <label htmlFor={`inst-grading-${inst.key}`} style={fieldLabelStyle}>{t('student_grading_doc_label')}</label>
+                                    <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')}</p>
+                                    {inst.grading_file && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                            <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {inst.grading_file}</span>
+                                            <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
+                                            <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
+                                        </div>
+                                    )}
+                                    {inst.grading_file && <span style={{ fontSize: '12px', fontWeight: 'bold', marginRight: '8px' }}>{t('student_grading_doc_replace')}:</span>}
+                                    <input
+                                        id={`inst-grading-${inst.key}`} type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                        disabled={gradingStatus[inst.key]?.uploading}
+                                        aria-describedby={`inst-grading-help-${inst.key}`}
+                                        // Cleared after each choice, so the same file can be chosen again
+                                        onChange={(e) => { handleGradingFileChosen(inst.key, e.target.files[0]); e.target.value = ''; }}
+                                    />
+                                    {gradingStatus[inst.key]?.uploading && <p role="status" style={{ color: 'var(--link)', fontWeight: 'bold', margin: '6px 0 0 0' }}>{t('student_grading_doc_uploading')}</p>}
+                                    {gradingStatus[inst.key]?.message && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold', margin: '6px 0 0 0' }}>{gradingStatus[inst.key].message}</p>}
+                                </div>
+                            </div>
+                        ))}
+                        <button type="button" onClick={handleAddInstitution} style={{ padding: '8px 12px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_institution')}</button>
+                    </section>
                     
                     {fulfilledCourses.map((course, index) => (
                         <div key={course.id} style={{ backgroundColor: 'var(--surface)', padding: '15px', borderRadius: '5px', marginBottom: '15px', position: 'relative', borderLeft: course.file ? '5px solid var(--accent)' : '5px solid var(--red)' }}>
-                            <h4 style={{ margin: '0 0 10px 0', color: 'var(--link)' }}>Course {index + 1}</h4>
+                            <h4 style={{ margin: '0 0 10px 0', color: 'var(--link)' }}>{t('student_fulfilled_course_heading', { n: index + 1 })}</h4>
                             {fulfilledCourses.length > 1 && <button onClick={() => handleRemoveCourseRow(course.id)} style={{ position: 'absolute', top: '10px', right: '10px', background: 'var(--red-pure)', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' }}>X</button>}
                             
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '10px' }}>
-                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>{t('student_fulfilled_course_label')}</label><input type="text" value={course.course_name} onChange={(e) => handleCourseChange(course.id, 'course_name', e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
-                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>{t('student_course_code_label')}</label><input type="text" value={course.course_code} onChange={(e) => handleCourseChange(course.id, 'course_code', e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
-                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>{t('student_total_credits_label')} {matches.credits && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label><input type="number" step="0.5" value={course.credits} onChange={(e) => handleCourseChange(course.id, 'credits', e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
-                                <div><label style={{ fontSize: '12px', fontWeight: 'bold' }}>{t('student_grade_label')}</label><input type="text" value={course.grade} onChange={(e) => handleCourseChange(course.id, 'grade', e.target.value)} style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }} /></div>
+                            <div style={{ marginBottom: '10px' }}>
+                                <label htmlFor={`row-inst-${course.id}`} style={fieldLabelStyle}>{t('student_course_institution')}</label>
+                                <select id={`row-inst-${course.id}`} value={course.institutionKey} onChange={(e) => handleCourseChange(course.id, 'institutionKey', e.target.value)} style={fieldInputStyle}>
+                                    <option value="">{t('student_course_institution_placeholder')}</option>
+                                    {institutions.map((inst, i) => <option key={inst.key} value={inst.key}>{institutionLabel(inst, i)}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '10px' }}>
+                                <div>
+                                    <label htmlFor={`row-name-${course.id}`} style={fieldLabelStyle}>{t('student_fulfilled_course_label')}</label>
+                                    <input id={`row-name-${course.id}`} type="text" value={course.course_name} onChange={(e) => handleCourseChange(course.id, 'course_name', e.target.value)} style={fieldInputStyle} />
+                                </div>
+                                <div>
+                                    <label htmlFor={`row-code-${course.id}`} style={fieldLabelStyle}>{t('student_course_code_label')}</label>
+                                    <input id={`row-code-${course.id}`} type="text" value={course.course_code} onChange={(e) => handleCourseChange(course.id, 'course_code', e.target.value)} style={fieldInputStyle} />
+                                </div>
+                                <div>
+                                    <label htmlFor={`row-credits-${course.id}`} style={fieldLabelStyle}>{t('student_total_credits_label')} {matches.credits && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label>
+                                    <input id={`row-credits-${course.id}`} type="number" step="0.5" min="0.5" inputMode="decimal" value={course.credits} onChange={(e) => handleCourseChange(course.id, 'credits', e.target.value)} style={fieldInputStyle} />
+                                </div>
+                                <div>
+                                    <label htmlFor={`row-system-${course.id}`} style={fieldLabelStyle}>{t('student_credit_system')}</label>
+                                    <select id={`row-system-${course.id}`} value={course.credit_system} onChange={(e) => handleCourseChange(course.id, 'credit_system', e.target.value)} style={fieldInputStyle}>
+                                        {CREDIT_SYSTEMS.map((system) => <option key={system} value={system}>{t(`student_credit_system_${system}`)}</option>)}
+                                    </select>
+                                </div>
+                                {course.credit_system === 'OTHER' && (
+                                    <div>
+                                        <label htmlFor={`row-system-other-${course.id}`} style={fieldLabelStyle}>{t('student_credit_system_other_label')}</label>
+                                        <input id={`row-system-other-${course.id}`} type="text" value={course.credit_system_other} onChange={(e) => handleCourseChange(course.id, 'credit_system_other', e.target.value)} style={fieldInputStyle} />
+                                    </div>
+                                )}
+                                <div>
+                                    <label htmlFor={`row-grade-${course.id}`} style={fieldLabelStyle}>{t('student_grade_label')}</label>
+                                    <input id={`row-grade-${course.id}`} type="text" value={course.grade} onChange={(e) => handleCourseChange(course.id, 'grade', e.target.value)} style={fieldInputStyle} />
+                                </div>
                             </div>
                             
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <button onClick={() => triggerUploadForCourse(course.id)} style={{ padding: '8px 12px', backgroundColor: course.file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                    {activeUploadId === course.id ? 'Close Uploader ▴' : (course.file ? 'Replace Evidence ▾' : 'Upload Syllabus (Required) ▾')}
+                                    {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_syllabus'))}
                                 </button>
                                 
                                 {/* Clickable Thumbnail! */}
@@ -539,15 +728,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                             {isImageFile(course.file) ? (
                                                 <SecureImage 
                                                     fileName={course.file} 
-                                                    alt="Evidence Preview"
+                                                    alt={t('student_evidence_preview_alt')}
                                                     style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                 />
                                             ) : (
                                                 <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold' }}>{course.file}</span>
                                             )}
-                                            <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>Open file</span>
+                                            <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                         </a>
-                                        <button onClick={() => handleDeleteUploadedFile(course.id, course.file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Remove</button>
+                                        <button onClick={() => handleDeleteUploadedFile(course.id, course.file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                     </div>
                                 )}
                             </div>
@@ -555,22 +744,22 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {/* --- INLINE UPLOADER --- */}
                             {activeUploadId === course.id && (
                                 <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--blue)', borderRadius: '5px', marginTop: '15px' }}>
-                                    <h4 style={{ marginTop: 0 }}>Upload Course Evidence</h4>
+                                    <h4 style={{ marginTop: 0 }}>{t('student_upload_evidence_title')}</h4>
                                     <input type="file" onChange={(e) => handleFileSelect(e, false)} />
                                     
                                     {previewUrl && (
                                         <div style={{ marginTop: '10px' }}>
                                             <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                                <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>Pen</button>
-                                                <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>Eraser</button>
-                                                <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>Clear</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>Remove Selected File</button>
+                                                <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
+                                                <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
+                                                <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
+                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
                                             </div>
                                             <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                                <img ref={imgRef} src={previewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt="Syllabus" />
+                                                <img ref={imgRef} src={previewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
                                                 <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
                                             </div><br/>
-                                            <button onClick={() => handleUploadHighlighted(false)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>Save Highlighted Image</button>
+                                            <button onClick={() => handleUploadHighlighted(false)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{t('student_save_highlighted')}</button>
                                         </div>
                                     )}
 
@@ -578,8 +767,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                         <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
                                             <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{rawFile.name}</strong></p>
                                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                                <button onClick={() => handleStandardUpload(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Attach Document</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Remove Selected File</button>
+                                                <button onClick={() => handleStandardUpload(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
+                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
                                             </div>
                                         </div>
                                     )}
@@ -590,7 +779,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     ))}
 
-                    <button onClick={handleAddCourseRow} style={{ padding: '10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '20px', width: '100%' }}>+ Add another fulfilled course</button>
+                    <button onClick={handleAddCourseRow} style={{ padding: '10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginBottom: '20px', width: '100%' }}>{t('student_add_course')}</button>
 
                     <div style={{ marginBottom: '20px' }}>
                         <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_select_pte_courses_label')}</label>
@@ -612,14 +801,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     {evidenceRequiredMsg && <div style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>{evidenceRequiredMsg}</div>}
 
                     <div style={{ marginBottom: '20px' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>Additional Notes for Reviewer (Optional)</label>
-                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '5px 0' }}>Use this space to explain complex mappings, highlight specific pages in your evidence, or provide context.</p>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '5px 0' }}>{t('student_notes_help')}</p>
                         <textarea 
                             value={studentNote}
                             onChange={(e) => setStudentNote(e.target.value)}
                             rows="4"
                             style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid var(--border-strong)', boxSizing: 'border-box' }}
-                            placeholder="Type any helpful context here..."
+                            placeholder={t('student_notes_placeholder')}
                         />
                     </div>
 
