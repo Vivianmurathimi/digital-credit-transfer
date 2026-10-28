@@ -146,31 +146,20 @@ router.post('/refresh-token', verifyToken, (req, res) => {
 });
 
 // --- FORGOT PASSWORD ROUTE ---
-router.post('/forgot-password', async (req, res) => {
-    const { email } = req.body;
-    if (!email) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
+const FORGOT_PASSWORD_MESSAGE = 'If that email exists, a reset link has been sent.';
 
-    try {
-        // 1. Check if user exists
-        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
-        if (result.rows.length === 0) {
-            // Security best practice: Don't reveal if the email exists or not to prevent snooping!
-            return res.json({ success: true, message: "If that email exists, a reset link has been sent." });
-        }
+// Creates a reset link (valid 1 hour), saves it and emails it. Runs AFTER the reply has been sent.
+const sendResetLink = async (lowerEmail) => {
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetExpires = Date.now() + 3600000; // 1 hour in milliseconds
 
-        // 2. Generate Token & Expiration (1 hour from now)
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const resetExpires = Date.now() + 3600000; // 1 hour in milliseconds
+    await pool.query(
+        'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
+        [resetToken, resetExpires, lowerEmail]
+    );
 
-        // 3. Save to database
-        await pool.query(
-            'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
-            [resetToken, resetExpires, email.toLowerCase()]
-        );
-
-        // 4. Send Email
-        const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
-        const message = `
+    const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
+    const message = `
             <h2>Password Reset Request</h2>
             <p>You requested a password reset for your PTE Credit Transfer account.</p>
             <p>Please click the button below to set a new password. This link is valid for 1 hour.</p>
@@ -178,14 +167,31 @@ router.post('/forgot-password', async (req, res) => {
             <p>If you did not request this, please ignore this email.</p>
         `;
 
-        await sendEmail({
-            email: email.toLowerCase(),
-            subject: 'PTE Portal: Password Reset Request',
-            html: message
-        });
+    await sendEmail({
+        email: lowerEmail,
+        subject: 'PTE Portal: Password Reset Request',
+        html: message
+    });
+};
 
-        res.json({ success: true, message: "If that email exists, a reset link has been sent." });
+router.post('/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    if (typeof email !== 'string' || !email) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
+    const lowerEmail = email.toLowerCase();
 
+    try {
+        const result = await pool.query('SELECT id FROM users WHERE email = $1', [lowerEmail]);
+
+        // Don't reveal whether the email exists: the same answer, sent at the same moment
+        // (right after the lookup) in both cases. The slow part, saving the link and
+        // talking to the mail server, happens after the reply.
+        res.json({ success: true, message: FORGOT_PASSWORD_MESSAGE });
+
+        if (result.rows.length > 0) {
+            // The reply is already sent, so a failure here can only be logged.
+            // The .catch() also covers any error thrown inside sendResetLink.
+            sendResetLink(lowerEmail).catch((err) => console.error('Forgot password (after reply) error:', err.message));
+        }
     } catch (err) {
         console.error("Forgot password error:", err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Server error');

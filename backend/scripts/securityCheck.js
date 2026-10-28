@@ -226,6 +226,7 @@ const run = async () => {
     const forgot = await call('POST', 'forgot-password', { json: { email: 'nobody@security-check.invalid' } });
     report(forgot.status === 200 && forgot.body && forgot.body.success === true && forgot.body.message === FORGOT_MESSAGE,
         'Forgot password, unknown address (no email sent)', `${forgot.status}, same text as for a real address`);
+    await expect('Forgot password, email that is not text', call('POST', 'forgot-password', { json: { email: 123 } }), 400, 'MISSING_FIELDS');
     await expect('Reset password, bad link', call('POST', 'reset-password/not-a-real-link', { json: { newPassword: 'Abcdef12!' } }), 400, 'INVALID_RESET_LINK');
     await expect('Verify email, bad link', call('GET', 'verify/not-a-real-link'), 400, 'INVALID_VERIFY_LINK');
     await expect('Email link, bad link', call('GET', 'email-link/not-a-real-link'), 410, 'INVALID_LINK');

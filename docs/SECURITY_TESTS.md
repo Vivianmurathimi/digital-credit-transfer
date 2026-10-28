@@ -7,7 +7,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are two parts:
 
-1. **Automated API check** (`npm run security-check`): 62 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 63 checks against the running backend.
 2. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, downloads).
 
 ---
@@ -72,6 +72,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | 6 | **Public routes** (no token) | Login with an unknown email, and with a real email + wrong password (same answer, so accounts cannot be guessed) | `401 INVALID_CREDENTIALS` |
 | | | Register with empty fields | `400 MISSING_FIELDS` |
 | | | Forgot password with an unknown address | `200` with the same text as for a real address |
+| | | Forgot password with an email that is not text | `400 MISSING_FIELDS` |
 | | | Reset password, bad link | `400 INVALID_RESET_LINK` |
 | | | Verify email, bad link | `400 INVALID_VERIFY_LINK` |
 | | | Email notification link, bad link | `410 INVALID_LINK` |
@@ -80,13 +81,21 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | | | Download file names are readable | `Content-Disposition` exposed |
 | | | A foreign website gets no CORS headers, and no server error | no CORS headers |
 
-**Forgot password, real address:** the script does not call this with a real address, because that would send an email. Reading the code (`backend/routes/auth.js`, forgot-password route) confirms that both branches return the same status (`200`) and the same text.
+**Forgot password, real address:** the script does not call this with a real address, because that would send an email. Reading the code (`backend/routes/auth.js`, forgot-password route) confirms that both cases send the same reply (`200`, same text) at the same point, straight after the database lookup.
+
+**Forgot password timing** was measured separately with a test student in the Mailtrap sandbox (6 requests per set, the first discarded, average of the other 5):
+
+| | Unknown address | Real address |
+|---|---|---|
+| Before the fix (email sent before replying) | 5 ms | 1877 ms |
+| After the fix (reply first, email afterwards) | 3 ms | 4 ms |
 
 ### Last result
 
 | Date | Server | Result |
 |---|---|---|
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
+| 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |
 
 ---
 
@@ -124,6 +133,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 ## 4. Known limitations
 
 - **CORS is a browser rule.** It stops other websites from reading API answers in a user's browser. It does not stop direct requests (curl, scripts); those are protected by the login token and role checks above.
-- **Forgot password timing.** For a real address the server also creates a reset link and sends the email before answering. The answer text is identical, but it takes noticeably longer, so someone measuring response times could guess whether an address is registered. A fix (answer first, then send the email) is parked.
+- **Register reveals registered addresses.** Signing up with an address that already has an account answers `400 EMAIL_TAKEN` ("Email already registered"), so anyone can check whether an address is registered. Closing this would mean always answering "check your inbox" and emailing the existing account owner instead; not done yet.
+- ~~Forgot password timing~~ **(fixed 2026-10-28).** A real address used to take about 1.9 s longer than an unknown one, because the email was sent before replying. The reply now comes straight after the lookup in both cases (see section 1).
 - **Older evidence files without an owner tag.** A few files uploaded before ownership tagging can be opened by reviewers and the superadmin, but not by the student who uploaded them. No other student can open them either.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).
