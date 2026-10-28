@@ -5,7 +5,7 @@ import { getErrorCode, getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
-import { CREDIT_SYSTEMS, newInstitution, newCourseRow, allEcts, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission } from '../applicationForm';
+import { CREDIT_SYSTEMS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission } from '../applicationForm';
 
 // Set up the worker for PDF.js to handle conversions
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -32,6 +32,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // The current institutions, for uploads that finish after the list has changed
     const institutionsRef = useRef(institutions);
     institutionsRef.current = institutions;
+    // Same for course rows (an evidence upload can finish after its row was removed)
+    const rowsRef = useRef(fulfilledCourses);
+    rowsRef.current = fulfilledCourses;
+    // A message per course row, e.g. when its evidence could not be deleted: { [rowId]: '…' }
+    const [rowMessages, setRowMessages] = useState({});
     const [selectedCourses, setSelectedCourses] = useState([]); 
     
     // --- PHASE 2: Student Cover Letter ---
@@ -156,7 +161,25 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Row Management
     const handleAddCourseRow = () => setFulfilledCourses([...fulfilledCourses, newCourseRow()]);
-    const handleRemoveCourseRow = (id) => setFulfilledCourses(fulfilledCourses.filter(c => c.id !== id));
+    // Removing a row also deletes its evidence from storage. At least one row always stays.
+    // Rows with content are confirmed first; if the evidence can't be deleted, the row stays.
+    const handleRemoveCourseRow = async (id) => {
+        const row = fulfilledCourses.find(c => c.id === id);
+        if (!row || fulfilledCourses.length <= 1) return;
+        if (rowHasContent(row) && !window.confirm(t(row.file ? 'student_remove_course_confirm_file' : 'student_remove_course_confirm'))) return;
+        if (row.file) {
+            try {
+                await http.delete(getUploadEndpoint(row.file));
+            } catch (err) {
+                console.error('Could not delete evidence', err);
+                setRowMessages(prev => ({ ...prev, [id]: t('student_evidence_remove_failed') }));
+                return;
+            }
+        }
+        setFulfilledCourses(list => list.filter(c => c.id !== id));
+        setRowMessages(prev => { const next = { ...prev }; delete next[id]; return next; });
+        if (activeUploadId === id) { setActiveUploadId(null); setPreviewUrl(null); setRawFile(null); }
+    };
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
 
     // Institutions
@@ -379,6 +402,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Handles the actual API call and state update for the specific course
     const executeUpload = async (formData, isResubmit) => {
+        // The row is fixed when the upload starts, so switching rows meanwhile can't misplace the file
+        const targetRowId = activeUploadId;
         try {
             // FormData as body: the browser sets the multipart Content-Type itself.
             // No time limit, so a big file on a slow connection is not cut off.
@@ -389,8 +414,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     setResubmitPreviewUrl(null); 
                     setResubmitRawFile(null);
                 } else {
-                    // This is where it attaches the file specifically to the course case!
-                    setFulfilledCourses(fulfilledCourses.map(c => c.id === activeUploadId ? { ...c, file: data.fileName } : c));
+                    // The row was removed while uploading: don't leave the new file behind
+                    if (!rowsRef.current.some(c => c.id === targetRowId)) {
+                        http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
+                        return;
+                    }
+                    setFulfilledCourses(list => list.map(c => c.id === targetRowId ? { ...c, file: data.fileName } : c));
                     setTimeout(() => { setPreviewUrl(null); setRawFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));
@@ -429,6 +458,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setInstitutions([newInstitution()]);
                 setFulfilledCourses([newCourseRow()]);
                 setGradingStatus({});
+                setRowMessages({});
                 setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
@@ -675,8 +705,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     
                     {fulfilledCourses.map((course, index) => (
                         <div key={course.id} style={{ backgroundColor: 'var(--surface)', padding: '15px', borderRadius: '5px', marginBottom: '15px', position: 'relative', borderLeft: course.file ? '5px solid var(--accent)' : '5px solid var(--red)' }}>
-                            <h4 style={{ margin: '0 0 10px 0', color: 'var(--link)' }}>{t('student_fulfilled_course_heading', { n: index + 1 })}</h4>
-                            {fulfilledCourses.length > 1 && <button onClick={() => handleRemoveCourseRow(course.id)} style={{ position: 'absolute', top: '10px', right: '10px', background: 'var(--red-pure)', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' }}>X</button>}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                                <h4 style={{ margin: 0, color: 'var(--link)' }}>{t('student_fulfilled_course_heading', { n: index + 1 })}</h4>
+                                {/* At least one row always stays, so the only row has no remove button */}
+                                {fulfilledCourses.length > 1 && (
+                                    <button type="button" onClick={() => handleRemoveCourseRow(course.id)} aria-label={t('student_remove_course_aria', { n: index + 1 })} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_course')}</button>
+                                )}
+                            </div>
+                            {rowMessages[course.id] && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold', margin: '0 0 10px 0' }}>{rowMessages[course.id]}</p>}
                             
                             <div style={{ marginBottom: '10px' }}>
                                 <label htmlFor={`row-inst-${course.id}`} style={fieldLabelStyle}>{t('student_course_institution')}</label>

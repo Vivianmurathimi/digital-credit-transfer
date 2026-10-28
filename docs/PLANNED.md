@@ -35,7 +35,7 @@ Things deliberately left for later while building the student side, with the rea
 
 ## Other
 
-- **Uploads from forms that are never submitted stay in storage.** Evidence and grading documents are uploaded as soon as they are chosen; if the student leaves without submitting, those files are kept but belong to no application. Removing a document or an institution in the form deletes its file. Cleaning up the rest needs a background job, e.g. deleting files older than a day that no application refers to.
+- **Uploads from forms that are never submitted stay in storage.** Evidence and grading documents are uploaded as soon as they are chosen; if the student leaves without submitting, those files are kept but belong to no application. Removing a course row, a document or an institution in the form deletes its file. Cleaning up the rest needs a background job, e.g. deleting files older than a day that no application refers to.
 - **"Evidence required" note is written by the browser** (`system_note`, in the student's language) and stored as sent. It should be worked out by the server.
 - **Register reveals registered addresses and Neptun codes** (`EMAIL_TAKEN`, `NEPTUN_TAKEN`). Fix: always answer "check your inbox" and email the existing account owner.
 - Success messages of forgot / reset password are still English.

@@ -34,6 +34,12 @@ export const toCredits = (value) => {
 // Credits can only be compared with the PTE target courses (ECTS) when every row is ECTS
 export const allEcts = (rows) => rows.length > 0 && rows.every((row) => row.credit_system === 'ECTS');
 
+// Whether a row holds anything worth confirming before removal (the default credit system doesn't count)
+export const rowHasContent = (row) => Boolean(
+    row.file || row.institutionKey
+    || ['course_name', 'course_code', 'credits', 'grade', 'credit_system_other'].some((field) => String(row[field] ?? '').trim() !== '')
+);
+
 // How many course rows use an institution (asked before removing it)
 export const rowsUsingInstitution = (rows, key) => rows.filter((row) => row.institutionKey === key).length;
 
