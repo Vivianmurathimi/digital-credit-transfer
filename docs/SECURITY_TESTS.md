@@ -1,13 +1,14 @@
-# Security tests: student side (Group 1)
+# Security tests: student side (Groups 1 and 2)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
 - what happens to missing, expired or forged login tokens
 - that one student can never read or change another student's data
+- that a student only sees and applies for their own study programme's courses (Group 2)
 
 There are two parts:
 
-1. **Automated API check** (`npm run security-check`): 67 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 95 checks against the running backend.
 2. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, downloads).
 
 ---
@@ -15,6 +16,16 @@ There are two parts:
 ## 1. Automated API check
 
 ### How to run it
+
+The check needs test data in **two study programmes**: two students in different programmes, each with an uploaded file and one with an application. In development:
+
+```bash
+cd backend
+npm run migrate
+npm run seed:dev     # one student per programme, with a file and an application
+```
+
+Then:
 
 ```bash
 # 1. Start the backend as usual (it listens on PORT from backend/.env, normally 5050)
@@ -29,28 +40,28 @@ npm run security-check
 SECURITY_CHECK_URL=http://localhost:5099 npm run security-check
 ```
 
-The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with code 0 only if nothing failed.
+The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `passed / failed / skipped`. It exits with code 0 only if nothing failed. A `SKIP` always shows its reason, and skipped checks are counted in the total and called out at the end. They are never left out silently.
 
 ### Safety rules built into the script
 
 - **Changes no data and sends no emails.** Every request is either read-only or one the server must refuse *before* it saves anything. The one exception is the rate-limit checks (section 8), which add rows to `rate_limit_hits`. The script deletes exactly those rows at the end, even after a crash: this computer's IP and its own test addresses, from the start of the run. Otherwise this computer would stay rate-limited for an hour. Other requests:
   - forgot password uses an address that does not exist
   - the only login attempts use wrong passwords
-- **Destructive checks are guarded.** "Student A deletes B's file" and "A submits with B's file" would really delete or save something if the ownership check were broken. They only run after the read-only check "A opens B's file" has passed; otherwise they are skipped.
+- **Destructive checks are guarded.** "Student A deletes B's file" and the submit checks would really delete or save something if a check were broken. They only run after the read-only check "A opens B's file" has passed; otherwise they are skipped. In addition, every submit check attaches B's file, so even a broken course check would still be stopped by the file check and nothing could be saved.
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
   - student B: a student with an application and an uploaded file
-  - student A: another student with an uploaded file
+  - student A: another student with an uploaded file, **preferably in a different programme** than B
   - one reviewer and one superadmin
 
-  If such users are missing, it stops and says what is needed.
+  If such users are missing, it stops and says what is needed. If A and B are in the same programme, it prints a warning at the start, and the two cross-programme course checks are reported as `SKIP`.
 
 ### What it checks
 
 | # | Group | What is checked | Expected |
 |---|---|---|---|
-| 1 | **No token** | All 20 protected routes: applications, uploads, users, settings, PTE courses, term archive, refresh-token | `401 NO_TOKEN` |
+| 1 | **No token** | All 21 protected routes: applications, uploads, users, own profile, settings, PTE courses, term archive, refresh-token | `401 NO_TOKEN` |
 | 2 | **Bad tokens** | Expired token | `401 TOKEN_EXPIRED` |
 | | | Signed with the wrong secret | `401 INVALID_TOKEN` |
 | | | Unsigned token (`alg: none`) that claims to be superadmin | `401 INVALID_TOKEN` |
@@ -66,6 +77,20 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | | | A opens B's evidence file | `403 NOT_OWNER` |
 | | | A deletes B's evidence file | `403 NOT_OWNER` |
 | | | A submits an application with B's file attached | `403 FILES_NOT_OWNED` |
+| | **Own profile (`/me`)** | A's token | A's own name, email, Neptun code, programme |
+| | | A's token with `?id=<B>` in the address | still A |
+| | | B's token | B, not A |
+| | | Fields returned | only name, email, role, Neptun code, programme (no password or tokens) |
+| | | Cache header | `Cache-Control: no-store` |
+| | **Courses by programme** | A's course list | exactly the courses of A's programme |
+| | | B's course list | exactly the courses of B's programme |
+| | | Any of B's programme's courses in A's list | none *(needs A and B in different programmes)* |
+| | | A's list with `?programme=<B's programme>` | unchanged *(needs A and B in different programmes)* |
+| | | Fields returned | only id, code, name, credits |
+| | | Reviewer's course list | every course (for now) |
+| | **Submission** | Another programme's course; own and other mixed; a course id that does not exist | `400 COURSE_NOT_IN_PROGRAMME` |
+| | | No course list, an empty list, ids as text, 11 different courses (limit 10) | `400 INVALID_TARGET_COURSES` |
+| | | 12 copies of one course (duplicates removed first, so within the limit) | passes the course checks |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -77,6 +102,11 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | | | Verify email, bad link | `400 INVALID_VERIFY_LINK` |
 | | | Email notification link, bad link | `410 INVALID_LINK` |
 | | | A stale token sent to a public route is ignored | `401 INVALID_CREDENTIALS` |
+| | | Programme list without a token (for the registration form) | `200`, every programme with EN/HU/DE names |
+| | | Register a student without a Neptun code, with 5 characters, or with symbols | `400 INVALID_NEPTUN` |
+| | | Register a student with an unknown programme, or without one | `400 INVALID_PROGRAMME` |
+| | | Register with an email that is not text | `400 MISSING_FIELDS` |
+| | | Register a student with another student's Neptun code, also written in lower case with spaces | `400 NEPTUN_TAKEN` |
 | 7 | **CORS** | The frontend address is allowed | `Access-Control-Allow-Origin` set |
 | | | Download file names are readable | `Content-Disposition` exposed |
 | | | A foreign website gets no CORS headers, and no server error | no CORS headers |
@@ -104,6 +134,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, with rate limiting | **67 passed, 0 failed, 0 skipped**; 0 emails sent; all 81 test rate-limit rows removed |
+| 2026-10-28 | local development backend, Group 2 (programmes), seeded data | **95 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
 
 ---
 
@@ -149,13 +180,32 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B13 | Term book download (admin) | Superadmin → Term Archive: generate a book, then Download | PDF saves with its name and opens |
 | B14 | Evidence is private | Copy a file name and open `http://localhost:9000/transcripts/<file name>` | Access denied (the bucket is private) |
 
+**Group 2: programmes** (test accounts from `npm run seed:dev`, password `Test1234!`)
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| B15 | Student fields follow the email | Register: type `anna@tr.pte.hu`, then `anna@mik.pte.hu`, then back | Neptun code and programme appear, disappear, and come back **empty** |
+| B16 | Neptun code input | Type `abc 123`; paste ` cvtst1 ` | Shows `ABC123` / `CVTST1`; no error while typing |
+| B17 | Neptun check on leaving the field | Type `abc12`, click elsewhere | "Enter a valid Neptun code…" under the field |
+| B18 | Programme names follow the language | Switch EN / HU / DE on the register page | Computer Science Engineering / Mérnökinformatikus / Ingenieurinformatik |
+| B19 | Inline registration errors | Register with Neptun `CSTST1`; then with email `student.cs@tr.pte.hu`; then without a programme | Error under the Neptun field / under the email / under the programme (no request sent for the last) |
+| B20 | Profile header | Log in as `student.cs@tr.pte.hu` | Name, email, Neptun code `CSTST1`, programme next to Logout, in the current language |
+| B21 | No stale profile | Log out, log in as `student.civil@tr.pte.hu` in the same tab | Only the Civil student's details, never the previous student's, not even briefly |
+| B22 | No profile for staff / impersonation | Log in as a reviewer and as admin; impersonate a student | No profile card |
+| B23 | Course picker by programme | As `student.cs` and as `student.civil`, open the submit tab | 12 CS courses / 5 Civil courses, never the other programme's |
+| B24 | No courses yet | Delete the Civil courses (`DELETE FROM courses WHERE programme_id = …`), open the submit tab as `student.civil`; then `npm run seed:dev` | "No courses are available for your programme yet." and Submit disabled |
+| B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id` or `pte_course_names`; application appears with both courses |
+| B26 | Course removed while the page is open | Choose CS305 and CS101, delete CS305 in the database, press Submit; then `npm run seed:dev` | "…not part of your programme… Removed from your choice: CS305."; CS101 stays chosen |
+
 ---
 
-## 3. Planned tests (Group 2)
+## 3. Pending for the reviewer round
+
+Every application now records its programme (Group 2), so the data supports these checks. The filtering itself is built in the reviewer round.
 
 | Test | Expected | Status |
 |---|---|---|
-| A reviewer cannot see another programme's applications (list, single application, evidence files) | `403` / filtered list | Planned for Group 2, together with per-programme reviewer assignment. Today every reviewer can see every application. |
+| A reviewer cannot see another programme's applications (list, single application, evidence files) | `403` / filtered list | **Pending (reviewer round).** Today every reviewer can see every application. |
 
 ---
 

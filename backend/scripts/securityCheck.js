@@ -144,10 +144,15 @@ const loadTestData = async () => {
 
     const reviewer = users.find((u) => u.role === 'reviewer');
     const admin = users.find((u) => u.role === 'superadmin');
-    // Student B: has an application and a tagged file. Student A: another student with a tagged file.
+    // Student B: has an application and a tagged file. Student A: another student with a tagged file,
+    // preferably in a DIFFERENT programme, so the cross-programme checks can run.
+    // Without such a pair those checks are reported as SKIP (counted in the total), never left out silently.
     const students = users.filter((u) => u.role === 'student' && filesByOwner.has(u.id));
-    const studentB = students.find((u) => apps.some((a) => a.student_id === u.id));
-    const studentA = students.find((u) => studentB && u.id !== studentB.id);
+    const candidatesB = students.filter((u) => apps.some((a) => a.student_id === u.id));
+    const pairs = candidatesB.flatMap((b) => students.filter((a) => a.id !== b.id).map((a) => ({ a, b })));
+    const pair = pairs.find(({ a, b }) => a.programme_id !== b.programme_id) || pairs[0];
+    const studentA = pair?.a;
+    const studentB = pair?.b;
 
     const missing = [];
     if (!reviewer) missing.push('a reviewer account');
@@ -191,6 +196,10 @@ const run = async () => {
 
     console.log(`Security check against ${BASE}`);
     console.log(`Test users: student A #${d.studentA.id}, student B #${d.studentB.id}, reviewer #${d.reviewer.id}, superadmin #${d.admin.id}`);
+    if (d.studentA.programme_id === d.studentB.programme_id) {
+        console.log('WARNING: no two students with files in DIFFERENT programmes, so the cross-programme checks will be SKIPPED.');
+        console.log('         Run "npm run seed:dev" (development) to create one student per programme.');
+    }
 
     section('1. No token -> 401 NO_TOKEN');
     const protectedRoutes = [
@@ -417,6 +426,7 @@ const run = async () => {
         `Register per IP: 429 TOO_MANY_REQUESTS after ${LIMITS.registerPerIp} attempts`, `${overLimit.status} ${overLimit.code || ''}`);
 
     console.log(`\n${results.pass} passed, ${results.fail} failed, ${results.skip} skipped`);
+    if (results.skip > 0) console.log('Skipped checks did NOT run: see the SKIP lines above for the reason.');
     return results.fail === 0;
 };
 
