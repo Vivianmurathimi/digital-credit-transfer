@@ -1,22 +1,16 @@
-import api from './api';
-import { unpackBlobError } from './errorMessage';
+import http from './http';
 
 // Evidence files need the login token, so plain <img src> and <a href> links cannot load them.
 // These helpers fetch a file WITH the token and hand the browser a temporary local copy.
 
-export const getUploadEndpoint = (fileName) => `/api/uploads/${encodeURIComponent(fileName)}`;
+// Path for the shared http client (no leading slash: it is added after the /api prefix)
+export const getUploadEndpoint = (fileName) => `uploads/${encodeURIComponent(fileName)}`;
 
 // Downloads one file as a Blob (throws if not allowed or not found).
-// Error answers also arrive as a Blob, so they are unpacked back into
-// { error, code } for getErrorMessage to translate.
-export const fetchFileBlob = async (fileName) => {
-    try {
-        const res = await api.get(getUploadEndpoint(fileName), { responseType: 'blob' });
-        return res.data;
-    } catch (err) {
-        throw await unpackBlobError(err);
-    }
-};
+// No time limit: a big PDF on a slow connection may take longer than the usual 30 s.
+// On an error ky has already read the { error, code } answer into err.data for getErrorMessage.
+export const fetchFileBlob = (fileName) =>
+    http.get(getUploadEndpoint(fileName), { timeout: false }).blob();
 
 // Opens a file in a new tab. The tab is opened straight away (inside the click),
 // otherwise the browser's popup blocker would stop it after the download finishes.

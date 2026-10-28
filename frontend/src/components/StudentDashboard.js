@@ -4,7 +4,7 @@ import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
-import { openSecureFile } from '../secureFiles';
+import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Set up the worker for PDF.js to handle conversions
@@ -117,7 +117,6 @@ const StudentDashboard = ({ userId }) => {
     const handleRemoveCourseRow = (id) => setFulfilledCourses(fulfilledCourses.filter(c => c.id !== id));
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
     
-    const getUploadEndpoint = (fileName = '') => `/api/uploads${fileName ? `/${encodeURIComponent(fileName)}` : ''}`;
     // Evidence files need the login token, so they are opened through openSecureFile
     const handleOpenFile = (e, fileName) => {
         e.preventDefault();
@@ -139,7 +138,7 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteUploadedFile = async (courseId, fileName) => {
         if (!fileName) return;
         try {
-            await api.delete(getUploadEndpoint(fileName));
+            await http.delete(getUploadEndpoint(fileName));
             // Only removes the file from the specific course row
             setFulfilledCourses(fulfilledCourses.map(c => c.id === courseId ? { ...c, file: null } : c));
             if (activeUploadId === courseId) setActiveUploadId(null);
@@ -153,7 +152,7 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteResubmitFile = async (fileName) => {
         if (!fileName) return;
         try {
-            await api.delete(getUploadEndpoint(fileName));
+            await http.delete(getUploadEndpoint(fileName));
             // Remove the file from the resubmit array so it disappears from the UI
             setResubmitFiles(prev => prev.filter(f => f !== fileName));
         } catch (err) {
@@ -276,15 +275,17 @@ const StudentDashboard = ({ userId }) => {
     // Handles the actual API call and state update for the specific course
     const executeUpload = async (formData, isResubmit) => {
         try {
-            const res = await api.post('/api/uploads', formData);
-            if (res.data.success) {
+            // FormData as body: the browser sets the multipart Content-Type itself.
+            // No time limit, so a big file on a slow connection is not cut off.
+            const data = await http.post('uploads', { body: formData, timeout: false }).json();
+            if (data.success) {
                 if (isResubmit) {
-                    setResubmitFiles(prev => [...prev, res.data.fileName]);
+                    setResubmitFiles(prev => [...prev, data.fileName]);
                     setResubmitPreviewUrl(null); 
                     setResubmitRawFile(null);
                 } else {
                     // This is where it attaches the file specifically to the course case!
-                    setFulfilledCourses(fulfilledCourses.map(c => c.id === activeUploadId ? { ...c, file: res.data.fileName } : c));
+                    setFulfilledCourses(fulfilledCourses.map(c => c.id === activeUploadId ? { ...c, file: data.fileName } : c));
                     setTimeout(() => { setPreviewUrl(null); setRawFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import api from '../api';
+import http from '../http';
 
 const LanguageSwitcher = () => {
   const { i18n } = useTranslation();
@@ -14,7 +14,7 @@ const LanguageSwitcher = () => {
     if (!token) return;
     try {
       const userId = JSON.parse(atob(token.split('.')[1])).id;
-      api.put(`/api/users/${userId}/language`, { language: lng })
+      http.put(`users/${userId}/language`, { json: { language: lng } })
         .catch((err) => console.error('Could not save language preference', err));
     } catch {
       /* malformed token: skip saving */
