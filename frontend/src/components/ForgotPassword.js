@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import http from '../http';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 
 const ForgotPassword = () => {
     const { t } = useTranslation();
@@ -18,10 +19,10 @@ const ForgotPassword = () => {
 
         try {
             // Adjust the URL if your backend uses a different prefix!
-            const res = await axios.post('/api/forgot-password', { email });
-            setMessage(res.data.message || t('forgot_message_default'));
+            const data = await http.post('forgot-password', { json: { email } }).json();
+            setMessage(data.message || t('forgot_message_default'));
         } catch (err) {
-            setError(err.response?.data?.error || t('forgot_error_default'));
+            setError(getErrorMessage(err, t, 'forgot_error_default'));
         } finally {
             setIsLoading(false);
         }

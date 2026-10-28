@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
+import SecureImage from './SecureImage';
+import { openSecureFile, downloadSecureFile } from '../secureFiles';
 
 const ReviewerDashboard = () => {
     const { t } = useTranslation();
@@ -32,25 +35,16 @@ const ReviewerDashboard = () => {
 
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
 
-    const getUploadLink = (fileName) => {
-        return `/api/uploads/${fileName}`;
+    // Evidence files need the login token: open and download them through secureFiles
+    const handleOpenFile = (fileName) => {
+        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
     };
 
     const handleDownload = async (fileName) => {
         try {
-            // Make sure this URL perfectly matches your <img> src URL!
-            const response = await fetch(getUploadLink(fileName));
-            
-            const blob = await response.blob();
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url; 
-            link.download = fileName; // Forces the download
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            await downloadSecureFile(fileName);
         } catch (err) {
-            alert(t('reviewer_download_failed'));
+            alert(getErrorMessage(err, t, 'reviewer_download_failed'));
         }
     };
 
@@ -72,7 +66,7 @@ const ReviewerDashboard = () => {
                 fetchApplications(); 
             }
         } catch (err) {
-            setFeedbackUploadStatus(t('reviewer_decision_failed'));
+            setFeedbackUploadStatus(getErrorMessage(err, t, 'reviewer_decision_failed'));
         }
     };
 
@@ -176,10 +170,10 @@ const ReviewerDashboard = () => {
                                             <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={course.course_name}>
                                                 📄 {course.course_name}
                                             </div>
-                                            <img 
-                                                src={getUploadLink(course.file)} 
+                                            <SecureImage 
+                                                fileName={course.file} 
                                                 alt={t('reviewer_evidence')} 
-                                                onClick={() => window.open(getUploadLink(course.file))} 
+                                                onClick={() => handleOpenFile(course.file)} 
                                                 style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
                                             />
                                             <button onClick={() => handleDownload(course.file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
@@ -197,15 +191,15 @@ const ReviewerDashboard = () => {
                                                         📄 {t('reviewer_additional_file', { number: idx + 1 })}
                                                     </div>
                                                     {isImageFile(file) ? (
-                                                        <img 
-                                                            src={getUploadLink(file)} 
+                                                        <SecureImage 
+                                                            fileName={file} 
                                                             alt={t('reviewer_evidence')} 
-                                                            onClick={() => window.open(getUploadLink(file))} 
+                                                            onClick={() => handleOpenFile(file)} 
                                                             style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
                                                         />
                                                     ) : (
                                                         <div 
-                                                            onClick={() => window.open(getUploadLink(file))} 
+                                                            onClick={() => handleOpenFile(file)} 
                                                             title={file}
                                                             style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer', backgroundColor: 'var(--surface)' }}
                                                         >📄</div>

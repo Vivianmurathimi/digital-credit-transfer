@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import TermArchive from './TermArchive';
 
 const SuperAdminDashboard = () => {
@@ -80,7 +81,7 @@ const SuperAdminDashboard = () => {
                 alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 
             }
-        } catch (err) { alert(t('superadmin_update_failed')); }
+        } catch (err) { alert(getErrorMessage(err, t, 'superadmin_update_failed')); }
     };
 
     const handleToggleSystem = async () => {
@@ -92,7 +93,7 @@ const SuperAdminDashboard = () => {
             try {
                 const res = await api.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
-            } catch (err) { alert(t('superadmin_toggle_failed')); }
+            } catch (err) { alert(getErrorMessage(err, t, 'superadmin_toggle_failed')); }
         }
     };
 
@@ -122,8 +123,8 @@ const SuperAdminDashboard = () => {
                 setTimeout(() => setRoleUpdateStatus(''), 3000);
             }
         } catch (err) {
-            // The backend sends a specific message (e.g. "Cannot remove the last remaining superadmin")
-            const errorMsg = err.response?.data?.error || 'Failed to update role.';
+            // Translated reason from the backend code (e.g. LAST_SUPERADMIN), or a general message
+            const errorMsg = getErrorMessage(err, t, 'superadmin_role_update_failed');
             setRoleUpdateStatus(errorMsg);
             alert(errorMsg);
             setTimeout(() => setRoleUpdateStatus(''), 4000);

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 
 const Register = () => {
@@ -14,12 +15,12 @@ const Register = () => {
     const handleRegister = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('/api/register', { name, email, password, language: i18n.language });
-            if (res.data.success) {
+            const data = await http.post('register', { json: { name, email, password, language: i18n.language } }).json();
+            if (data.success) {
                 setIsRegistered(true);
             }
         } catch (err) {
-            setError(err.response?.data?.error || t('register_error_default'));
+            setError(getErrorMessage(err, t, 'register_error_default'));
         }
     };
 

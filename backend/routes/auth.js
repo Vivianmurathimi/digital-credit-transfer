@@ -1,20 +1,35 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const { signSessionToken } = require('../config/jwt');
+const verifyToken = require('../middleware/verifyToken');
 const pool = require('../db');
 const crypto = require('crypto'); 
 const sendEmail = require('../utils/sendEmail');
 const { normalizeLanguage } = require('../utils/emailTemplates');
 const { checkEmailLink } = require('../utils/emailLink');
+const sendError = require('../utils/sendError');
+const { FRONTEND_URL } = require('../config/urls');
+const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 
 // --- REGISTER ROUTE ---
 router.post('/register', async (req, res) => {
     const { name, email, password, language } = req.body;
+
+    // At most RATE_LIMIT_REGISTER_PER_IP attempts per hour from one IP (failed attempts count too).
+    // A 429 is about the IP only, so it reveals nothing about any account.
+    try {
+        if (!(await takeSlot('register_ip', clientIp(req), LIMITS.registerPerIp))) {
+            return sendError(res, 429, 'TOO_MANY_REQUESTS', 'Too many attempts, please try again later');
+        }
+    } catch (err) {
+        console.error('Register rate limit error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Server error during registration');
+    }
     
     // 🆕 YOUR ADDITION: Check if fields are missing
     if (!email || !password || !name) {
-        return res.status(400).json({ error: "All fields required" });
+        return sendError(res, 400, 'MISSING_FIELDS', 'All fields required');
     }
 
     try {
@@ -23,7 +38,7 @@ router.post('/register', async (req, res) => {
 
         // 1. Check if user already exists
         const userExists = await pool.query('SELECT * FROM users WHERE email = $1', [lowerEmail]);
-        if (userExists.rows.length > 0) return res.status(400).json({ error: "Email already registered" });
+        if (userExists.rows.length > 0) return sendError(res, 400, 'EMAIL_TAKEN', 'Email already registered');
 
         // (Note: is_verified defaults to false automatically in the database schema)
 
@@ -32,7 +47,7 @@ router.post('/register', async (req, res) => {
         if (lowerEmail.endsWith('@mik.pte.hu')) assignedRole = 'reviewer';
         else if (lowerEmail.endsWith('@tr.pte.hu')) assignedRole = 'student';
         else if (lowerEmail.endsWith('@adminisztracio.pte.hu')) assignedRole = 'superadmin';
-        else return res.status(400).json({ error: "Invalid domain. Use @mik or @tr email." });
+        else return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
@@ -44,7 +59,7 @@ router.post('/register', async (req, res) => {
         );
 
         // 5. Build the verification link & send the email
-        const verifyUrl = `http://localhost:3000/verify/${verificationToken}`;
+        const verifyUrl = `${FRONTEND_URL}/verify/${verificationToken}`;
         const message = `
             <h2>Welcome to the PTE Credit Transfer System!</h2>
             <p>Please click the button below to verify your official university email address and activate your account.</p>
@@ -62,7 +77,7 @@ router.post('/register', async (req, res) => {
 
     } catch (err) {
         console.error(err.message);
-        res.status(500).json({ error: "Server error during registration" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error during registration');
     }
 });
 
@@ -71,7 +86,11 @@ router.post('/register', async (req, res) => {
 // it only says whether the link is still valid (10 minutes).
 router.get('/email-link/:token', (req, res) => {
     const result = checkEmailLink(req.params.token);
-    if (!result.valid) return res.status(410).json(result);
+    if (!result.valid) {
+        return result.reason === 'expired'
+            ? sendError(res, 410, 'LINK_EXPIRED', 'This link has expired')
+            : sendError(res, 410, 'INVALID_LINK', 'This link is not valid');
+    }
     res.json(result);
 });
 
@@ -86,13 +105,13 @@ router.get('/verify/:token', async (req, res) => {
         );
 
         if (result.rows.length === 0) {
-            return res.status(400).send("Invalid or expired token");
+            return sendError(res, 400, 'INVALID_VERIFY_LINK', 'Invalid or already used verification link');
         }
 
-        res.send("Email verified successfully! You may now close this tab and log in.");
+        res.json({ success: true, message: 'Email verified successfully! You may now close this tab and log in.' });
     } catch (err) {
         console.error(err.message);
-        res.status(500).send("Verification failed");
+        sendError(res, 500, 'SERVER_ERROR', 'Verification failed');
     }
 });
 
@@ -102,62 +121,57 @@ router.post('/login', async (req, res) => {
 
     // 🆕 Quick validation for login
     if (!email || !password) {
-        return res.status(400).json({ error: "All fields required" });
+        return sendError(res, 400, 'MISSING_FIELDS', 'All fields required');
     }
 
     try {
         const result = await pool.query('SELECT * FROM users WHERE email=$1', [email.toLowerCase()]);
-        if (result.rows.length === 0) return res.status(401).json({ error: "Invalid credentials" });
+        if (result.rows.length === 0) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
         const user = result.rows[0];
         
         // 🆕 YOUR ADDITION: Block unverified users right here!
         if (!user.is_verified) {
-            return res.status(403).json({ error: "Please verify your email first. Check your inbox!" });
+            return sendError(res, 403, 'EMAIL_NOT_VERIFIED', 'Please verify your email first. Check your inbox!');
         }
 
         const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(401).json({ error: "Invalid credentials" });
+        if (!match) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
-        const token = jwt.sign(
-            { id: user.id, role: user.role },
-            process.env.JWT_SECRET || 'secret_key',
-            { expiresIn: '1h' }
-        );
+        // 30-minute token, renewed by /refresh-token while the user is active
+        const token = signSessionToken(user);
         
         res.json({ success: true, token, role: user.role });
     } catch (err) {
         console.error(err.message);
-        res.status(500).json({ error: "Login failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Login failed');
     }
 });
 
+// --- REFRESH TOKEN ROUTE ---
+// Called by the frontend while the user is active, to replace a token before it expires.
+// verifyToken has already checked the token and re-read the user's current role.
+// The original login time is kept, so a session still ends 8 hours after login.
+router.post('/refresh-token', verifyToken, (req, res) => {
+    const token = signSessionToken(req.user, req.sessionStart);
+    res.json({ success: true, token, role: req.user.role });
+});
+
 // --- FORGOT PASSWORD ROUTE ---
-router.post('/forgot-password', async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
+const FORGOT_PASSWORD_MESSAGE = 'If that email exists, a reset link has been sent.';
 
-    try {
-        // 1. Check if user exists
-        const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
-        if (result.rows.length === 0) {
-            // Security best practice: Don't reveal if the email exists or not to prevent snooping!
-            return res.json({ success: true, message: "If that email exists, a reset link has been sent." });
-        }
+// Creates a reset link (valid 1 hour), saves it and emails it. Runs AFTER the reply has been sent.
+const sendResetLink = async (lowerEmail) => {
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetExpires = Date.now() + 3600000; // 1 hour in milliseconds
 
-        // 2. Generate Token & Expiration (1 hour from now)
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const resetExpires = Date.now() + 3600000; // 1 hour in milliseconds
+    await pool.query(
+        'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
+        [resetToken, resetExpires, lowerEmail]
+    );
 
-        // 3. Save to database
-        await pool.query(
-            'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
-            [resetToken, resetExpires, email.toLowerCase()]
-        );
-
-        // 4. Send Email
-        const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
-        const message = `
+    const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
+    const message = `
             <h2>Password Reset Request</h2>
             <p>You requested a password reset for your PTE Credit Transfer account.</p>
             <p>Please click the button below to set a new password. This link is valid for 1 hour.</p>
@@ -165,17 +179,40 @@ router.post('/forgot-password', async (req, res) => {
             <p>If you did not request this, please ignore this email.</p>
         `;
 
-        await sendEmail({
-            email: email.toLowerCase(),
-            subject: 'PTE Portal: Password Reset Request',
-            html: message
-        });
+    await sendEmail({
+        email: lowerEmail,
+        subject: 'PTE Portal: Password Reset Request',
+        html: message
+    });
+};
 
-        res.json({ success: true, message: "If that email exists, a reset link has been sent." });
+router.post('/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    if (typeof email !== 'string' || !email.trim()) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
+    const lowerEmail = normalizeEmail(email);
 
+    try {
+        // Rate limits, checked BEFORE looking the address up, so known and unknown addresses
+        // go through exactly the same steps. Every request counts for its address whether or
+        // not an account exists. Over a limit, the reply stays the same but no email is sent.
+        const ipAllowed = await takeSlot('forgot_ip', clientIp(req), LIMITS.forgotPerIp);
+        const emailAllowed = ipAllowed && await takeSlot('forgot_email', lowerEmail, LIMITS.forgotPerEmail);
+
+        const result = await pool.query('SELECT id FROM users WHERE email = $1', [lowerEmail]);
+
+        // Don't reveal whether the email exists: the same answer, sent at the same moment
+        // (right after the lookup) in both cases. The slow part, saving the link and
+        // talking to the mail server, happens after the reply.
+        res.json({ success: true, message: FORGOT_PASSWORD_MESSAGE });
+
+        if (emailAllowed && result.rows.length > 0) {
+            // The reply is already sent, so a failure here can only be logged.
+            // The .catch() also covers any error thrown inside sendResetLink.
+            sendResetLink(lowerEmail).catch((err) => console.error('Forgot password (after reply) error:', err.message));
+        }
     } catch (err) {
         console.error("Forgot password error:", err.message);
-        res.status(500).json({ error: "Server error" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error');
     }
 });
 
@@ -184,7 +221,7 @@ router.post('/reset-password/:token', async (req, res) => {
     const { token } = req.params;
     const { newPassword } = req.body;
 
-    if (!newPassword) return res.status(400).json({ error: "New password is required" });
+    if (!newPassword) return sendError(res, 400, 'MISSING_FIELDS', 'New password is required');
 
     try {
         // 1. Find user by token AND ensure the token hasn't expired
@@ -194,7 +231,7 @@ router.post('/reset-password/:token', async (req, res) => {
         );
 
         if (result.rows.length === 0) {
-            return res.status(400).json({ error: "Password reset link is invalid or has expired." });
+            return sendError(res, 400, 'INVALID_RESET_LINK', 'Password reset link is invalid or has expired');
         }
 
         const user = result.rows[0];
@@ -213,7 +250,7 @@ router.post('/reset-password/:token', async (req, res) => {
 
     } catch (err) {
         console.error("Reset password error:", err.message);
-        res.status(500).json({ error: "Server error" });
+        sendError(res, 500, 'SERVER_ERROR', 'Server error');
     }
 });
 module.exports = router;

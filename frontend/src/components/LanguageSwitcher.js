@@ -1,6 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import api from '../api';
+import http from '../http';
+import { readTokenPayload } from '../session';
 
 const LanguageSwitcher = () => {
   const { i18n } = useTranslation();
@@ -10,15 +11,10 @@ const LanguageSwitcher = () => {
 
     // Logged in? Save the choice so notification emails use this language.
     // Uses the real account from the token (not an impersonated one).
-    const token = localStorage.getItem('token');
-    if (!token) return;
-    try {
-      const userId = JSON.parse(atob(token.split('.')[1])).id;
-      api.put(`/api/users/${userId}/language`, { language: lng })
-        .catch((err) => console.error('Could not save language preference', err));
-    } catch {
-      /* malformed token: skip saving */
-    }
+    const userId = readTokenPayload()?.id;
+    if (!userId) return; // not logged in (or unreadable token): nothing to save
+    http.put(`users/${userId}/language`, { json: { language: lng } })
+      .catch((err) => console.error('Could not save language preference', err));
   };
 
   const buttonStyle = {

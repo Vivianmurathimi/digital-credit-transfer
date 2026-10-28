@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import http from '../http';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
+import { SESSION_END_CODES, saveSession } from '../session';
 
 const Login = () => {
     const { t } = useTranslation();
+    const location = useLocation();
+    // Set by clearSession, e.g. /login?reason=TOKEN_EXPIRED; translated here.
+    // Only known session codes are shown: anyone can type a ?reason= into the address.
+    const reason = new URLSearchParams(location.search).get('reason');
+    const reasonText = SESSION_END_CODES.includes(reason) ? t(`errors.${reason}`) : null;
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -14,20 +21,22 @@ const Login = () => {
     const handleLogin = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('/api/login', { email, password });
-            if (res.data.success) {
-                localStorage.setItem('token', res.data.token);
-                localStorage.setItem('role', res.data.role);
+            const data = await http.post('login', { json: { email, password } }).json();
+            if (data.success) {
+                saveSession(data.token, data.role);
                 navigate('/dashboard');
             }
         } catch (err) {
-            setError(err.response?.data?.error || t('login_error_default'));
+            setError(getErrorMessage(err, t, 'login_error_default'));
         }
     };
 
     return (
         <div style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid var(--border-strong)', borderRadius: '8px' }}>
             <h2 style={{ textAlign: 'center', color: 'var(--heading)' }}>{t('login_title')}</h2>
+            {reasonText && !error && (
+                <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', textAlign: 'center' }}>{reasonText}</p>
+            )}
             {error && <p style={{ color: 'var(--error-text)', textAlign: 'center', fontWeight: 'bold' }}>{error}</p>}
             
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>

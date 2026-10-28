@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
+const sendError = require('../utils/sendError');
 
 // GET: Check if submissions are open (any logged-in user can check)
 router.get('/status', verifyToken, async (req, res) => {
@@ -10,7 +11,7 @@ router.get('/status', verifyToken, async (req, res) => {
         const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
         res.json({ success: true, isOpen: result.rows[0].is_submissions_open });
     } catch (err) {
-        res.status(500).json({ error: "Failed to fetch system status" });
+        sendError(res, 500, 'SERVER_ERROR', 'Failed to fetch system status');
     }
 });
 
@@ -21,7 +22,7 @@ router.put('/toggle', verifyToken, requireRole('superadmin'), async (req, res) =
         await pool.query('UPDATE system_settings SET is_submissions_open = $1', [isOpen]);
         res.json({ success: true, isOpen });
     } catch (err) {
-        res.status(500).json({ error: "Failed to toggle system status" });
+        sendError(res, 500, 'SERVER_ERROR', 'Failed to toggle system status');
     }
 });
 

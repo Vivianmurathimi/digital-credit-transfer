@@ -5,6 +5,7 @@ const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const getTermData = require('../utils/getTermData');
 const buildTermBookPdf = require('../utils/buildTermBookPdf');
+const sendError = require('../utils/sendError');
 
 // Private bucket: no public policy, books are only served through the download route below
 const ARCHIVE_BUCKET = 'archives';
@@ -55,10 +56,10 @@ router.post('/generate', async (req, res) => {
     const { from, to } = req.body;
 
     if (!isValidDate(from) || !isValidDate(to)) {
-        return res.status(400).json({ error: 'Dates must be real dates in the format YYYY-MM-DD' });
+        return sendError(res, 400, 'INVALID_DATES', 'Dates must be real dates in the format YYYY-MM-DD');
     }
     if (from > to) {
-        return res.status(400).json({ error: 'The start date must be on or before the end date' });
+        return sendError(res, 400, 'INVALID_DATES', 'The start date must be on or before the end date');
     }
 
     try {
@@ -78,7 +79,7 @@ router.post('/generate', async (req, res) => {
         res.json({ success: true, archive: toArchiveInfo(name, stat) });
     } catch (err) {
         console.error('❌ Term book generation failed:', err.message);
-        res.status(500).json({ error: 'Could not generate the term book' });
+        sendError(res, 500, 'SERVER_ERROR', 'Could not generate the term book');
     }
 });
 
@@ -103,7 +104,7 @@ router.get('/', async (req, res) => {
         res.json({ success: true, archives });
     } catch (err) {
         console.error('❌ Archive list failed:', err.message);
-        res.status(500).json({ error: 'Could not list the term books' });
+        sendError(res, 500, 'SERVER_ERROR', 'Could not list the term books');
     }
 });
 
@@ -115,7 +116,7 @@ router.get('/:name/download', async (req, res) => {
     const { name } = req.params;
     // Only names this app created, so nothing else in storage can be requested
     if (!BOOK_NAME.test(name)) {
-        return res.status(400).json({ error: 'Invalid archive name' });
+        return sendError(res, 400, 'INVALID_ARCHIVE_NAME', 'Invalid archive name');
     }
 
     try {
@@ -131,10 +132,10 @@ router.get('/:name/download', async (req, res) => {
         stream.pipe(res);
     } catch (err) {
         if (err.code === 'NotFound' || err.code === 'NoSuchKey') {
-            return res.status(404).json({ error: 'Term book not found' });
+            return sendError(res, 404, 'ARCHIVE_NOT_FOUND', 'Term book not found');
         }
         console.error('❌ Archive download failed:', err.message);
-        res.status(500).json({ error: 'Could not download the term book' });
+        sendError(res, 500, 'SERVER_ERROR', 'Could not download the term book');
     }
 });
 

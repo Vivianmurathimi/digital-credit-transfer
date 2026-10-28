@@ -1,26 +1,47 @@
-const jwt = require('jsonwebtoken');
+const pool = require('../db');
+const { verifySessionToken, isSessionTooOld } = require('../config/jwt');
+const sendError = require('../utils/sendError');
 
-function verifyToken(req, res, next) {
-    // 1. Look for the token in the Authorization header
-    const authHeader = req.headers['authorization'];
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'No token provided' });
+async function verifyToken(req, res, next) {
+    // 1. Look for "Authorization: Bearer <token>" (any capitalisation, extra spaces ignored)
+    const match = /^\s*bearer\s+(\S+)\s*$/i.exec(req.headers['authorization'] || '');
+    if (!match) {
+        return sendError(res, 401, 'NO_TOKEN', 'No token provided');
     }
 
-    // 2. Pull just the token part out of "Bearer <token>"
-    const token = authHeader.split(' ')[1];
-
+    // 2. Verify it's real, signed with our algorithm, and not expired/tampered
+    let decoded;
     try {
-        // 3. Verify it's real and not expired/tampered
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_key');
+        decoded = verifySessionToken(match[1]);
+    } catch (err) {
+        // Expired (30 minutes without renewal) is told apart from forged/broken tokens
+        if (err.name === 'TokenExpiredError') {
+            return sendError(res, 401, 'TOKEN_EXPIRED', 'Your session has expired');
+        }
+        return sendError(res, 401, 'INVALID_TOKEN', 'Invalid token');
+    }
 
-        // 4. Attach the user info to the request so later code can use it
-        req.user = decoded; // { id, role, iat, exp }
+    // 3. Even an active session ends 8 hours after login
+    if (isSessionTooOld(decoded)) {
+        return sendError(res, 401, 'SESSION_TOO_OLD', 'Session expired, please log in again');
+    }
+
+    // 4. Re-check the user in the database, so a deleted user is refused and a
+    //    role change by the admin takes effect immediately (not when the token expires)
+    try {
+        const result = await pool.query('SELECT id, role FROM users WHERE id = $1', [decoded.id]);
+        if (result.rows.length === 0) {
+            return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
+        }
+
+        // 5. Only id and the CURRENT role are passed on to the routes
+        req.user = { id: result.rows[0].id, role: result.rows[0].role };
+        req.sessionStart = decoded.sessionStart ?? decoded.iat; // used by the refresh route
 
         next(); // let the request continue to the actual route
     } catch (err) {
-        return res.status(401).json({ error: 'Invalid or expired token' });
+        console.error('❌ Token user check failed:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not check your session');
     }
 }
 

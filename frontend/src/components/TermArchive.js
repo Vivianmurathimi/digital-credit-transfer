@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage, unpackBlobError } from '../errorMessage';
 
 const formatSize = (bytes) => (bytes >= 1024 * 1024
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -24,7 +25,7 @@ const TermArchive = () => {
             if (res.data.success) setArchives(res.data.archives);
         } catch (err) {
             console.error('Error fetching term books', err);
-            setMessage({ type: 'error', text: t('archive_error_list') });
+            setMessage({ type: 'error', text: getErrorMessage(err, t, 'archive_error_list') });
         }
     }, [t]);
 
@@ -48,7 +49,7 @@ const TermArchive = () => {
             }
         } catch (err) {
             console.error('Error generating term book', err);
-            setMessage({ type: 'error', text: t('archive_error_generate') });
+            setMessage({ type: 'error', text: getErrorMessage(err, t, 'archive_error_generate') });
         } finally {
             setIsGenerating(false);
         }
@@ -68,7 +69,7 @@ const TermArchive = () => {
             window.URL.revokeObjectURL(url);
         } catch (err) {
             console.error('Error downloading term book', err);
-            setMessage({ type: 'error', text: t('archive_error_download') });
+            setMessage({ type: 'error', text: getErrorMessage(await unpackBlobError(err), t, 'archive_error_download') });
         }
     };
 

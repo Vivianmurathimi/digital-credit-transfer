@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 
 const ResetPassword = () => {
@@ -24,11 +25,11 @@ const ResetPassword = () => {
         }
 
         try {
-            const res = await axios.post(`/api/reset-password/${token}`, { newPassword });
-            setMessage(res.data.message || t('reset_success_message'));
+            const data = await http.post(`reset-password/${token}`, { json: { newPassword } }).json();
+            setMessage(data.message || t('reset_success_message'));
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
-            setError(err.response?.data?.error || t('reset_error_default'));
+            setError(getErrorMessage(err, t, 'reset_error_default'));
         }
     };
 

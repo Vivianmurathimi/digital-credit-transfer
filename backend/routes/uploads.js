@@ -4,6 +4,9 @@ const router = express.Router();
 const multer = require('multer');
 const minioClient = require('../minio');
 const verifyToken = require('../middleware/verifyToken');
+const requireRole = require('../middleware/requireRole');
+const { getFileOwner } = require('../utils/fileOwner');
+const sendError = require('../utils/sendError');
 
 const BUCKET_NAME = 'transcripts';
 const upload = multer({ storage: multer.memoryStorage() });
@@ -34,12 +37,12 @@ const ensureBucket = async () => {
 ensureBucket().catch(err => console.error("MinIO Bucket Error:", err));
 
 /**
- * UPLOAD ROUTE — must be logged in. Tags the file with the uploader's ID
+ * UPLOAD ROUTE — students only (evidence). Tags the file with the uploader's ID
  * as metadata, so ownership can be checked later on delete.
  */
-router.post('/', verifyToken, upload.single('file'), async (req, res) => {
+router.post('/', verifyToken, requireRole('student'), upload.single('file'), async (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ error: "No file received by backend" });
+        return sendError(res, 400, 'NO_FILE', 'No file received by backend');
     }
 
     const fileName = `${Date.now()}-${req.file.originalname.replace(/\s/g, '_')}`;
@@ -61,44 +64,61 @@ router.post('/', verifyToken, upload.single('file'), async (req, res) => {
         res.json({ success: true, fileName });
     } catch (err) {
         console.error("❌ MinIO PutObject Error:", err.message);
-        res.status(500).json({ error: "Upload failed at storage server" });
+        sendError(res, 500, 'SERVER_ERROR', 'Upload failed at storage server');
     }
 });
 
 /**
- * DELETE ROUTE — must be logged in. A student may only delete their OWN
- * uploaded files. Reviewers/superadmins may delete any file.
+ * DELETE ROUTE — students only, and only their OWN uploaded files.
+ * Nobody else can delete a student's evidence, so the audit trail stays intact.
  */
-router.delete('/:filename', verifyToken, async (req, res) => {
+router.delete('/:filename', verifyToken, requireRole('student'), async (req, res) => {
     try {
-        const stat = await minioClient.statObject(BUCKET_NAME, req.params.filename);
-        const uploaderId = stat.metaData['x-amz-meta-uploader-id'];
+        const { exists, ownerId } = await getFileOwner(req.params.filename);
+        if (!exists) {
+            return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+        }
 
-        const isOwner = uploaderId && parseInt(uploaderId, 10) === req.user.id;
-        const isPrivileged = req.user.role === 'reviewer' || req.user.role === 'superadmin';
-
-        if (!isOwner && !isPrivileged) {
-            return res.status(403).json({ error: 'You can only delete your own files' });
+        if (ownerId !== req.user.id) {
+            return sendError(res, 403, 'NOT_OWNER', 'You can only delete your own files');
         }
 
         await minioClient.removeObject(BUCKET_NAME, req.params.filename);
         res.json({ success: true });
     } catch (err) {
         console.error("❌ Delete error:", err.message);
-        res.status(500).json({ error: "Delete failed" });
+        sendError(res, 500, 'SERVER_ERROR', 'Delete failed');
     }
 });
 
 
-router.get('/:filename', async (req, res) => {
+/**
+ * VIEW ROUTE — must be logged in. The student who uploaded the file can view it,
+ * and so can reviewers and the superadmin (they review every application for now).
+ */
+router.get('/:filename', verifyToken, async (req, res) => {
     try {
+        const { exists, ownerId } = await getFileOwner(req.params.filename);
+        if (!exists) {
+            return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+        }
+
+        const isOwner = ownerId === req.user.id;
+        const isStaff = req.user.role === 'reviewer' || req.user.role === 'superadmin';
+        if (!isOwner && !isStaff) {
+            return sendError(res, 403, 'NOT_OWNER', 'You can only view your own files');
+        }
+
         const stream = await minioClient.getObject(BUCKET_NAME, req.params.filename);
-        const contentType = getContentType(req.params.filename);
-        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Type', getContentType(req.params.filename));
+        stream.on('error', (err) => {
+            console.error('❌ File stream error:', err.message);
+            res.destroy(err);
+        });
         stream.pipe(res);
     } catch (err) {
         console.error("❌ File Fetch Error:", err.message);
-        res.status(404).send("File not found");
+        sendError(res, 500, 'SERVER_ERROR', 'Could not load the file');
     }
 });
 

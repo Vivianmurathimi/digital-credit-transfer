@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import api from '../api';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
+import SecureImage from './SecureImage';
+import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Set up the worker for PDF.js to handle conversions
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-const StudentDashboard = ({ userId }) => {
+const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const { t } = useTranslation();
     const [courses, setCourses] = useState([]);
     const [studentTab, setStudentTab] = useState('dashboard');
@@ -48,23 +51,25 @@ const StudentDashboard = ({ userId }) => {
 
     const fetchCourses = useCallback(async () => {
         try {
-            const res = await api.get('/api/pte-courses');
-            if (res.data.success) setCourses(res.data.courses); 
+            const data = await http.get('pte-courses').json();
+            if (data.success) setCourses(data.courses);
         } catch (err) { console.error(err); }
     }, []);
 
     const fetchMyApplications = useCallback(async () => {
         if (!userId) return;
         try {
-            const res = await api.get(`/api/applications/student/${userId}`);
-            if (res.data.success) setMyApplications(res.data.applications);
+            // A student reads "my applications" (id from the login token);
+            // the superadmin impersonating a student reads that student's list by id
+            const data = await http.get(isImpersonating ? `applications/student/${userId}` : 'applications/mine').json();
+            if (data.success) setMyApplications(data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
-    }, [userId]);
+    }, [userId, isImpersonating]);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
-            const res = await api.get('/api/settings/status');
-            if (res.data.success) setIsSubmissionsOpen(res.data.isOpen);
+            const data = await http.get('settings/status').json();
+            if (data.success) setIsSubmissionsOpen(data.isOpen);
         } catch (err) {
             console.error('Error fetching system status', err);
         }
@@ -110,8 +115,11 @@ const StudentDashboard = ({ userId }) => {
     const handleRemoveCourseRow = (id) => setFulfilledCourses(fulfilledCourses.filter(c => c.id !== id));
     const handleCourseChange = (id, field, value) => setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
     
-    const getUploadEndpoint = (fileName = '') => `/api/uploads${fileName ? `/${encodeURIComponent(fileName)}` : ''}`;
-    const getUploadLink = (fileName) => `/api/uploads/${encodeURIComponent(fileName)}`;
+    // Evidence files need the login token, so they are opened through openSecureFile
+    const handleOpenFile = (e, fileName) => {
+        e.preventDefault();
+        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
+    };
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
     const clearUploadSelection = (isResubmit = false) => {
@@ -128,13 +136,13 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteUploadedFile = async (courseId, fileName) => {
         if (!fileName) return;
         try {
-            await api.delete(getUploadEndpoint(fileName));
+            await http.delete(getUploadEndpoint(fileName));
             // Only removes the file from the specific course row
             setFulfilledCourses(fulfilledCourses.map(c => c.id === courseId ? { ...c, file: null } : c));
             if (activeUploadId === courseId) setActiveUploadId(null);
         } catch (err) {
             console.error('Delete upload error', err);
-            alert('Could not remove the uploaded file. Please try again.');
+            alert(getErrorMessage(err, t, 'file_remove_failed'));
         }
     };
 
@@ -142,12 +150,12 @@ const StudentDashboard = ({ userId }) => {
     const handleDeleteResubmitFile = async (fileName) => {
         if (!fileName) return;
         try {
-            await api.delete(getUploadEndpoint(fileName));
+            await http.delete(getUploadEndpoint(fileName));
             // Remove the file from the resubmit array so it disappears from the UI
             setResubmitFiles(prev => prev.filter(f => f !== fileName));
         } catch (err) {
             console.error('Delete resubmit upload error', err);
-            alert('Could not remove the uploaded file. Please try again.');
+            alert(getErrorMessage(err, t, 'file_remove_failed'));
         }
     };
 
@@ -265,21 +273,23 @@ const StudentDashboard = ({ userId }) => {
     // Handles the actual API call and state update for the specific course
     const executeUpload = async (formData, isResubmit) => {
         try {
-            const res = await api.post('/api/uploads', formData);
-            if (res.data.success) {
+            // FormData as body: the browser sets the multipart Content-Type itself.
+            // No time limit, so a big file on a slow connection is not cut off.
+            const data = await http.post('uploads', { body: formData, timeout: false }).json();
+            if (data.success) {
                 if (isResubmit) {
-                    setResubmitFiles(prev => [...prev, res.data.fileName]);
+                    setResubmitFiles(prev => [...prev, data.fileName]);
                     setResubmitPreviewUrl(null); 
                     setResubmitRawFile(null);
                 } else {
                     // This is where it attaches the file specifically to the course case!
-                    setFulfilledCourses(fulfilledCourses.map(c => c.id === activeUploadId ? { ...c, file: res.data.fileName } : c));
+                    setFulfilledCourses(fulfilledCourses.map(c => c.id === activeUploadId ? { ...c, file: data.fileName } : c));
                     setTimeout(() => { setPreviewUrl(null); setRawFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));
                 setTimeout(() => setUploadStatus(''), 2000);
             }
-        } catch (err) { setUploadStatus(t('student_upload_failed')); }
+        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_upload_failed')); }
     }
 
     const handleSubmitApplication = async () => {
@@ -292,22 +302,22 @@ const StudentDashboard = ({ userId }) => {
             setSubmitStatus(t('student_submit_saving'));
             const targetCourseNames = selectedCourses.map(c => `${c.course_code} (${c.course_name})`).join(' + ');
 
-            const response = await api.post('/api/applications', {
+            const data = await http.post('applications', { json: {
                 student_id: userId, 
                 fulfilled_courses_json: fulfilledCourses, 
                 pte_course_names: targetCourseNames, 
                 system_note: evidenceRequiredMsg,
                 student_note: studentNote 
-            });
+            } }).json();
             
-            if (response.data.success) {
+            if (data.success) {
                 alert(t('student_submission_success'));
                 setFulfilledCourses([{ id: Date.now(), course_name: '', course_code: '', credits: '', grade: '', file: null }]);
                 setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
             }
-        } catch (err) { setSubmitStatus(t('student_submission_failed')); }
+        } catch (err) { setSubmitStatus(getErrorMessage(err, t, 'student_submission_failed')); }
     };
 
     const submitResubmission = async () => {
@@ -315,16 +325,16 @@ const StudentDashboard = ({ userId }) => {
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
         try {
             setUploadStatus(t('student_resubmission_sending'));
-            const res = await api.put(`/api/applications/${resubmitModal.app.id}/resubmit`, { 
+            const data = await http.put(`applications/${resubmitModal.app.id}/resubmit`, { json: { 
                 student_resubmit_note: resubmitNote,
                 new_files: resubmitFiles.join(',') 
-            });
-            if (res.data.success) {
+            } }).json();
+            if (data.success) {
                 alert(t('student_resubmission_success'));
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
             }
-        } catch (err) { setUploadStatus(t('student_resubmission_failed')); }
+        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed')); }
     };
 
     return (
@@ -446,10 +456,10 @@ const StudentDashboard = ({ userId }) => {
                                     {/* Same thumbnail + Open file + Remove layout as the first upload */}
                                     {resubmitFiles.map((file, idx) => (
                                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
-                                            <a href={getUploadLink(file)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
+                                            <a href="#open-file" onClick={(e) => handleOpenFile(e, file)} style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
                                                 {isImageFile(file) ? (
-                                                    <img 
-                                                        src={getUploadLink(file)} 
+                                                    <SecureImage 
+                                                        fileName={file} 
                                                         alt="Evidence Preview"
                                                         style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                     />
@@ -500,10 +510,10 @@ const StudentDashboard = ({ userId }) => {
                                 {/* Clickable Thumbnail! */}
                                 {course.file && (
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <a href={getUploadLink(course.file)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
+                                        <a href="#open-file" onClick={(e) => handleOpenFile(e, course.file)} style={{ display: 'flex', alignItems: 'center', gap: '5px', textDecoration: 'none' }}>
                                             {isImageFile(course.file) ? (
-                                                <img 
-                                                    src={getUploadLink(course.file)} 
+                                                <SecureImage 
+                                                    fileName={course.file} 
                                                     alt="Evidence Preview"
                                                     style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                 />

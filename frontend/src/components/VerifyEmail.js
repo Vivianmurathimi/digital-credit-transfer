@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
+import { getErrorMessage } from '../errorMessage';
 
 const VerifyEmail = () => {
     const { t } = useTranslation();
@@ -19,12 +20,12 @@ const VerifyEmail = () => {
             hasAttempted.current = true;
 
             try {
-                await axios.get(`/api/verify/${token}`);
+                await http.get(`verify/${token}`);
                 setStatus('success');
                 setMessage(t('verify_success_message'));
             } catch (err) {
                 setStatus('error');
-                setMessage(err.response?.data || t('verify_error_message'));
+                setMessage(getErrorMessage(err, t, 'verify_error_message'));
             }
         };
 
