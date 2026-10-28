@@ -1,9 +1,11 @@
 import axios from 'axios';
+import { API_ORIGIN } from './http';
 import { getToken, handleAuthFailure } from './session';
 
 // The older axios client, still used by the reviewer and admin dashboards.
 // It behaves like the shared ky client (src/http.js) until those dashboards move over.
-const api = axios.create();
+// Same backend address as ky; the paths keep their /api/... prefix.
+const api = axios.create({ baseURL: API_ORIGIN });
 
 // Before every request goes out, attach the current token
 api.interceptors.request.use((config) => {

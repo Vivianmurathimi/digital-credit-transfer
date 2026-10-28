@@ -3,7 +3,7 @@ import { getToken, handleAuthFailure } from './session';
 
 // Backend address from the env file (REACT_APP_ prefix is required by Create React App).
 // Without it, requests go to /api on the same origin as the page.
-const API_ORIGIN = (process.env.REACT_APP_API_URL || '').replace(/\/+$/, '');
+export const API_ORIGIN = (process.env.REACT_APP_API_URL || '').replace(/\/+$/, '');
 export const API_PREFIX = `${API_ORIGIN}/api`;
 
 // The backend's { error, code } body, if the response has one
