@@ -4,6 +4,7 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
+const { COUNTRY_CODES } = require('../utils/countries');
 
 // Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
 // Superadmin only: it lists every student's and reviewer's name and email.
@@ -128,6 +129,12 @@ router.get('/programmes', async (req, res) => {
         console.error('Fetch programmes error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
     }
+});
+
+// Country codes for the application form's institution dropdown: public, codes only
+// (the browser shows the names in the user's language). The same list the server checks against.
+router.get('/countries', (req, res) => {
+    res.json({ success: true, countries: COUNTRY_CODES });
 });
 
 // PTE target courses for the application form.

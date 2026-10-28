@@ -47,6 +47,8 @@ const getTermData = async (from, to) => {
     );
 
     const applications = result.rows.map((row) => {
+        // Evidence = each fulfilled course's file. Grading-system files (applications.institutions)
+        // are not added to the term book yet: planned for the admin round (see docs/PLANNED.md).
         const courses = parseCourses(row.fulfilled_courses_json);
 
         // Evidence in page order: each course's file, then files added with missing info
