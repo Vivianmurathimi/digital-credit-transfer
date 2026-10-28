@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import http from '../http';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
@@ -20,9 +20,9 @@ const Login = () => {
     const handleLogin = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('/api/login', { email, password });
-            if (res.data.success) {
-                saveSession(res.data.token, res.data.role);
+            const data = await http.post('login', { json: { email, password } }).json();
+            if (data.success) {
+                saveSession(data.token, data.role);
                 navigate('/dashboard');
             }
         } catch (err) {

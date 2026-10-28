@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode } from '../errorMessage';
 
@@ -23,7 +23,7 @@ const EmailLink = () => {
 
         const checkLink = async () => {
             try {
-                const res = await axios.get(`/api/email-link/${token}`);
+                const data = await http.get(`email-link/${token}`).json();
 
                 // Valid link: straight to the dashboard if this student is already logged in, otherwise log in first
                 const savedToken = localStorage.getItem('token');
@@ -33,7 +33,7 @@ const EmailLink = () => {
                 } catch {
                     loggedInId = null;
                 }
-                navigate(loggedInId === res.data.studentId ? '/dashboard' : '/login', { replace: true });
+                navigate(loggedInId === data.studentId ? '/dashboard' : '/login', { replace: true });
             } catch (err) {
                 setInvalid(getErrorCode(err) === 'INVALID_LINK');
                 setExpired(true);
