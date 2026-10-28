@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api';
+import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import SecureImage from './SecureImage';
@@ -51,8 +52,8 @@ const StudentDashboard = ({ userId }) => {
 
     const fetchCourses = useCallback(async () => {
         try {
-            const res = await api.get('/api/pte-courses');
-            if (res.data.success) setCourses(res.data.courses); 
+            const data = await http.get('pte-courses').json();
+            if (data.success) setCourses(data.courses);
         } catch (err) { console.error(err); }
     }, []);
 
@@ -62,15 +63,15 @@ const StudentDashboard = ({ userId }) => {
             // A student reads "my applications" (id from the login token);
             // the superadmin impersonating a student reads that student's list by id
             const isImpersonating = !!localStorage.getItem('originalRole');
-            const res = await api.get(isImpersonating ? `/api/applications/student/${userId}` : '/api/applications/mine');
-            if (res.data.success) setMyApplications(res.data.applications);
+            const data = await http.get(isImpersonating ? `applications/student/${userId}` : 'applications/mine').json();
+            if (data.success) setMyApplications(data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
     }, [userId]);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
-            const res = await api.get('/api/settings/status');
-            if (res.data.success) setIsSubmissionsOpen(res.data.isOpen);
+            const data = await http.get('settings/status').json();
+            if (data.success) setIsSubmissionsOpen(data.isOpen);
         } catch (err) {
             console.error('Error fetching system status', err);
         }
