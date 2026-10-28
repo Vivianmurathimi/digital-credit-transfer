@@ -10,10 +10,22 @@ const { normalizeLanguage } = require('../utils/emailTemplates');
 const { checkEmailLink } = require('../utils/emailLink');
 const sendError = require('../utils/sendError');
 const { FRONTEND_URL } = require('../config/urls');
+const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 
 // --- REGISTER ROUTE ---
 router.post('/register', async (req, res) => {
     const { name, email, password, language } = req.body;
+
+    // At most RATE_LIMIT_REGISTER_PER_IP attempts per hour from one IP (failed attempts count too).
+    // A 429 is about the IP only, so it reveals nothing about any account.
+    try {
+        if (!(await takeSlot('register_ip', clientIp(req), LIMITS.registerPerIp))) {
+            return sendError(res, 429, 'TOO_MANY_REQUESTS', 'Too many attempts, please try again later');
+        }
+    } catch (err) {
+        console.error('Register rate limit error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Server error during registration');
+    }
     
     // 🆕 YOUR ADDITION: Check if fields are missing
     if (!email || !password || !name) {
@@ -176,10 +188,16 @@ const sendResetLink = async (lowerEmail) => {
 
 router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
-    if (typeof email !== 'string' || !email) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
-    const lowerEmail = email.toLowerCase();
+    if (typeof email !== 'string' || !email.trim()) return sendError(res, 400, 'MISSING_FIELDS', 'Email is required');
+    const lowerEmail = normalizeEmail(email);
 
     try {
+        // Rate limits, checked BEFORE looking the address up, so known and unknown addresses
+        // go through exactly the same steps. Every request counts for its address whether or
+        // not an account exists. Over a limit, the reply stays the same but no email is sent.
+        const ipAllowed = await takeSlot('forgot_ip', clientIp(req), LIMITS.forgotPerIp);
+        const emailAllowed = ipAllowed && await takeSlot('forgot_email', lowerEmail, LIMITS.forgotPerEmail);
+
         const result = await pool.query('SELECT id FROM users WHERE email = $1', [lowerEmail]);
 
         // Don't reveal whether the email exists: the same answer, sent at the same moment
@@ -187,7 +205,7 @@ router.post('/forgot-password', async (req, res) => {
         // talking to the mail server, happens after the reply.
         res.json({ success: true, message: FORGOT_PASSWORD_MESSAGE });
 
-        if (result.rows.length > 0) {
+        if (emailAllowed && result.rows.length > 0) {
             // The reply is already sent, so a failure here can only be logged.
             // The .catch() also covers any error thrown inside sendResetLink.
             sendResetLink(lowerEmail).catch((err) => console.error('Forgot password (after reply) error:', err.message));

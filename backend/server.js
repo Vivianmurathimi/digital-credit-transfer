@@ -3,6 +3,8 @@ require('dotenv').config();
 require('./config/jwt');
 // Checks FRONTEND_URL / CORS_ORIGINS (required in production)
 const { CORS_ORIGINS } = require('./config/urls');
+// Checks the RATE_LIMIT_* settings
+const { ensureRateLimitTable } = require('./utils/rateLimit');
 const express = require('express');
 const cors = require('cors');
 
@@ -19,6 +21,17 @@ const settingsRoutes = require('./routes/settings');
 const archiveRoutes = require('./routes/archive');
 
 const app = express();
+
+// Behind a reverse proxy (e.g. nginx) every request seems to come from the proxy, which would
+// put all users in one rate-limit bucket. TRUST_PROXY is the NUMBER of proxies in front of the
+// app (e.g. 1). Express then takes the client IP that many steps back in X-Forwarded-For;
+// anything a client adds further left is ignored, so the header cannot be faked to dodge limits.
+// "true" would trust the whole header (fakeable), so only whole numbers are accepted.
+const proxyHops = process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) : 0;
+if (!Number.isInteger(proxyHops) || proxyHops < 0) {
+    throw new Error(`TRUST_PROXY in backend/.env must be a number of proxy hops (e.g. 1), got "${process.env.TRUST_PROXY}"`);
+}
+if (proxyHops > 0) app.set('trust proxy', proxyHops);
 
 // Middleware
 app.use(express.json());
@@ -67,6 +80,7 @@ const ensureUserLanguageColumn = async () => {
 };
 
 ensureUserLanguageColumn();
+ensureRateLimitTable();
 
 // Who made the last status decision and when (shown in the term archive book)
 const ensureApplicationReviewColumns = async () => {

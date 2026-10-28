@@ -196,6 +196,7 @@
     "EMAIL_NOT_VERIFIED": "Please verify your email first. Check your inbox.",
     "MISSING_FIELDS": "Please fill in all required fields.",
     "EMAIL_TAKEN": "This email is already registered.",
+    "TOO_MANY_REQUESTS": "Too many attempts. Please wait a while and try again.",
     "INVALID_EMAIL_DOMAIN": "Please use your university email address.",
     "INVALID_VERIFY_LINK": "This verification link is invalid or has already been used.",
     "INVALID_RESET_LINK": "This password reset link is invalid or has expired.",

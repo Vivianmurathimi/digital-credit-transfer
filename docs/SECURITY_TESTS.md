@@ -7,7 +7,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are two parts:
 
-1. **Automated API check** (`npm run security-check`): 63 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 67 checks against the running backend.
 2. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, downloads).
 
 ---
@@ -33,7 +33,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 
 ### Safety rules built into the script
 
-- **Changes no data and sends no emails.** Every request is either read-only or one the server must refuse *before* it saves anything:
+- **Changes no data and sends no emails.** Every request is either read-only or one the server must refuse *before* it saves anything. The one exception is the rate-limit checks (section 8), which add rows to `rate_limit_hits`. The script deletes exactly those rows at the end, even after a crash: this computer's IP and its own test addresses, from the start of the run. Otherwise this computer would stay rate-limited for an hour. Other requests:
   - forgot password uses an address that does not exist
   - the only login attempts use wrong passwords
 - **Destructive checks are guarded.** "Student A deletes B's file" and "A submits with B's file" would really delete or save something if the ownership check were broken. They only run after the read-only check "A opens B's file" has passed; otherwise they are skipped.
@@ -80,6 +80,10 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 | 7 | **CORS** | The frontend address is allowed | `Access-Control-Allow-Origin` set |
 | | | Download file names are readable | `Content-Disposition` exposed |
 | | | A foreign website gets no CORS headers, and no server error | no CORS headers |
+| 8 | **Rate limits** | Forgot password: 5 requests for one unknown address, spelled differently (upper case, spaces) | same `200` reply each time; exactly 3 counted |
+| | | Forgot password: 10 requests for one address **at the same moment** | exactly 3 counted (no race) |
+| | | Forgot password: this computer's IP over 30 requests | same `200` reply; counting stops at 30 |
+| | | Register: this computer's IP over 30 attempts (empty forms, nothing created) | `429 TOO_MANY_REQUESTS` |
 
 **Forgot password, real address:** the script does not call this with a real address, because that would send an email. Reading the code (`backend/routes/auth.js`, forgot-password route) confirms that both cases send the same reply (`200`, same text) at the same point, straight after the database lookup.
 
@@ -89,6 +93,9 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 |---|---|---|
 | Before the fix (email sent before replying) | 5 ms | 1877 ms |
 | After the fix (reply first, email afterwards) | 3 ms | 4 ms |
+| After adding rate limiting | 8 ms | 8 ms |
+
+With rate limiting, the 6 requests for the real address led to only 3 email attempts (the per-address limit).
 
 ### Last result
 
@@ -96,6 +103,28 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total. It exits with 
 |---|---|---|
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |
+| 2026-10-28 | local development backend, with rate limiting | **67 passed, 0 failed, 0 skipped**; 0 emails sent; all 81 test rate-limit rows removed |
+
+---
+
+## Rate limiting (public routes that send email)
+
+| Route | Limit (per hour) | Over the limit |
+|---|---|---|
+| Forgot password, per address | 3 (`RATE_LIMIT_FORGOT_PER_EMAIL`) | Same `200` reply, no email |
+| Forgot password, per IP | 30 (`RATE_LIMIT_FORGOT_PER_IP`) | Same `200` reply, no email |
+| Register, per IP (failed attempts count too) | 30 (`RATE_LIMIT_REGISTER_PER_IP`) | `429 TOO_MANY_REQUESTS`, no account created |
+
+How it works:
+- **Every request counts for its address**, whether or not an account exists. Known and unknown addresses go through the same steps before the reply, so neither the answer nor its timing reveals an account.
+- **Addresses are lower-cased and trimmed** before counting, so `A@x.hu ` and `a@x.hu` share one count.
+- **Counts are stored in PostgreSQL** (table `rate_limit_hits`, created at startup), so they survive a server restart and are shared by all backend processes. Rows older than one hour are deleted.
+- **No plain addresses or IPs are stored**, only an HMAC of them. The HMAC key is derived from `JWT_SECRET`, so **changing `JWT_SECRET` resets all counts**.
+- **Check and insert run in one transaction** under a lock on that address/IP, so simultaneous requests cannot exceed a limit.
+- **Only allowed requests are counted.** Refused ones do not extend a block, so the hour always ends.
+- **Behind a reverse proxy**, set `TRUST_PROXY` to the number of proxies (e.g. `1`), never `true`. Express then uses the address the proxy added and ignores anything a client wrote into `X-Forwarded-For`. The server refuses to start with `true` or any other non-number.
+- **Any future public route that sends email** (e.g. "resend verification") must use the same limiter (`takeSlot` in `backend/utils/rateLimit.js`).
+- **Keep the limits the same for the server and the script.** The script reads the limits from `backend/.env`; if the server runs with different values, section 8 will fail.
 
 ---
 
@@ -134,6 +163,8 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 
 - **CORS is a browser rule.** It stops other websites from reading API answers in a user's browser. It does not stop direct requests (curl, scripts); those are protected by the login token and role checks above.
 - **Register reveals registered addresses.** Signing up with an address that already has an account answers `400 EMAIL_TAKEN` ("Email already registered"), so anyone can check whether an address is registered. Closing this would mean always answering "check your inbox" and emailing the existing account owner instead; not done yet.
+- **Someone can use up another person's reset emails.** Sending 3 forgot-password requests for a classmate's address blocks reset emails to that address for up to one hour. This is the unavoidable trade-off of a per-address limit; the block always ends after an hour.
+- **Shared IPs.** A whole campus can share one IP (eduroam, computer labs), so the per-IP limits are generous (30 per hour). They can be changed in `.env`.
 - ~~Forgot password timing~~ **(fixed 2026-10-28).** A real address used to take about 1.9 s longer than an unknown one, because the email was sent before replying. The reply now comes straight after the lookup in both cases (see section 1).
 - **Older evidence files without an owner tag.** A few files uploaded before ownership tagging can be opened by reviewers and the superadmin, but not by the student who uploaded them. No other student can open them either.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

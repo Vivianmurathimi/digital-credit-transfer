@@ -5,7 +5,9 @@
  * Other address:                   SECURITY_CHECK_URL=http://localhost:5099 npm run security-check
  *
  * Every request is either read-only or one the server must refuse before it saves anything,
- * so the check changes no data and sends no emails. Test tokens are signed locally with
+ * so the check changes no data and sends no emails. The only exception: the rate-limit
+ * checks add rows to rate_limit_hits, and the script deletes exactly those rows at the end
+ * (otherwise this computer would stay rate-limited for an hour). Test tokens are signed locally with
  * JWT_SECRET from backend/.env; neither the secret nor the tokens are ever printed.
  */
 process.env.DOTENV_CONFIG_QUIET = 'true'; // keep dotenv's startup lines out of the report
@@ -22,11 +24,41 @@ const { CORS_ORIGINS } = require('../config/urls');
 const pool = require('../db');
 const minioClient = require('../minio');
 const { getFileOwner } = require('../utils/fileOwner');
+const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
 const BASE = (process.env.SECURITY_CHECK_URL || `http://localhost:${process.env.PORT || 5050}`).replace(/\/+$/, '');
 const API = `${BASE}/api`;
 const FRONTEND_ORIGIN = CORS_ORIGINS[0];
 const FORGOT_MESSAGE = 'If that email exists, a reset link has been sent.';
+const UNKNOWN_EMAIL = 'nobody@security-check.invalid';
+
+// ---------- rate-limit rows created by this run (deleted at the end) ----------
+
+// The backend sees this script as one of these addresses
+const LOCAL_IP_HASHES = ['127.0.0.1', '::1'].map(hashKey);
+const testEmailHashes = new Set([hashKey(normalizeEmail(UNKNOWN_EMAIL))]);
+let runStartedAt = null; // database time when the run began
+
+const testEmail = (label) => {
+    const email = `rl-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@security-check.invalid`;
+    testEmailHashes.add(hashKey(normalizeEmail(email)));
+    return email;
+};
+
+const countHits = async (bucket, hashes) => (await pool.query(
+    "SELECT count(*)::int AS hits FROM rate_limit_hits WHERE bucket = $1 AND key_hash = ANY($2) AND hit_at > now() - interval '1 hour'",
+    [bucket, hashes]
+)).rows[0].hits;
+
+// Deletes only rows from this run: this computer's IP and the test addresses, since the start
+const cleanupRateLimitRows = async () => {
+    if (!runStartedAt) return 0;
+    const { rowCount } = await pool.query(
+        'DELETE FROM rate_limit_hits WHERE hit_at >= $1 AND key_hash = ANY($2)',
+        [runStartedAt, [...LOCAL_IP_HASHES, ...testEmailHashes]]
+    );
+    return rowCount;
+};
 
 // ---------- small helpers ----------
 
@@ -141,6 +173,7 @@ const run = async () => {
         process.exit(1);
     }
 
+    runStartedAt = (await pool.query('SELECT now() AS t')).rows[0].t;
     const d = await loadTestData();
     const A = tokenFor(d.studentA);
     const B = tokenFor(d.studentB);
@@ -220,17 +253,17 @@ const run = async () => {
     await expect('Superadmin reads the user list', call('GET', 'users', { token: S }), 200);
 
     section('6. Public routes work without a token');
-    await expect('Login, unknown email', call('POST', 'login', { json: { email: 'nobody@security-check.invalid', password: 'wrong' } }), 401, 'INVALID_CREDENTIALS');
+    await expect('Login, unknown email', call('POST', 'login', { json: { email: UNKNOWN_EMAIL, password: 'wrong' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Login, real email + wrong password (same answer)', call('POST', 'login', { json: { email: d.studentA.email, password: 'definitely-wrong-password' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Register with empty fields', call('POST', 'register', { json: {} }), 400, 'MISSING_FIELDS');
-    const forgot = await call('POST', 'forgot-password', { json: { email: 'nobody@security-check.invalid' } });
+    const forgot = await call('POST', 'forgot-password', { json: { email: UNKNOWN_EMAIL } });
     report(forgot.status === 200 && forgot.body && forgot.body.success === true && forgot.body.message === FORGOT_MESSAGE,
         'Forgot password, unknown address (no email sent)', `${forgot.status}, same text as for a real address`);
     await expect('Forgot password, email that is not text', call('POST', 'forgot-password', { json: { email: 123 } }), 400, 'MISSING_FIELDS');
     await expect('Reset password, bad link', call('POST', 'reset-password/not-a-real-link', { json: { newPassword: 'Abcdef12!' } }), 400, 'INVALID_RESET_LINK');
     await expect('Verify email, bad link', call('GET', 'verify/not-a-real-link'), 400, 'INVALID_VERIFY_LINK');
     await expect('Email link, bad link', call('GET', 'email-link/not-a-real-link'), 410, 'INVALID_LINK');
-    await expect('Public route ignores a stale token', call('POST', 'login', { token: expiredToken(d.studentA), json: { email: 'nobody@security-check.invalid', password: 'x' } }), 401, 'INVALID_CREDENTIALS');
+    await expect('Public route ignores a stale token', call('POST', 'login', { token: expiredToken(d.studentA), json: { email: UNKNOWN_EMAIL, password: 'x' } }), 401, 'INVALID_CREDENTIALS');
 
     section('7. CORS');
     const allowed = await call('GET', 'settings/status', { headers: { Origin: FRONTEND_ORIGIN } });
@@ -239,14 +272,69 @@ const run = async () => {
     const foreign = await call('GET', 'settings/status', { headers: { Origin: 'https://evil.example' } });
     report(!foreign.headers.get('access-control-allow-origin') && foreign.status !== 500, 'Foreign origin gets no CORS headers (and no 500)');
 
+    section('8. Rate limits (no emails: only addresses that do not exist)');
+    const sameForgotReply = (r) => r.status === 200 && r.body && r.body.success === true && r.body.message === FORGOT_MESSAGE;
+    const forgotFor = (email) => call('POST', 'forgot-password', { json: { email } });
+
+    // Per address: 5 requests, spelled differently (case, spaces) -> one count, stopped at the limit
+    const ipUsed = await countHits('forgot_ip', LOCAL_IP_HASHES);
+    if (ipUsed + 15 > LIMITS.forgotPerIp) {
+        skip('Forgot password per-address limit', `this computer already used ${ipUsed} of ${LIMITS.forgotPerIp} forgot-password requests this hour`);
+        skip('Simultaneous requests cannot exceed the limit', 'same reason');
+    } else {
+        const base = testEmail('address');
+        const spellings = [base, base.toUpperCase(), `  ${base}`, `${base}  `, base.replace(/^rl/, 'RL')];
+        const replies = [];
+        for (const spelling of spellings) replies.push(await forgotFor(spelling));
+        const counted = await countHits('forgot_email', [hashKey(normalizeEmail(base))]);
+        report(replies.every(sameForgotReply) && counted === LIMITS.forgotPerEmail,
+            `Forgot password per address: ${spellings.length} requests, same reply each time, ${LIMITS.forgotPerEmail} counted`,
+            `counted ${counted}; spelling (case/spaces) does not matter`);
+
+        // 10 requests at the same moment for one address -> still only the limit
+        const parallel = testEmail('parallel');
+        const parallelReplies = await Promise.all(Array.from({ length: 10 }, () => forgotFor(parallel)));
+        const parallelCounted = await countHits('forgot_email', [hashKey(normalizeEmail(parallel))]);
+        report(parallelReplies.every(sameForgotReply) && parallelCounted === LIMITS.forgotPerEmail,
+            'Simultaneous requests cannot exceed the limit', `10 at once, ${parallelCounted} counted`);
+    }
+
+    // Per IP: fill up this computer's forgot-password quota (different unknown addresses), then one more
+    const ipBefore = await countHits('forgot_ip', LOCAL_IP_HASHES);
+    const ipRequests = Math.max(LIMITS.forgotPerIp - ipBefore, 0) + 1;
+    const ipReplies = [];
+    for (let i = 0; i < ipRequests; i += 1) ipReplies.push(await forgotFor(testEmail('ip')));
+    const ipAfter = await countHits('forgot_ip', LOCAL_IP_HASHES);
+    report(ipReplies.every(sameForgotReply) && ipAfter === LIMITS.forgotPerIp,
+        `Forgot password per IP: same reply over the limit, stopped at ${LIMITS.forgotPerIp}`, `${ipRequests} requests, ${ipAfter} counted`);
+
+    // Register per IP: empty attempts (nothing is created) until the limit, then 429
+    const regBefore = await countHits('register_ip', LOCAL_IP_HASHES);
+    const regReplies = [];
+    for (let i = 0; i < Math.max(LIMITS.registerPerIp - regBefore, 0); i += 1) regReplies.push(await call('POST', 'register', { json: {} }));
+    const overLimit = await call('POST', 'register', { json: {} });
+    report(regReplies.every((r) => r.status === 400) && overLimit.status === 429 && overLimit.code === 'TOO_MANY_REQUESTS',
+        `Register per IP: 429 TOO_MANY_REQUESTS after ${LIMITS.registerPerIp} attempts`, `${overLimit.status} ${overLimit.code || ''}`);
+
     console.log(`\n${results.pass} passed, ${results.fail} failed, ${results.skip} skipped`);
     return results.fail === 0;
 };
 
-// Exits explicitly: db.js keeps its startup test connection open, so the pool never closes by itself
+// Removes this run's rate-limit rows, also after a crash
+const finish = async (ok) => {
+    try {
+        const removed = await cleanupRateLimitRows();
+        if (removed) console.log(`(removed ${removed} rate-limit rows created by this run)`);
+    } catch (err) {
+        console.error('Could not remove this run\'s rate-limit rows:', err.message);
+    }
+    // Exits explicitly: db.js keeps its startup test connection open, so the pool never closes by itself
+    process.exit(ok ? 0 : 1);
+};
+
 run()
-    .then((ok) => process.exit(ok ? 0 : 1))
+    .then(finish)
     .catch((err) => {
         console.error('Security check crashed:', err.message);
-        process.exit(1);
+        return finish(false);
     });
