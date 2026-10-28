@@ -85,3 +85,111 @@ export const buildSubmission = (institutions, rows) => {
         rowIdAt: rows.map((row) => row.id),
     };
 };
+
+// ---------------------------------------------------------------------------------------------
+// Browser-side checks. The SAME rules, limits and codes as the server's validator
+// (backend/utils/applicationForm.js), run on the same body that is sent. Only for convenience:
+// the server checks everything again. A test runs both on the same inputs and compares them.
+
+export const LIMITS = { institutions: 10, fulfilledCourses: 20, targetCourses: 10, institutionName: 200, courseName: 200, courseCode: 50, grade: 20, creditSystemOther: 50 };
+export const CREDIT_MAX = { ECTS: 60, US_CREDIT_HOURS: 30, UK_CATS: 120, OTHER: 120 };
+const MOST_GENEROUS_MAX = Math.max(...Object.values(CREDIT_MAX));
+
+const cleanText = (value, max, { required = true } = {}) => {
+    if (value === undefined || value === null || value === '') return required ? null : '';
+    if (typeof value !== 'string') return null;
+    const text = value.trim();
+    if (text.length === 0) return required ? null : '';
+    return text.length <= max ? text : null;
+};
+const institutionKeyOf = (name, country) => `${name.toLowerCase().replace(/\s+/g, ' ')}|${country}`;
+const isValidCredits = (value, max) => typeof value === 'number' && Number.isFinite(value)
+    && value > 0 && value <= max && Number.isInteger(value * 2);
+
+/**
+ * Checks a submit body ({ institutions, fulfilled_courses, target_course_ids }).
+ * @param isCountryCode function telling whether a country code is in the list from /api/countries
+ * @returns [{ field, code, params? }] in form order, with the server's field paths
+ */
+export const validateSubmission = (body, isCountryCode) => {
+    const errors = [];
+    const add = (field, code, params) => errors.push(params ? { field, code, params } : { field, code });
+
+    const institutions = body.institutions;
+    const institutionCount = Array.isArray(institutions) ? institutions.length : 0;
+    if (!Array.isArray(institutions) || institutionCount < 1 || institutionCount > LIMITS.institutions) {
+        add('institutions', 'INVALID_INSTITUTIONS', { max: LIMITS.institutions });
+    } else {
+        const seen = new Set();
+        institutions.forEach((raw, i) => {
+            const item = raw && typeof raw === 'object' ? raw : {};
+            const path = `institutions[${i}]`;
+            const name = cleanText(item.name, LIMITS.institutionName);
+            const country = isCountryCode(item.country) ? item.country : null;
+            if (name === null) add(`${path}.name`, 'INVALID_INSTITUTION_NAME', { max: LIMITS.institutionName });
+            if (country === null) add(`${path}.country`, 'INVALID_COUNTRY');
+            if (!(typeof item.grading_file === 'string' && item.grading_file)) add(`${path}.grading_file`, 'GRADING_FILE_MISSING');
+            if (name !== null && country !== null) {
+                const key = institutionKeyOf(name, country);
+                if (seen.has(key)) add(`${path}.name`, 'DUPLICATE_INSTITUTION');
+                seen.add(key);
+            }
+        });
+    }
+
+    const rows = body.fulfilled_courses;
+    const rowsValid = Array.isArray(rows) && rows.length >= 1 && rows.length <= LIMITS.fulfilledCourses;
+    const used = new Set();
+    if (!rowsValid) {
+        add('fulfilled_courses', 'INVALID_FULFILLED_COURSES', { max: LIMITS.fulfilledCourses });
+    } else {
+        const validInstitutionCount = Array.isArray(institutions) && institutionCount >= 1 && institutionCount <= LIMITS.institutions ? institutionCount : 0;
+        rows.forEach((raw, r) => {
+            const item = raw && typeof raw === 'object' ? raw : {};
+            const path = `fulfilled_courses[${r}]`;
+            if (Number.isInteger(item.institution) && item.institution >= 0 && item.institution < validInstitutionCount) used.add(item.institution);
+            else add(`${path}.institution`, 'INVALID_INSTITUTION_CHOICE');
+            if (cleanText(item.course_name, LIMITS.courseName) === null) add(`${path}.course_name`, 'INVALID_COURSE_NAME', { max: LIMITS.courseName });
+            if (cleanText(item.course_code, LIMITS.courseCode, { required: false }) === null) add(`${path}.course_code`, 'INVALID_COURSE_CODE', { max: LIMITS.courseCode });
+            if (cleanText(item.grade, LIMITS.grade) === null) add(`${path}.grade`, 'INVALID_GRADE', { max: LIMITS.grade });
+            const system = Object.prototype.hasOwnProperty.call(CREDIT_MAX, item.credit_system) ? item.credit_system : null;
+            if (system === null) add(`${path}.credit_system`, 'INVALID_CREDIT_SYSTEM');
+            if (system === 'OTHER' && cleanText(item.credit_system_other, LIMITS.creditSystemOther) === null) {
+                add(`${path}.credit_system_other`, 'INVALID_CREDIT_SYSTEM_OTHER', { max: LIMITS.creditSystemOther });
+            }
+            const max = system ? CREDIT_MAX[system] : MOST_GENEROUS_MAX;
+            if (!isValidCredits(item.credits, max)) add(`${path}.credits`, 'INVALID_CREDITS', { max });
+            if (!(typeof item.file === 'string' && item.file)) add(`${path}.file`, 'EVIDENCE_MISSING');
+        });
+    }
+    if (Array.isArray(institutions) && institutionCount >= 1 && institutionCount <= LIMITS.institutions) {
+        institutions.forEach((inst, i) => {
+            if (rowsValid && !used.has(i)) add(`institutions[${i}].name`, 'INSTITUTION_UNUSED');
+        });
+    }
+
+    const targets = body.target_course_ids;
+    const ids = Array.isArray(targets) && targets.every((id) => Number.isInteger(id) && id > 0) ? [...new Set(targets)] : null;
+    if (!ids || ids.length < 1 || ids.length > LIMITS.targetCourses) add('target_course_ids', 'INVALID_TARGET_COURSES', { max: LIMITS.targetCourses });
+
+    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : 2);
+    return errors.sort((a, b) => order(a.field) - order(b.field));
+};
+
+/**
+ * A server field path -> the form's own key for that field, using the maps from buildSubmission:
+ *   'institutions[1].country'      -> 'inst:<key>:country'
+ *   'fulfilled_courses[0].credits' -> 'row:<id>:credits'
+ *   'target_course_ids', 'institutions', 'fulfilled_courses' stay as they are.
+ * Returns null for a path the form doesn't know (shown in the message under Submit instead).
+ */
+const INSTITUTION_FIELDS = ['name', 'country', 'grading_file'];
+const ROW_FIELDS = ['institution', 'course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade', 'file'];
+export const formKeyForPath = (path, map) => {
+    if (['target_course_ids', 'institutions', 'fulfilled_courses'].includes(path)) return path;
+    let match = /^institutions\[(\d+)\]\.(\w+)$/.exec(path);
+    if (match && INSTITUTION_FIELDS.includes(match[2]) && map.institutionKeyAt[match[1]]) return `inst:${map.institutionKeyAt[match[1]]}:${match[2]}`;
+    match = /^fulfilled_courses\[(\d+)\]\.(\w+)$/.exec(path);
+    if (match && ROW_FIELDS.includes(match[2]) && map.rowIdAt[match[1]]) return `row:${map.rowIdAt[match[1]]}:${match[2]}`;
+    return null;
+};
