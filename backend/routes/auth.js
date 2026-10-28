@@ -13,8 +13,21 @@ const { FRONTEND_URL } = require('../config/urls');
 const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 
 // --- REGISTER ROUTE ---
+
+// Neptun code: 6 letters or digits, stored in upper case (same rule as the database check)
+const NEPTUN_PATTERN = /^[A-Z0-9]{6}$/;
+const normalizeNeptun = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '');
+
+// The role comes from the university email domain
+const roleForEmail = (lowerEmail) => {
+    if (lowerEmail.endsWith('@tr.pte.hu')) return 'student';
+    if (lowerEmail.endsWith('@mik.pte.hu')) return 'reviewer';
+    if (lowerEmail.endsWith('@adminisztracio.pte.hu')) return 'superadmin';
+    return null;
+};
+
 router.post('/register', async (req, res) => {
-    const { name, email, password, language } = req.body;
+    const { name, email, password, language, neptun_code, programme_code } = req.body;
 
     // At most RATE_LIMIT_REGISTER_PER_IP attempts per hour from one IP (failed attempts count too).
     // A 429 is about the IP only, so it reveals nothing about any account.
@@ -27,38 +40,65 @@ router.post('/register', async (req, res) => {
         return sendError(res, 500, 'SERVER_ERROR', 'Server error during registration');
     }
     
-    // 🆕 YOUR ADDITION: Check if fields are missing
-    if (!email || !password || !name) {
+    if (![name, email, password].every((value) => typeof value === 'string' && value)) {
         return sendError(res, 400, 'MISSING_FIELDS', 'All fields required');
     }
 
     try {
-        let assignedRole = '';
         const lowerEmail = email.toLowerCase();
+        const assignedRole = roleForEmail(lowerEmail);
+        if (!assignedRole) return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
 
-        // 1. Check if user already exists
-        const userExists = await pool.query('SELECT * FROM users WHERE email = $1', [lowerEmail]);
+        // Students also give their Neptun code and study programme.
+        // Reviewer and admin registration is unchanged: anything sent in these fields is ignored.
+        let neptunCode = null;
+        let programmeId = null;
+        if (assignedRole === 'student') {
+            neptunCode = normalizeNeptun(neptun_code);
+            if (!NEPTUN_PATTERN.test(neptunCode)) {
+                return sendError(res, 400, 'INVALID_NEPTUN', 'Neptun code must be 6 letters or digits');
+            }
+            const programme = typeof programme_code === 'string'
+                ? await pool.query('SELECT id FROM programmes WHERE code = $1', [programme_code])
+                : { rows: [] };
+            if (programme.rows.length === 0) {
+                return sendError(res, 400, 'INVALID_PROGRAMME', 'Unknown study programme');
+            }
+            programmeId = programme.rows[0].id;
+        }
+
+        const userExists = await pool.query('SELECT 1 FROM users WHERE email = $1', [lowerEmail]);
         if (userExists.rows.length > 0) return sendError(res, 400, 'EMAIL_TAKEN', 'Email already registered');
 
-        // (Note: is_verified defaults to false automatically in the database schema)
-
-        const domain = lowerEmail.split('@')[1];
-
-        if (lowerEmail.endsWith('@mik.pte.hu')) assignedRole = 'reviewer';
-        else if (lowerEmail.endsWith('@tr.pte.hu')) assignedRole = 'student';
-        else if (lowerEmail.endsWith('@adminisztracio.pte.hu')) assignedRole = 'superadmin';
-        else return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
+        if (neptunCode) {
+            const neptunExists = await pool.query('SELECT 1 FROM users WHERE neptun_code = $1', [neptunCode]);
+            if (neptunExists.rows.length > 0) return sendError(res, 400, 'NEPTUN_TAKEN', 'Neptun code already registered');
+        }
 
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
         const verificationToken = crypto.randomBytes(32).toString('hex');
 
-        const result = await pool.query(
-            'INSERT INTO users (name, email, password, role, verification_token, preferred_language) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,name,role',
-            [name, lowerEmail, hashedPassword, assignedRole, verificationToken, normalizeLanguage(language)] 
-        );
+        // is_verified starts as false (database default) until the email link is clicked
+        try {
+            await pool.query(
+                `INSERT INTO users (name, email, password, role, verification_token, preferred_language, neptun_code, programme_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [name, lowerEmail, hashedPassword, assignedRole, verificationToken, normalizeLanguage(language), neptunCode, programmeId]
+            );
+        } catch (err) {
+            // Two registrations at the same moment can both pass the checks above;
+            // the database then refuses the second one (unique_violation)
+            if (err.code === '23505' && err.constraint === 'users_neptun_code_key') {
+                return sendError(res, 400, 'NEPTUN_TAKEN', 'Neptun code already registered');
+            }
+            if (err.code === '23505' && err.constraint === 'users_email_key') {
+                return sendError(res, 400, 'EMAIL_TAKEN', 'Email already registered');
+            }
+            throw err;
+        }
 
-        // 5. Build the verification link & send the email
+        // Build the verification link & send the email
         const verifyUrl = `${FRONTEND_URL}/verify/${verificationToken}`;
         const message = `
             <h2>Welcome to the PTE Credit Transfer System!</h2>

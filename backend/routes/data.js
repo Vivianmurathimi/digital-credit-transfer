@@ -93,6 +93,17 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
     }
 });
 
+// Study programmes for the registration form: public (no login), names in EN/HU/DE
+router.get('/programmes', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT code, name_en, name_hu, name_de FROM programmes ORDER BY code');
+        res.json({ success: true, programmes: result.rows });
+    } catch (err) {
+        console.error('Fetch programmes error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
 // Course catalogue for the application form: any logged-in user
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {

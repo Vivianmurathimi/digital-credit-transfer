@@ -137,7 +137,8 @@ const listFileOwners = async () => {
 };
 
 const loadTestData = async () => {
-    const users = (await pool.query('SELECT id, role, email FROM users ORDER BY id')).rows;
+    const users = (await pool.query('SELECT id, role, email, neptun_code FROM users ORDER BY id')).rows;
+    const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
@@ -166,6 +167,7 @@ const loadTestData = async () => {
         appOfB: apps.find((a) => a.student_id === studentB.id),
         fileOfB: filesByOwner.get(studentB.id)[0],
         goneUser: { id: Math.max(...users.map((u) => u.id)) + 100000, role: 'student' },
+        programmeCodes,
     };
 };
 
@@ -262,6 +264,24 @@ const run = async () => {
     await expect('Login, unknown email', call('POST', 'login', { json: { email: UNKNOWN_EMAIL, password: 'wrong' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Login, real email + wrong password (same answer)', call('POST', 'login', { json: { email: d.studentA.email, password: 'definitely-wrong-password' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Register with empty fields', call('POST', 'register', { json: {} }), 400, 'MISSING_FIELDS');
+    const programmes = await call('GET', 'programmes');
+    report(programmes.status === 200 && Array.isArray(programmes.body?.programmes)
+        && d.programmeCodes.every((code) => programmes.body.programmes.some((p) => p.code === code && p.name_en && p.name_hu && p.name_de)),
+        'Programme list is public, with EN/HU/DE names', `${programmes.status}, ${programmes.body?.programmes?.length ?? 0} programmes`);
+    // Student registrations below are all refused before anything is saved (no account, no email)
+    const newStudent = (extra) => ({ name: 'Security Check', email: `security-check-${Date.now()}@tr.pte.hu`, password: 'x-Security-Check-1', programme_code: d.programmeCodes[0], ...extra });
+    await expect('Register student without Neptun code', call('POST', 'register', { json: newStudent({}) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with a 5-character Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'ABC12' }) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with symbols in the Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'AB-12C' }) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with an unknown programme', call('POST', 'register', { json: newStudent({ neptun_code: 'ZZZ999', programme_code: 'NOPE' }) }), 400, 'INVALID_PROGRAMME');
+    await expect('Register student without a programme', call('POST', 'register', { json: newStudent({ neptun_code: 'ZZZ999', programme_code: undefined }) }), 400, 'INVALID_PROGRAMME');
+    await expect('Register with an email that is not text', call('POST', 'register', { json: { name: 'x', email: 123, password: 'x' } }), 400, 'MISSING_FIELDS');
+    if (d.studentA.neptun_code) {
+        // Lower case and spaces must not get around the duplicate check
+        await expect("Register student with someone else's Neptun code", call('POST', 'register', { json: newStudent({ neptun_code: ` ${d.studentA.neptun_code.toLowerCase()} ` }) }), 400, 'NEPTUN_TAKEN');
+    } else {
+        skip("Register student with someone else's Neptun code", 'student A has no Neptun code');
+    }
     const forgot = await call('POST', 'forgot-password', { json: { email: UNKNOWN_EMAIL } });
     report(forgot.status === 200 && forgot.body && forgot.body.success === true && forgot.body.message === FORGOT_MESSAGE,
         'Forgot password, unknown address (no email sent)', `${forgot.status}, same text as for a real address`);
