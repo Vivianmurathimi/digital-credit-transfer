@@ -32,6 +32,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // The current institutions, for uploads that finish after the list has changed
     const institutionsRef = useRef(institutions);
     institutionsRef.current = institutions;
+    // Hidden file inputs of the grading documents, opened by their translated buttons
+    const gradingInputs = useRef({});
     // Same for course rows (an evidence upload can finish after its row was removed)
     const rowsRef = useRef(fulfilledCourses);
     rowsRef.current = fulfilledCourses;
@@ -128,9 +130,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             // Different credit systems can't be added up: no comparison, the reviewer judges
             if (!allEcts(fulfilledCourses)) {
                 setMatches({ credits: false });
+                // While a row has no credit system yet, say nothing about comparing credits
+                const undecided = fulfilledCourses.some(c => !c.credit_system);
                 setEvidenceRequiredMsg(selectedCourses.length > 1
                     ? t('student_evidence_notice', { reason: t('student_evidence_reason_package') })
-                    : t('student_credits_compare_skipped'));
+                    : (undecided ? '' : t('student_credits_compare_skipped')));
                 return;
             }
             const totalTargetCredits = selectedCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
@@ -678,20 +682,29 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                                 {/* Grading-system document: one per institution, no highlighting */}
                                 <div style={{ marginTop: '12px' }}>
-                                    <label htmlFor={`inst-grading-${inst.key}`} style={fieldLabelStyle}>{t('student_grading_doc_label')}</label>
+                                    <span id={`inst-grading-label-${inst.key}`} style={fieldLabelStyle}>{t('student_grading_doc_label')}</span>
                                     <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')}</p>
-                                    {inst.grading_file && (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                                            <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {inst.grading_file}</span>
-                                            <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
-                                            <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
-                                        </div>
-                                    )}
-                                    {inst.grading_file && <span style={{ fontSize: '12px', fontWeight: 'bold', marginRight: '8px' }}>{t('student_grading_doc_replace')}:</span>}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                        {/* Translated button; the browser's own "Choose file" input stays hidden */}
+                                        <button
+                                            type="button" disabled={gradingStatus[inst.key]?.uploading}
+                                            onClick={() => gradingInputs.current[inst.key]?.click()}
+                                            aria-describedby={`inst-grading-label-${inst.key} inst-grading-help-${inst.key}`}
+                                            style={{ padding: '8px 12px', backgroundColor: inst.grading_file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        >
+                                            {inst.grading_file ? t('student_grading_doc_replace') : t('student_grading_doc_upload')}
+                                        </button>
+                                        {inst.grading_file && (
+                                            <>
+                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {inst.grading_file}</span>
+                                                <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
+                                                <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
+                                            </>
+                                        )}
+                                    </div>
                                     <input
-                                        id={`inst-grading-${inst.key}`} type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                                        disabled={gradingStatus[inst.key]?.uploading}
-                                        aria-describedby={`inst-grading-help-${inst.key}`}
+                                        ref={(el) => { gradingInputs.current[inst.key] = el; }}
+                                        type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" tabIndex={-1} style={{ display: 'none' }}
                                         // Cleared after each choice, so the same file can be chosen again
                                         onChange={(e) => { handleGradingFileChosen(inst.key, e.target.files[0]); e.target.value = ''; }}
                                     />
@@ -737,6 +750,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 <div>
                                     <label htmlFor={`row-system-${course.id}`} style={fieldLabelStyle}>{t('student_credit_system')}</label>
                                     <select id={`row-system-${course.id}`} value={course.credit_system} onChange={(e) => handleCourseChange(course.id, 'credit_system', e.target.value)} style={fieldInputStyle}>
+                                        <option value="">{t('student_credit_system_placeholder')}</option>
                                         {CREDIT_SYSTEMS.map((system) => <option key={system} value={system}>{t(`student_credit_system_${system}`)}</option>)}
                                     </select>
                                 </div>
@@ -824,12 +838,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         ) : (
                         <select value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course && !selectedCourses.find(sc => sc.id === course.id)) setSelectedCourses([...selectedCourses, course]); }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
-                            {courses.map(c => <option key={c.id} value={c.id}>{c.course_code} - {c.course_name}</option>)}
+                            {courses.map(c => <option key={c.id} value={c.id}>{t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits })}</option>)}
                         </select>
                         )}
                         <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                             {selectedCourses.map(sc => (
-                                <span key={sc.id} style={{ backgroundColor: 'var(--teal)', color: 'white', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>{sc.course_code} <button onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', marginLeft: '5px' }}>×</button></span>
+                                <span key={sc.id} style={{ backgroundColor: 'var(--teal)', color: 'white', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', display: 'inline-flex', alignItems: 'center' }}>
+                                    {t('student_target_course_chip', { code: sc.course_code, name: sc.course_name, credits: sc.credits })}
+                                    <button type="button" aria-label={t('student_remove_target_course', { code: sc.course_code })} onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', marginLeft: '5px', flexShrink: 0 }}>×</button>
+                                </span>
                             ))}
                         </div>
                     </div>
