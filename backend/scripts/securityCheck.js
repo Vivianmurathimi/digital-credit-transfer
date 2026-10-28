@@ -269,7 +269,22 @@ const run = async () => {
                 ...(targetIds === undefined ? {} : { target_course_ids: targetIds }),
             } });
 
-            await expect("A submits an application with B's file", submitAs(ownCourses.slice(0, 1)), 403, 'FILES_NOT_OWNED');
+            const withBsFile = await submitAs(ownCourses.slice(0, 1));
+            report(withBsFile.status === 403 && withBsFile.code === 'FILES_NOT_OWNED', "A submits an application with B's file", `${withBsFile.status} ${withBsFile.code}`);
+            if (withBsFile.code === 'FILES_NOT_OWNED') {
+                // Someone else's file and a file that doesn't exist must look identical, so the submit
+                // route can't be used to find out which file names exist. (Runs only after the line above
+                // proved the file check refuses.)
+                const withMissingFile = await call('POST', 'applications', { token: A, json: {
+                    fulfilled_courses_json: [{ course_name: 'Security check', file: `no-such-file-${Date.now()}.pdf` }],
+                    target_course_ids: ownCourses.slice(0, 1),
+                } });
+                const strip = (r) => JSON.stringify({ status: r.status, ...r.body });
+                report(strip(withMissingFile) === strip(withBsFile),
+                    "Someone else's file and a missing file get the identical answer", `${withMissingFile.status} ${withMissingFile.code}`);
+            } else {
+                skip("Someone else's file and a missing file get the identical answer", 'the file check did not refuse above; not risking a real submission');
+            }
             if (otherCourses.length === 0) {
                 skip("Submit with another programme's course", 'there is only one programme with courses');
             } else {
@@ -278,6 +293,8 @@ const run = async () => {
             }
             await expect('Submit with a course id that does not exist', submitAs([2147483000]), 400, 'COURSE_NOT_IN_PROGRAMME');
             await expect('Submit without target courses', submitAs(undefined), 400, 'INVALID_TARGET_COURSES');
+            const fieldCheck = await submitAs([2147483000]);
+            report(fieldCheck.body?.field === 'target_course_ids', 'Course error names its field', fieldCheck.body?.field || 'no field');
             await expect('Submit with an empty course list', submitAs([]), 400, 'INVALID_TARGET_COURSES');
             await expect('Submit with course ids as text', submitAs(['1', '2']), 400, 'INVALID_TARGET_COURSES');
             await expect('Submit with 11 different courses (limit is 10)', submitAs(Array.from({ length: 11 }, (_, i) => i + 1)), 400, 'INVALID_TARGET_COURSES');

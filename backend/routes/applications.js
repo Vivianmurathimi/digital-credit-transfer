@@ -47,7 +47,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
         const targetIds = readTargetCourseIds(target_course_ids);
         if (!targetIds) {
-            return sendError(res, 400, 'INVALID_TARGET_COURSES', `Choose between 1 and ${MAX_TARGET_COURSES} target courses`);
+            return sendError(res, 400, 'INVALID_TARGET_COURSES', `Choose between 1 and ${MAX_TARGET_COURSES} target courses`, { field: 'target_course_ids' });
         }
 
         // Every target course must belong to the student's own programme (read from the database).
@@ -59,7 +59,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             [targetIds, programmeId]
         );
         if (!programmeId || found.rows.length !== targetIds.length) {
-            return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme');
+            return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme', { field: 'target_course_ids' });
         }
         // Snapshot in the order the student chose them (kept as is if courses are re-imported later)
         const byId = new Map(found.rows.map((c) => [c.id, c]));
