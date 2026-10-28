@@ -9,6 +9,7 @@ const sendEmail = require('../utils/sendEmail');
 const { normalizeLanguage } = require('../utils/emailTemplates');
 const { checkEmailLink } = require('../utils/emailLink');
 const sendError = require('../utils/sendError');
+const { FRONTEND_URL } = require('../config/urls');
 
 // --- REGISTER ROUTE ---
 router.post('/register', async (req, res) => {
@@ -46,7 +47,7 @@ router.post('/register', async (req, res) => {
         );
 
         // 5. Build the verification link & send the email
-        const verifyUrl = `http://localhost:3000/verify/${verificationToken}`;
+        const verifyUrl = `${FRONTEND_URL}/verify/${verificationToken}`;
         const message = `
             <h2>Welcome to the PTE Credit Transfer System!</h2>
             <p>Please click the button below to verify your official university email address and activate your account.</p>
@@ -168,7 +169,7 @@ router.post('/forgot-password', async (req, res) => {
         );
 
         // 4. Send Email
-        const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
+        const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
         const message = `
             <h2>Password Reset Request</h2>
             <p>You requested a password reset for your PTE Credit Transfer account.</p>

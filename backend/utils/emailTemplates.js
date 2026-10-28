@@ -1,6 +1,8 @@
 // Email templates for student notifications, in HU / EN / DE.
 // Kept in the backend (not shared with the frontend locale files) so the two projects stay separate.
 
+const { FRONTEND_URL } = require('../config/urls');
+
 const SUPPORTED_LANGUAGES = ['hu', 'en', 'de'];
 const DEFAULT_LANGUAGE = 'hu';
 
@@ -139,7 +141,7 @@ const buildEmail = (type, lang, data) => {
         if (template.after) content += template.after();
     }
 
-    const dashboardUrl = data.linkUrl || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
+    const dashboardUrl = data.linkUrl || `${FRONTEND_URL}/login`;
 
     const html = `
         <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">

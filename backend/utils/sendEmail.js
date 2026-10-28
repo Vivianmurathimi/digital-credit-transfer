@@ -1,5 +1,9 @@
 const nodemailer = require('nodemailer');
 
+// Sender shown in the emails. Must be an address the SMTP account may send from,
+// or the mail server may reject the message.
+const EMAIL_FROM = process.env.EMAIL_FROM || '"PTE Credit Transfer" <noreply@adminisztracio.pte.hu>';
+
 const sendEmail = async ({ email, subject, html }) => {
     try {
         // Use your existing Mailtrap credentials from your .env file
@@ -13,7 +17,7 @@ const sendEmail = async ({ email, subject, html }) => {
         });
 
         await transporter.sendMail({
-            from: '"PTE Credit Transfer" <noreply@adminisztracio.pte.hu>',
+            from: EMAIL_FROM,
             to: email,
             subject,
             html
