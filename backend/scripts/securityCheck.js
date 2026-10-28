@@ -262,29 +262,54 @@ const run = async () => {
             const otherCourses = (await pool.query(
                 'SELECT id FROM courses WHERE programme_id IS DISTINCT FROM $1 ORDER BY id', [d.studentA.programme_id]
             )).rows.map((c) => c.id);
-            // Every submit below also attaches B's file: if a course check were ever broken,
-            // the file check still refuses, so these tests can never save an application
-            const submitAs = (targetIds) => call('POST', 'applications', { token: A, json: {
-                fulfilled_courses_json: [{ course_name: 'Security check', file: d.fileOfB }],
-                ...(targetIds === undefined ? {} : { target_course_ids: targetIds }),
-            } });
+            // Every submit below uses B's file (as evidence AND as grading file): if a field or course
+            // check were ever broken, the file check still refuses, so these tests can never save an application
+            const validForm = (overrides = {}) => ({
+                institutions: [{ name: 'Security Check University', country: 'AT', grading_file: d.fileOfB }],
+                fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: d.fileOfB }],
+                target_course_ids: ownCourses.slice(0, 1),
+                ...overrides,
+            });
+            const submitForm = (body) => call('POST', 'applications', { token: A, json: body });
+            const submitAs = (targetIds) => {
+                const body = validForm({ target_course_ids: targetIds });
+                if (targetIds === undefined) delete body.target_course_ids;
+                return submitForm(body);
+            };
 
             const withBsFile = await submitAs(ownCourses.slice(0, 1));
             report(withBsFile.status === 403 && withBsFile.code === 'FILES_NOT_OWNED', "A submits an application with B's file", `${withBsFile.status} ${withBsFile.code}`);
+            const filePaths = (withBsFile.body?.errors || []).map((e) => e.field).sort().join(', ');
+            report(filePaths === 'fulfilled_courses[0].file, institutions[0].grading_file',
+                "B's file is reported at both places it was used (evidence and grading file)", filePaths || 'no field paths');
             if (withBsFile.code === 'FILES_NOT_OWNED') {
                 // Someone else's file and a file that doesn't exist must look identical, so the submit
-                // route can't be used to find out which file names exist. (Runs only after the line above
+                // route can't be used to find out which file names exist. (Runs only after the lines above
                 // proved the file check refuses.)
-                const withMissingFile = await call('POST', 'applications', { token: A, json: {
-                    fulfilled_courses_json: [{ course_name: 'Security check', file: `no-such-file-${Date.now()}.pdf` }],
-                    target_course_ids: ownCourses.slice(0, 1),
-                } });
+                const missing = `no-such-file-${Date.now()}.pdf`;
+                const withMissingFile = await submitForm(validForm({
+                    institutions: [{ name: 'Security Check University', country: 'AT', grading_file: missing }],
+                    fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: missing }],
+                }));
                 const strip = (r) => JSON.stringify({ status: r.status, ...r.body });
                 report(strip(withMissingFile) === strip(withBsFile),
                     "Someone else's file and a missing file get the identical answer", `${withMissingFile.status} ${withMissingFile.code}`);
             } else {
                 skip("Someone else's file and a missing file get the identical answer", 'the file check did not refuse above; not risking a real submission');
             }
+
+            // Several mistakes at once: all reported, each under its own field
+            const threeMistakes = await submitForm(validForm({
+                institutions: [{ name: 'Security Check University', country: 'XX', grading_file: d.fileOfB }],
+                fulfilled_courses: [{ institution: 0, course_name: 'Security check', credits: 0, credit_system: 'ECTS', file: d.fileOfB }],
+            }));
+            const mistakePaths = (threeMistakes.body?.errors || []).map((e) => `${e.field} ${e.code}`).join(', ');
+            report(threeMistakes.status === 400
+                && mistakePaths === 'institutions[0].country INVALID_COUNTRY, fulfilled_courses[0].grade INVALID_GRADE, fulfilled_courses[0].credits INVALID_CREDITS'
+                && threeMistakes.code === threeMistakes.body.errors[0].code && threeMistakes.body.field === threeMistakes.body.errors[0].field,
+                'Three mistakes in one submit: all three reported with their fields', mistakePaths || `${threeMistakes.status} ${threeMistakes.code}`);
+            await expect('Old request shape (fulfilled_courses_json) is refused',
+                submitForm({ fulfilled_courses_json: [{ course_name: 'x', file: d.fileOfB }], target_course_ids: ownCourses.slice(0, 1) }), 400, 'INVALID_INSTITUTIONS');
             if (otherCourses.length === 0) {
                 skip("Submit with another programme's course", 'there is only one programme with courses');
             } else {
