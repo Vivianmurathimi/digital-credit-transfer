@@ -216,6 +216,7 @@
     "INVALID_ROLE": "This role does not exist.",
     "USER_NOT_FOUND": "User not found.",
     "LAST_SUPERADMIN": "The last remaining super admin cannot be removed.",
+    "STUDENT_PROFILE_REQUIRED": "This account has no Neptun code or programme, so it can't be made a student yet.",
     "INVALID_DATES": "Please choose valid dates, with the start date on or before the end date.",
     "INVALID_ARCHIVE_NAME": "This term book name is not valid.",
     "ARCHIVE_NOT_FOUND": "Term book not found.",

@@ -59,11 +59,17 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
     }
 
     try {
-        const userResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [id]);
+        const userResult = await pool.query('SELECT id, role, neptun_code, programme_id FROM users WHERE id = $1', [id]);
         if (userResult.rows.length === 0) {
             return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
         }
         const targetUser = userResult.rows[0];
+
+        // Students must have a Neptun code and a programme (database rule). Until the admin
+        // round adds a programme picker here, an account without them can't become a student.
+        if (newRole === 'student' && targetUser.role !== 'student' && (!targetUser.neptun_code || !targetUser.programme_id)) {
+            return sendError(res, 400, 'STUDENT_PROFILE_REQUIRED', 'This account has no Neptun code or programme, so it cannot be made a student yet');
+        }
 
         if (targetUser.role === 'superadmin' && newRole !== 'superadmin') {
             const countResult = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'superadmin'");

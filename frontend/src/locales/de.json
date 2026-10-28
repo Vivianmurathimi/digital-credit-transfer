@@ -216,6 +216,7 @@
     "INVALID_ROLE": "Diese Rolle existiert nicht.",
     "USER_NOT_FOUND": "Benutzer nicht gefunden.",
     "LAST_SUPERADMIN": "Der letzte verbleibende Super-Admin kann nicht entfernt werden.",
+    "STUDENT_PROFILE_REQUIRED": "Dieses Konto hat keinen Neptun-Code und keinen Studiengang und kann daher noch nicht zum Studierenden gemacht werden.",
     "INVALID_DATES": "Bitte wählen Sie gültige Daten; das Startdatum darf nicht nach dem Enddatum liegen.",
     "INVALID_ARCHIVE_NAME": "Dieser Name des Semesterbuchs ist ungültig.",
     "ARCHIVE_NOT_FOUND": "Semesterbuch nicht gefunden.",

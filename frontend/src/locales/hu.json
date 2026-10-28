@@ -216,6 +216,7 @@
     "INVALID_ROLE": "Ez a szerepkör nem létezik.",
     "USER_NOT_FOUND": "A felhasználó nem található.",
     "LAST_SUPERADMIN": "Az utolsó szuperadminisztrátor nem távolítható el.",
+    "STUDENT_PROFILE_REQUIRED": "Ennek a fióknak nincs Neptun-kódja vagy szakja, ezért még nem tehető hallgatóvá.",
     "INVALID_DATES": "Kérjük, adjon meg érvényes dátumokat; a kezdő dátum nem lehet későbbi a záró dátumnál.",
     "INVALID_ARCHIVE_NAME": "Ez a félévi könyv neve érvénytelen.",
     "ARCHIVE_NOT_FOUND": "A félévi könyv nem található.",
