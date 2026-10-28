@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { clearSession } from '../session';
+import { clearSession, readTokenPayload } from '../session';
 
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
@@ -11,13 +11,13 @@ const Dashboard = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
     
-    const token = localStorage.getItem('token');
-    if (!token) {
+    const payload = readTokenPayload();
+    if (!payload) {
         navigate('/login');
         return null;
     }
 
-    const realUserId = JSON.parse(atob(token.split('.')[1])).id;
+    const realUserId = payload.id;
     const originalRole = localStorage.getItem('originalRole');
     
     const userId = localStorage.getItem('impersonatedUserId') || realUserId;

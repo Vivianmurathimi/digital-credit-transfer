@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode } from '../errorMessage';
+import { readTokenPayload } from '../session';
 
 // Seconds before an expired link sends the user to the login page
 const REDIRECT_SECONDS = 5;
@@ -26,13 +27,7 @@ const EmailLink = () => {
                 const data = await http.get(`email-link/${token}`).json();
 
                 // Valid link: straight to the dashboard if this student is already logged in, otherwise log in first
-                const savedToken = localStorage.getItem('token');
-                let loggedInId = null;
-                try {
-                    loggedInId = savedToken ? JSON.parse(atob(savedToken.split('.')[1])).id : null;
-                } catch {
-                    loggedInId = null;
-                }
+                const loggedInId = readTokenPayload()?.id ?? null;
                 navigate(loggedInId === data.studentId ? '/dashboard' : '/login', { replace: true });
             } catch (err) {
                 setInvalid(getErrorCode(err) === 'INVALID_LINK');
