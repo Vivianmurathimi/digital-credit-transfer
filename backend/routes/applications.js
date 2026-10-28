@@ -11,15 +11,28 @@ const sendError = require('../utils/sendError');
 // The only statuses the app understands (badges, reviewer tabs, emails, term book)
 const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
 
+// At most this many target courses per application (after removing duplicates)
+const MAX_TARGET_COURSES = 10;
+
+// A non-empty list of positive whole numbers, duplicates removed; null if the input is not that
+const readTargetCourseIds = (value) => {
+    if (!Array.isArray(value) || !value.every((id) => Number.isInteger(id) && id > 0)) return null;
+    const ids = [...new Set(value)];
+    return ids.length >= 1 && ids.length <= MAX_TARGET_COURSES ? ids : null;
+};
+
 const checkSubmissionsOpen = async () => {
     const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
     return result.rows.length > 0 ? result.rows[0].is_submissions_open : false;
 };
 
+// Submit an application. The student, their programme and the target courses' details all
+// come from the database; anything else in the request (student_id, programme_id,
+// pte_course_names) is ignored.
 router.post('/applications', verifyToken, requireRole('student'), async (req, res) => {
     const { 
         fulfilled_courses_json, 
-        pte_course_names, 
+        target_course_ids,
         system_note,
         student_note
     } = req.body;
@@ -32,6 +45,32 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             return sendError(res, 403, 'SUBMISSIONS_CLOSED', 'Submissions are currently closed');
         }
 
+        const targetIds = readTargetCourseIds(target_course_ids);
+        if (!targetIds) {
+            return sendError(res, 400, 'INVALID_TARGET_COURSES', `Choose between 1 and ${MAX_TARGET_COURSES} target courses`);
+        }
+
+        // Every target course must belong to the student's own programme (read from the database).
+        // A course of another programme and an id that doesn't exist get the same answer.
+        // The same query gives the snapshot that is saved, so it is exactly what was checked.
+        const programmeId = (await pool.query('SELECT programme_id FROM users WHERE id = $1', [student_id])).rows[0]?.programme_id;
+        const found = await pool.query(
+            'SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2',
+            [targetIds, programmeId]
+        );
+        if (!programmeId || found.rows.length !== targetIds.length) {
+            return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme');
+        }
+        // Snapshot in the order the student chose them (kept as is if courses are re-imported later)
+        const byId = new Map(found.rows.map((c) => [c.id, c]));
+        const targetCourses = targetIds.map((id) => {
+            const c = byId.get(id);
+            return { course_id: c.id, course_code: c.course_code, course_name: c.course_name, credits: c.credits };
+        });
+        // Legacy text list, still read by the reviewer and admin screens and the term book.
+        // To be dropped after the reviewer and admin rounds (use target_courses instead).
+        const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
+
         // Only the student's own uploads may be attached as evidence
         const courses = Array.isArray(fulfilled_courses_json) ? fulfilled_courses_json : [];
         const attachedFiles = courses.map((course) => course && course.file).filter(Boolean);
@@ -41,9 +80,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
         await pool.query(
             `INSERT INTO applications 
-            (student_id, fulfilled_courses_json, pte_course_names, system_note, student_note, status) 
-            VALUES ($1, $2, $3, $4, $5, 'pending')`,
-            [student_id, JSON.stringify(fulfilled_courses_json), pte_course_names, system_note, student_note]
+            (student_id, programme_id, fulfilled_courses_json, target_courses, pte_course_names, system_note, student_note, status) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
+            [student_id, programmeId, JSON.stringify(fulfilled_courses_json), JSON.stringify(targetCourses), pteCourseNames, system_note, student_note]
         );
         res.json({ success: true });
 
@@ -127,6 +166,8 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     }
 });
 
+// Resubmit adds a note and evidence files only. Target courses and programme can't be changed
+// here: any target_course_ids, pte_course_names or programme_id in the request is ignored.
 router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), async (req, res) => {
     const { id } = req.params;
     const { student_resubmit_note, new_files } = req.body;

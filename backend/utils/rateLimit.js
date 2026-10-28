@@ -35,21 +35,7 @@ const normalizeEmail = (email) => email.trim().toLowerCase();
 // Behind a reverse proxy this is only correct with TRUST_PROXY set (see server.js).
 const clientIp = (req) => (req.ip || '').replace(/^::ffff:/, '');
 
-const ensureRateLimitTable = async () => {
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS rate_limit_hits (
-                id BIGSERIAL PRIMARY KEY,
-                bucket VARCHAR(32) NOT NULL,
-                key_hash CHAR(64) NOT NULL,
-                hit_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            );`);
-        await pool.query('CREATE INDEX IF NOT EXISTS rate_limit_hits_lookup ON rate_limit_hits (bucket, key_hash, hit_at);');
-        console.log('✅ Ensured rate_limit_hits table');
-    } catch (err) {
-        console.error('❌ Could not ensure rate_limit_hits table:', err.message);
-    }
-};
+// The rate_limit_hits table is created by migration 001.
 
 // Old rows are removed now and then (at most every 10 minutes), never on every request
 let lastCleanup = 0;
@@ -92,4 +78,4 @@ const takeSlot = async (bucket, value, limit) => {
     }
 };
 
-module.exports = { LIMITS, takeSlot, hashKey, normalizeEmail, clientIp, ensureRateLimitTable };
+module.exports = { LIMITS, takeSlot, hashKey, normalizeEmail, clientIp };

@@ -137,16 +137,22 @@ const listFileOwners = async () => {
 };
 
 const loadTestData = async () => {
-    const users = (await pool.query('SELECT id, role, email FROM users ORDER BY id')).rows;
+    const users = (await pool.query('SELECT id, role, email, neptun_code, programme_id FROM users ORDER BY id')).rows;
+    const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
     const reviewer = users.find((u) => u.role === 'reviewer');
     const admin = users.find((u) => u.role === 'superadmin');
-    // Student B: has an application and a tagged file. Student A: another student with a tagged file.
+    // Student B: has an application and a tagged file. Student A: another student with a tagged file,
+    // preferably in a DIFFERENT programme, so the cross-programme checks can run.
+    // Without such a pair those checks are reported as SKIP (counted in the total), never left out silently.
     const students = users.filter((u) => u.role === 'student' && filesByOwner.has(u.id));
-    const studentB = students.find((u) => apps.some((a) => a.student_id === u.id));
-    const studentA = students.find((u) => studentB && u.id !== studentB.id);
+    const candidatesB = students.filter((u) => apps.some((a) => a.student_id === u.id));
+    const pairs = candidatesB.flatMap((b) => students.filter((a) => a.id !== b.id).map((a) => ({ a, b })));
+    const pair = pairs.find(({ a, b }) => a.programme_id !== b.programme_id) || pairs[0];
+    const studentA = pair?.a;
+    const studentB = pair?.b;
 
     const missing = [];
     if (!reviewer) missing.push('a reviewer account');
@@ -166,6 +172,7 @@ const loadTestData = async () => {
         appOfB: apps.find((a) => a.student_id === studentB.id),
         fileOfB: filesByOwner.get(studentB.id)[0],
         goneUser: { id: Math.max(...users.map((u) => u.id)) + 100000, role: 'student' },
+        programmeCodes,
     };
 };
 
@@ -189,6 +196,10 @@ const run = async () => {
 
     console.log(`Security check against ${BASE}`);
     console.log(`Test users: student A #${d.studentA.id}, student B #${d.studentB.id}, reviewer #${d.reviewer.id}, superadmin #${d.admin.id}`);
+    if (d.studentA.programme_id === d.studentB.programme_id) {
+        console.log('WARNING: no two students with files in DIFFERENT programmes, so the cross-programme checks will be SKIPPED.');
+        console.log('         Run "npm run seed:dev" (development) to create one student per programme.');
+    }
 
     section('1. No token -> 401 NO_TOKEN');
     const protectedRoutes = [
@@ -198,7 +209,7 @@ const run = async () => {
         ['GET', 'users'], ['GET', 'users/all'], ['PUT', `users/${d.studentB.id}/language`], ['PUT', `users/${d.studentB.id}/role`],
         ['GET', 'pte-courses'], ['GET', 'settings/status'], ['PUT', 'settings/toggle'],
         ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'],
-        ['POST', 'refresh-token'],
+        ['POST', 'refresh-token'], ['GET', 'me'],
     ];
     for (const [method, path] of protectedRoutes) {
         await expect(`${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
@@ -244,11 +255,78 @@ const run = async () => {
         if (!settings.body || settings.body.isOpen !== true) {
             skip("A submits an application with B's file", 'submissions are closed, so the server stops earlier');
         } else {
-            await expect("A submits an application with B's file",
-                call('POST', 'applications', { token: A, json: { fulfilled_courses_json: [{ course_name: 'Security check', file: d.fileOfB }], pte_course_names: 'Security check' } }),
-                403, 'FILES_NOT_OWNED');
+            const coursesOf = async (programmeId) => (await pool.query(
+                'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
+            )).rows.map((c) => c.id);
+            const ownCourses = await coursesOf(d.studentA.programme_id);
+            const otherCourses = (await pool.query(
+                'SELECT id FROM courses WHERE programme_id IS DISTINCT FROM $1 ORDER BY id', [d.studentA.programme_id]
+            )).rows.map((c) => c.id);
+            // Every submit below also attaches B's file: if a course check were ever broken,
+            // the file check still refuses, so these tests can never save an application
+            const submitAs = (targetIds) => call('POST', 'applications', { token: A, json: {
+                fulfilled_courses_json: [{ course_name: 'Security check', file: d.fileOfB }],
+                ...(targetIds === undefined ? {} : { target_course_ids: targetIds }),
+            } });
+
+            await expect("A submits an application with B's file", submitAs(ownCourses.slice(0, 1)), 403, 'FILES_NOT_OWNED');
+            if (otherCourses.length === 0) {
+                skip("Submit with another programme's course", 'there is only one programme with courses');
+            } else {
+                await expect("Submit with another programme's course", submitAs([otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
+                await expect("Submit with own and another programme's course mixed", submitAs([ownCourses[0], otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            }
+            await expect('Submit with a course id that does not exist', submitAs([2147483000]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            await expect('Submit without target courses', submitAs(undefined), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with an empty course list', submitAs([]), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with course ids as text', submitAs(['1', '2']), 400, 'INVALID_TARGET_COURSES');
+            await expect('Submit with 11 different courses (limit is 10)', submitAs(Array.from({ length: 11 }, (_, i) => i + 1)), 400, 'INVALID_TARGET_COURSES');
+            // 12 copies of one own course count as 1 after removing duplicates, so they pass the limit
+            // and reach the file check
+            await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
         }
     }
+
+    // /me: only ever the logged-in person, never cached, never secrets
+    const ALLOWED_PROFILE_FIELDS = ['name', 'email', 'role', 'neptun_code', 'programme'];
+    const meA = await call('GET', 'me', { token: A });
+    report(meA.status === 200 && meA.body?.user?.email === d.studentA.email && meA.body.user.neptun_code === d.studentA.neptun_code,
+        "/me returns the logged-in student's own profile", `${meA.status}`);
+    const meWithId = await call('GET', `me?id=${d.studentB.id}&user_id=${d.studentB.id}`, { token: A });
+    report(meWithId.body?.user?.email === d.studentA.email, "/me ignores another user's id in the address", 'still student A');
+    const meB = await call('GET', 'me', { token: B });
+    report(meB.body?.user?.email === d.studentB.email && meB.body.user.email !== meA.body?.user?.email, '/me with B\'s token returns B, not A');
+    const extraFields = Object.keys(meA.body?.user || {}).filter((key) => !ALLOWED_PROFILE_FIELDS.includes(key));
+    report(meA.body?.user && extraFields.length === 0, '/me returns no password, tokens or other hidden fields', extraFields.length ? `extra: ${extraFields.join(', ')}` : 'only name, email, role, Neptun code, programme');
+    report((meA.headers.get('cache-control') || '').includes('no-store'), '/me is sent with Cache-Control: no-store', meA.headers.get('cache-control') || 'missing');
+
+    // Course list: a student only ever sees their own programme's courses
+    const courseIdsOf = async (programmeId) => (await pool.query(
+        'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
+    )).rows.map((c) => c.id);
+    const idsIn = (res) => (res.body?.courses || []).map((c) => c.id).sort((x, y) => x - y);
+    const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+    const coursesA = await call('GET', 'pte-courses', { token: A });
+    const ownA = await courseIdsOf(d.studentA.programme_id);
+    report(coursesA.status === 200 && same(idsIn(coursesA), ownA), "Student A sees exactly A's programme's courses", `${idsIn(coursesA).length} courses`);
+    const coursesB = await call('GET', 'pte-courses', { token: B });
+    report(same(idsIn(coursesB), await courseIdsOf(d.studentB.programme_id)), "Student B sees exactly B's programme's courses", `${idsIn(coursesB).length} courses`);
+    if (d.studentA.programme_id === d.studentB.programme_id) {
+        skip("A sees none of another programme's courses", 'students A and B are in the same programme');
+        skip('Course list ignores a programme in the address', 'same reason');
+    } else {
+        const otherIds = await courseIdsOf(d.studentB.programme_id);
+        report(!idsIn(coursesA).some((id) => otherIds.includes(id)), "A sees none of B's programme's courses");
+        const programmeB = (await pool.query('SELECT code FROM programmes WHERE id = $1', [d.studentB.programme_id])).rows[0].code;
+        const tricked = await call('GET', `pte-courses?programme=${programmeB}&programme_id=${d.studentB.programme_id}`, { token: A });
+        report(same(idsIn(tricked), ownA), 'Course list ignores a programme in the address', "still only A's programme");
+    }
+    const extraCourseFields = [...new Set((coursesA.body?.courses || []).flatMap(Object.keys))]
+        .filter((key) => !['id', 'course_code', 'course_name', 'credits'].includes(key));
+    report(extraCourseFields.length === 0, 'Course list sends only id, code, name and credits', extraCourseFields.join(', ') || 'ok');
+    const allCourses = (await pool.query('SELECT count(*)::int AS n FROM courses')).rows[0].n;
+    const coursesR = await call('GET', 'pte-courses', { token: R });
+    report(idsIn(coursesR).length === allCourses, 'Reviewer still sees every course (for now)', `${idsIn(coursesR).length} of ${allCourses}`);
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
@@ -262,6 +340,24 @@ const run = async () => {
     await expect('Login, unknown email', call('POST', 'login', { json: { email: UNKNOWN_EMAIL, password: 'wrong' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Login, real email + wrong password (same answer)', call('POST', 'login', { json: { email: d.studentA.email, password: 'definitely-wrong-password' } }), 401, 'INVALID_CREDENTIALS');
     await expect('Register with empty fields', call('POST', 'register', { json: {} }), 400, 'MISSING_FIELDS');
+    const programmes = await call('GET', 'programmes');
+    report(programmes.status === 200 && Array.isArray(programmes.body?.programmes)
+        && d.programmeCodes.every((code) => programmes.body.programmes.some((p) => p.code === code && p.name_en && p.name_hu && p.name_de)),
+        'Programme list is public, with EN/HU/DE names', `${programmes.status}, ${programmes.body?.programmes?.length ?? 0} programmes`);
+    // Student registrations below are all refused before anything is saved (no account, no email)
+    const newStudent = (extra) => ({ name: 'Security Check', email: `security-check-${Date.now()}@tr.pte.hu`, password: 'x-Security-Check-1', programme_code: d.programmeCodes[0], ...extra });
+    await expect('Register student without Neptun code', call('POST', 'register', { json: newStudent({}) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with a 5-character Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'ABC12' }) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with symbols in the Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'AB-12C' }) }), 400, 'INVALID_NEPTUN');
+    await expect('Register student with an unknown programme', call('POST', 'register', { json: newStudent({ neptun_code: 'ZZZ999', programme_code: 'NOPE' }) }), 400, 'INVALID_PROGRAMME');
+    await expect('Register student without a programme', call('POST', 'register', { json: newStudent({ neptun_code: 'ZZZ999', programme_code: undefined }) }), 400, 'INVALID_PROGRAMME');
+    await expect('Register with an email that is not text', call('POST', 'register', { json: { name: 'x', email: 123, password: 'x' } }), 400, 'MISSING_FIELDS');
+    if (d.studentA.neptun_code) {
+        // Lower case and spaces must not get around the duplicate check
+        await expect("Register student with someone else's Neptun code", call('POST', 'register', { json: newStudent({ neptun_code: ` ${d.studentA.neptun_code.toLowerCase()} ` }) }), 400, 'NEPTUN_TAKEN');
+    } else {
+        skip("Register student with someone else's Neptun code", 'student A has no Neptun code');
+    }
     const forgot = await call('POST', 'forgot-password', { json: { email: UNKNOWN_EMAIL } });
     report(forgot.status === 200 && forgot.body && forgot.body.success === true && forgot.body.message === FORGOT_MESSAGE,
         'Forgot password, unknown address (no email sent)', `${forgot.status}, same text as for a real address`);
@@ -330,6 +426,7 @@ const run = async () => {
         `Register per IP: 429 TOO_MANY_REQUESTS after ${LIMITS.registerPerIp} attempts`, `${overLimit.status} ${overLimit.code || ''}`);
 
     console.log(`\n${results.pass} passed, ${results.fail} failed, ${results.skip} skipped`);
+    if (results.skip > 0) console.log('Skipped checks did NOT run: see the SKIP lines above for the reason.');
     return results.fail === 0;
 };
 

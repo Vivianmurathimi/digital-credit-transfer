@@ -1,37 +1,35 @@
+/**
+ * Promotes an existing, verified account to superadmin.
+ * This is the safe way to create the first superadmin (also in production):
+ * register normally, verify the email, then run on the server:
+ *
+ *   npm run make-superadmin -- someone@adminisztracio.pte.hu
+ *
+ * It never creates accounts and never touches unverified ones.
+ */
+process.env.DOTENV_CONFIG_QUIET = 'true';
 require('dotenv').config();
-const pool = require('./db'); 
+const pool = require('./db');
 
-async function crownAdmin() {
-    // ⚙️ Change this to the exact email you just registered!
-    const adminEmail = 'tate@adminisztracio.pte.hu'; 
+const finish = (code, message) => {
+    (code === 0 ? console.log : console.error)(message);
+    // db.js keeps its startup test connection open, so exit explicitly
+    process.exit(code);
+};
 
-    try {
-        console.log(`👑 Attempting to make ${adminEmail} a verified Super Admin...`);
-        
-        // Test connection
-        await pool.query('SELECT 1');
-        console.log('✅ Database connected.');
+const promote = async () => {
+    const email = (process.argv[2] || '').trim().toLowerCase();
+    if (!email) return finish(1, 'Usage: npm run make-superadmin -- <email of a registered, verified account>');
 
-        // 🆕 We are now updating BOTH the role and the verification status!
-        const result = await pool.query(
-            "UPDATE users SET role = 'superadmin', is_verified = true WHERE email = $1 RETURNING name, email, role, is_verified",
-            [adminEmail]
-        );
+    const { rows } = await pool.query('SELECT id, name, role, is_verified FROM users WHERE email = $1', [email]);
+    if (rows.length === 0) return finish(1, `No account with the email ${email}. Register it first, then run this again.`);
 
-        if (result.rows.length > 0) {
-            console.log('✅ Success! The user is now a fully verified Super Admin:');
-            console.log(result.rows[0]);
-        } else {
-            console.log('❌ Error: Could not find that email in the database. Are you sure you registered it first?');
-            const allUsers = await pool.query('SELECT email FROM users LIMIT 10');
-            console.log('Sample users in DB:', allUsers.rows);
-        }
+    const user = rows[0];
+    if (!user.is_verified) return finish(1, `${email} has not verified its email yet. Verify it first, then run this again.`);
+    if (user.role === 'superadmin') return finish(0, `${user.name} (${email}) is already a superadmin. Nothing changed.`);
 
-    } catch (error) {
-        console.error('Database error:', error.message);
-    } finally {
-        pool.end(); 
-    }
-}
+    await pool.query("UPDATE users SET role = 'superadmin' WHERE id = $1", [user.id]);
+    return finish(0, `${user.name} (${email}) was ${user.role} and is now superadmin.`);
+};
 
-crownAdmin();
+promote().catch((err) => finish(1, `Database error: ${err.message}`));

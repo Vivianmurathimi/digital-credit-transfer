@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { clearSession, forgetImpersonation, getSessionState } from '../session';
 
+import ProfileHeader from './ProfileHeader';
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
 import SuperAdminDashboard from './SuperAdminDashboard';
@@ -32,9 +33,13 @@ const Dashboard = () => {
                 </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid var(--border)', paddingBottom: '10px', marginBottom: '30px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '15px', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid var(--border)', paddingBottom: '10px', marginBottom: '30px' }}>
                 <h1 style={{ color: 'var(--heading)', margin: 0 }}>{t('dashboard_title')}</h1>
-                <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                    {/* The logged-in person's own profile; not while the superadmin impersonates someone */}
+                    {!impersonating && <ProfileHeader />}
+                    <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
+                </div>
             </div>
 
             {role === 'superadmin' && !impersonating && <SuperAdminDashboard userId={userId} />}

@@ -4,12 +4,12 @@ require('./config/jwt');
 // Checks FRONTEND_URL / CORS_ORIGINS (required in production)
 const { CORS_ORIGINS } = require('./config/urls');
 // Checks the RATE_LIMIT_* settings
-const { ensureRateLimitTable } = require('./utils/rateLimit');
+require('./utils/rateLimit');
 const express = require('express');
 const cors = require('cors');
 
 // Import your configuration files
-const pool = require('./db');
+const { listPendingMigrations } = require('./utils/migrations');
 const minioClient = require('./minio');
 
 // Import your new modular routes
@@ -57,44 +57,6 @@ minioClient.bucketExists(BUCKET_NAME, (err, exists) => {
     }
 });
 
-const ensureApplicationResubmitColumns = async () => {
-    try {
-        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS student_resubmit_note TEXT;`);
-        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS supplemental_files TEXT;`);
-        console.log('✅ Ensured applications table has resubmit columns');
-    } catch (err) {
-        console.error('❌ Could not ensure resubmit columns:', err.message);
-    }
-};
-
-ensureApplicationResubmitColumns();
-
-// Language used for the student's notification emails (Hungarian by default)
-const ensureUserLanguageColumn = async () => {
-    try {
-        await pool.query(`ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(5) DEFAULT 'hu';`);
-        console.log('✅ Ensured users table has preferred_language column');
-    } catch (err) {
-        console.error('❌ Could not ensure preferred_language column:', err.message);
-    }
-};
-
-ensureUserLanguageColumn();
-ensureRateLimitTable();
-
-// Who made the last status decision and when (shown in the term archive book)
-const ensureApplicationReviewColumns = async () => {
-    try {
-        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;`);
-        await pool.query(`ALTER TABLE IF EXISTS applications ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP;`);
-        console.log('✅ Ensured applications table has reviewed_by / reviewed_at columns');
-    } catch (err) {
-        console.error('❌ Could not ensure review columns:', err.message);
-    }
-};
-
-ensureApplicationReviewColumns();
-
 // Use the routes! 
 // Note: We mount 'uploadRoutes' at the root ('/') because the routes inside already say '/api/upload' and '/transcripts'
 app.use('/api', authRoutes);
@@ -106,6 +68,25 @@ app.use('/api/archive', archiveRoutes);
 
 // Start Server
 const PORT = process.env.PORT || 5050;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+
+// The schema is managed by migrations (backend/migrations, `npm run migrate`).
+// Checked BEFORE listening: pending migrations stop the server in production,
+// so it never answers a request with an outdated schema; in development they only warn.
+listPendingMigrations()
+    .catch((err) => {
+        console.error('❌ Could not check database migrations:', err.message);
+        return [];
+    })
+    .then((pending) => {
+        if (pending.length > 0) {
+            const message = `Pending database migrations: ${pending.join(', ')}. Run "npm run migrate" in backend/.`;
+            if (process.env.NODE_ENV === 'production') {
+                console.error(`❌ ${message}`);
+                process.exit(1);
+            }
+            console.warn(`⚠️  ${message}`);
+        }
+        app.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
+        });
+    });

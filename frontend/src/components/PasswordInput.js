@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 // Password field with an eye button to show or hide what was typed.
 // Hidden by default; each field keeps its own show/hide state.
-const PasswordInput = ({ value, onChange, placeholder, style }) => {
+const PasswordInput = ({ id, value, onChange, placeholder, style }) => {
     const { t } = useTranslation();
     const [visible, setVisible] = useState(false);
     const label = t(visible ? 'password_hide' : 'password_show');
@@ -11,6 +11,7 @@ const PasswordInput = ({ value, onChange, placeholder, style }) => {
     return (
         <div style={{ position: 'relative', marginTop: '5px' }}>
             <input
+                id={id}
                 type={visible ? 'text' : 'password'}
                 value={value}
                 onChange={onChange}
