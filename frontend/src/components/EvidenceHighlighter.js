@@ -42,6 +42,8 @@ const markState = (canvas) => {
 const flatten = (pageCanvas, marksCanvas) => {
     const canvas = newCanvas(pageCanvas.width, pageCanvas.height);
     const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; // transparent parts of an image become white, so marks stay visible
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(pageCanvas, 0, 0);
     if (marksCanvas) {
         ctx.globalAlpha = MARK_OPACITY;
@@ -210,7 +212,10 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                     });
                     const { width, height } = fitWithin(image.naturalWidth, image.naturalHeight);
                     const canvas = newCanvas(width, height);
-                    canvas.getContext('2d').drawImage(image, 0, 0, width, height);
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff'; // white under transparent parts (e.g. some PNG screenshots)
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(image, 0, 0, width, height);
                     pagesRef.current.set(1, { page: canvas, marks: null, points: { width, height } });
                     setPageCount(1);
                 } finally {
@@ -392,7 +397,9 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                     )}
 
                     {/* The page and its marks: the marks canvas is see-through and blended like a highlighter pen */}
-                    <div style={{ position: 'relative', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid var(--border-strong)', lineHeight: 0 }}>
+                    {/* White page background, and "isolate" keeps the highlighter's blending inside this box:
+                        otherwise the yellow marks would mix with a coloured box around the highlighter */}
+                    <div style={{ position: 'relative', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid var(--border-strong)', lineHeight: 0, backgroundColor: '#ffffff', isolation: 'isolate' }}>
                         <canvas ref={pageCanvasRef} role="img" aria-label={t('student_highlighter_page_label', { page: pageNumber, total: pageCount })} style={{ width: '100%', height: 'auto', display: 'block' }} />
                         <canvas
                             ref={markCanvasRef}

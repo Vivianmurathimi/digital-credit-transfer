@@ -902,8 +902,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                     {/* Syllabi: needed when the syllabus rule applies; one per fulfilled course, linked to its row */}
                     {(syllabusNeeded || fulfilledCourses.some((c) => c.syllabus_file)) && (
-                        <section aria-labelledby="syllabus-title" style={{ backgroundColor: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-bg)' : 'var(--surface)', color: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-text)' : 'inherit', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
-                            <h3 id="syllabus-title" style={{ margin: '0 0 6px 0', fontSize: '15px' }}>
+                        // A light box with a coloured stripe (not a yellow background): the highlighter opens inside it,
+                        // and its yellow marks must stay easy to see
+                        <section aria-labelledby="syllabus-title" style={{ backgroundColor: 'var(--surface)', borderLeft: `5px solid ${syllabusNeeded && !allSyllabiAttached ? 'var(--orange)' : 'var(--accent)'}`, padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                            <h3 id="syllabus-title" style={{ margin: '0 0 6px 0', fontSize: '15px', color: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-text)' : 'var(--link)' }}>
                                 {syllabusNeeded && !allSyllabiAttached ? `⚠ ${t('student_syllabus_needed_title')}` : t('student_syllabi_attached')}
                             </h3>
                             <p style={{ fontSize: '12px', margin: '0 0 6px 0', opacity: 0.85 }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
