@@ -51,7 +51,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [activeUploadId, setActiveUploadId] = useState(null); 
     // The syllabus file open in the highlighter (PDF or image), per uploader
     const [highlightFile, setHighlightFile] = useState(null);
-    const [rawFile, setRawFile] = useState(null); 
     const [uploadStatus, setUploadStatus] = useState('');
     const [submitStatus, setSubmitStatus] = useState('');
     
@@ -240,7 +239,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         if (syllabusRowId === id) { setSyllabusRowId(null); setSyllabusFile(null); }
         setFulfilledCourses(list => list.filter(c => c.id !== id));
         dropFieldErrors(`row:${id}:`);
-        if (activeUploadId === id) { setActiveUploadId(null); setHighlightFile(null); setRawFile(null); }
+        if (activeUploadId === id) { setActiveUploadId(null); setHighlightFile(null); }
     };
     const handleCourseChange = (id, field, value) => {
         setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
@@ -381,7 +380,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             setResubmitRawFile(null);
         } else {
             setHighlightFile(null);
-            setRawFile(null);
         }
     };
 
@@ -419,7 +417,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         } else {
             setActiveUploadId(id); 
             setHighlightFile(null); 
-            setRawFile(null); 
         }
     };
 
@@ -430,11 +427,16 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         if (!file) return;
         const highlightable = file.type === 'application/pdf' || file.type.startsWith('image/');
         if (isResubmit) {
+            // "Add missing info" may be any document the reviewer asked for: highlighting is optional
             setResubmitHighlightFile(highlightable ? file : null);
             setResubmitRawFile(highlightable ? null : file);
+        } else if (highlightable) {
+            setHighlightFile(file);
+            setUploadStatus('');
         } else {
-            setHighlightFile(highlightable ? file : null);
-            setRawFile(highlightable ? null : file);
+            // A transcript must be highlighted, so only PDF, JPG or PNG (no "attach as it is")
+            setHighlightFile(null);
+            setUploadStatus(t('student_highlighter_open_failed'));
         }
     };
 
@@ -446,13 +448,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         return executeUpload(formData, isResubmit);
     };
 
-    const handleStandardUpload = (isResubmit = false) => {
-        const fileToUpload = isResubmit ? resubmitRawFile : rawFile;
+    // Only the "add missing info" window attaches files as they are (highlighting is optional there)
+    const handleStandardUpload = () => {
+        const fileToUpload = resubmitRawFile;
         if (!fileToUpload) return;
         setUploadStatus(t('student_upload_saving'));
         const formData = new FormData();
         formData.append('file', fileToUpload);
-        executeUpload(formData, isResubmit);
+        executeUpload(formData, true);
     };
 
     // Handles the actual API call and state update for the specific course
@@ -477,7 +480,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     rememberName(data);
                     setFulfilledCourses(list => list.map(c => c.id === targetRowId ? { ...c, file: data.fileName } : c));
                     setFieldError(`row:${targetRowId}:file`, '');
-                    setTimeout(() => { setHighlightFile(null); setRawFile(null); setActiveUploadId(null); }, 1000);
+                    setTimeout(() => { setHighlightFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));
                 setTimeout(() => setUploadStatus(''), 2000);
@@ -658,7 +661,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {resubmitHighlightFile && (
                                 <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
                                     {/* Missing information can be a transcript or a syllabus, so the longer (syllabus) limit applies */}
-                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
+                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" highlightRequired={false} onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
                                 </Suspense>
                             )}
 
@@ -666,7 +669,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
                                     <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{resubmitRawFile.name}</strong></p>
                                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        <button onClick={() => handleStandardUpload(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
+                                        <button onClick={() => handleStandardUpload()} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
                                         <button onClick={() => clearUploadSelection(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
                                     </div>
                                 </div>
@@ -870,22 +873,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {activeUploadId === course.id && (
                                 <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--blue)', borderRadius: '5px', marginTop: '15px' }}>
                                     <h4 style={{ marginTop: 0 }}>{t('student_upload_evidence_title')}</h4>
-                                    <input type="file" onChange={(e) => handleFileSelect(e, false)} />
+                                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => handleFileSelect(e, false)} />
                                     
                                     {highlightFile && (
                                         <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
                                             <EvidenceHighlighter file={highlightFile} kind="transcript" onSave={(blob, name) => uploadHighlighted(blob, name, false)} onCancel={() => clearUploadSelection(false)} />
                                         </Suspense>
-                                    )}
-
-                                    {rawFile && (
-                                        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
-                                            <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{rawFile.name}</strong></p>
-                                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                                <button onClick={() => handleStandardUpload(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
-                                            </div>
-                                        </div>
                                     )}
 
                                     {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginTop: '10px' }}>{uploadStatus}</p>}

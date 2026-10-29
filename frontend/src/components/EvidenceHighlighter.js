@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as pdfjsLib from 'pdfjs-dist';
 import {
-    MARK_COLOR, MARK_OPACITY, MAX_PAGES, fitWithin, hasVisibleMarks, isTooLong, pagesToKeep, rememberRecent, buildHighlightedPdf,
+    MARK_COLOR, MARK_OPACITY, MAX_PAGES, MARKER_WIDTH_SHARE, ERASER_WIDTH_SHARE,
+    fitWithin, hasVisibleMarks, hasEnoughHighlight, isTooLong, pagesToKeep, rememberRecent, buildHighlightedPdf,
 } from '../highlighter';
 
 // The PDF engine's helper (worker) is bundled with the app, so its version always matches
@@ -11,8 +12,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mi
 
 const RENDER_SCALE = 2;          // pages are rendered at about 2x, so marks and saved pages are sharp
 const MAX_RENDER_WIDTH = 2400;   // ...but very large pages are rendered smaller than that
-const MARKER_WIDTH = 18;         // in page pixels, so it looks the same on any screen size
-const ERASER_WIDTH = 40;
 
 const newCanvas = (width, height) => {
     const canvas = document.createElement('canvas');
@@ -32,7 +31,11 @@ const canvasBytes = (canvas, type, quality) => new Promise((resolve, reject) => 
     canvas.toBlob((blob) => (blob ? blob.arrayBuffer().then((b) => resolve(new Uint8Array(b)), reject) : reject(new Error('empty canvas'))), type, quality);
 });
 
-const canvasHasMarks = (canvas) => hasVisibleMarks(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data);
+// Whether anything is left on a mark layer (kept while working), and whether it is a real highlight
+const markState = (canvas) => {
+    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    return { any: hasVisibleMarks(data), highlighted: hasEnoughHighlight(data, canvas.width, canvas.height) };
+};
 
 // The page with its marks merged in, the way they look on screen (see-through, multiply)
 const flatten = (pageCanvas, marksCanvas) => {
@@ -53,6 +56,9 @@ const highlightedName = (original, extension) => {
     return `${base} (highlighted).${extension}`;
 };
 
+// Pages with a real highlight (enough clearly painted area): these are saved and count for the rule
+const highlightedIn = (pages) => [...pages.entries()].filter(([, e]) => e.highlighted).map(([n]) => n).sort((a, b) => a - b);
+
 const smallButton = { padding: '5px 10px', border: '1px solid var(--control-border)', borderRadius: '4px', cursor: 'pointer', backgroundColor: 'var(--surface)' };
 
 /**
@@ -65,9 +71,13 @@ const smallButton = { padding: '5px 10px', border: '1px solid var(--control-bord
  * Saving hands the finished file to onSave(blob, fileName); uploading is up to the caller.
  *
  * @param kind 'transcript' or 'syllabus': sets the page limit (longer PDFs are refused when opened)
+ *             and the message when nothing is highlighted
+ * @param highlightRequired saving needs at least one highlighted page (off for "add missing info")
  */
-const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
+const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highlightRequired = true }) => {
     const { t } = useTranslation();
+    // Shown when Save is pressed without a highlight; hidden again once something is highlighted
+    const [needHighlight, setNeedHighlight] = useState(false);
     const maxPages = MAX_PAGES[kind];
     const [status, setStatus] = useState('loading'); // loading | ready | saving | error
     const [message, setMessage] = useState('');
@@ -90,15 +100,19 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
     const isPdf = file.type === 'application/pdf';
 
     const updateMarked = useCallback(() => {
-        const marked = [...pagesRef.current.entries()].filter(([, e]) => e.marks).map(([n]) => n);
-        setMarkedPages(marked.sort((a, b) => a - b));
+        const marked = highlightedIn(pagesRef.current);
+        setMarkedPages(marked);
+        if (marked.length > 0) setNeedHighlight(false);
     }, []);
 
-    // Copies the on-screen marks back into their page's own layer (only kept if something is left)
+    // Copies the on-screen marks back into their page's own layer (kept while anything is left,
+    // even a dot the student may still extend; only a real highlight counts as highlighted)
     const keepShownMarks = useCallback(() => {
         const entry = pagesRef.current.get(shownRef.current);
         if (!entry || !markCanvasRef.current) return;
-        entry.marks = canvasHasMarks(markCanvasRef.current) ? copyCanvas(markCanvasRef.current) : null;
+        const state = markState(markCanvasRef.current);
+        entry.marks = state.any ? copyCanvas(markCanvasRef.current) : null;
+        entry.highlighted = state.highlighted;
     }, []);
 
     // Renders a page (again, if its rendering was dropped) and remembers it
@@ -164,6 +178,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
         setStatus('loading');
         setMessage('');
         setMarkedPages([]);
+        setNeedHighlight(false);
 
         const open = async () => {
             if (isPdf) {
@@ -230,7 +245,8 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
         const ctx = markCanvasRef.current.getContext('2d');
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = tool === 'eraser' ? ERASER_WIDTH : MARKER_WIDTH;
+        // A share of the page width, so a stroke looks the same at every page size
+        ctx.lineWidth = markCanvasRef.current.width * (tool === 'eraser' ? ERASER_WIDTH_SHARE : MARKER_WIDTH_SHARE);
         ctx.strokeStyle = MARK_COLOR;
         // The eraser only removes marks: the page itself is on another canvas
         ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
@@ -276,6 +292,11 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
     const handleSave = async () => {
         keepShownMarks();
         updateMarked();
+        // Highlight required: what counts is what is left now (highlighting and erasing everything is nothing)
+        if (highlightRequired && highlightedIn(pagesRef.current).length === 0) {
+            setNeedHighlight(true);
+            return;
+        }
         setStatus('saving');
         setMessage('');
         try {
@@ -286,8 +307,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
                 const bytes = await canvasBytes(flatten(entry.page, entry.marks), jpeg ? 'image/jpeg' : 'image/png', 0.92);
                 await onSave(new Blob([bytes], { type: jpeg ? 'image/jpeg' : 'image/png' }), highlightedName(file.name, jpeg ? 'jpg' : 'png'));
             } else {
-                const marked = [...pagesRef.current.entries()].filter(([, e]) => e.marks).map(([n]) => n);
-                const keep = pagesToKeep(marked);
+                const keep = pagesToKeep(highlightedIn(pagesRef.current));
                 const { bytes } = await buildHighlightedPdf({
                     originalBytes: bytesRef.current,
                     keep,
@@ -374,6 +394,17 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
                             {t('student_highlighter_saved_pages', { pages: pagesToKeep(markedPages).join(', ') })}
                         </p>
                     )}
+                    {highlightRequired && markedPages.length === 0 && !needHighlight && (
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>{t('student_highlight_none_yet')}</p>
+                    )}
+                    {/* Announced by screen readers; disappears once something is highlighted */}
+                    <div aria-live="polite">
+                        {needHighlight && (
+                            <p style={{ color: 'var(--error-text)', fontWeight: 'bold', margin: '8px 0 0 0' }}>
+                                {t(kind === 'transcript' ? 'student_highlight_required_transcript' : 'student_highlight_required_syllabus')}
+                            </p>
+                        )}
+                    </div>
 
                     <button
                         type="button" onClick={handleSave} disabled={status !== 'ready' || pageLoading}

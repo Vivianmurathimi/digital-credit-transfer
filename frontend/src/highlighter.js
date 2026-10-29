@@ -46,6 +46,33 @@ export const rememberRecent = (recent, number, keep = RENDERED_PAGES_KEPT) => {
     return { recent: list.slice(-keep), evicted: list.slice(0, Math.max(0, list.length - keep)) };
 };
 
+// --- Highlight required ---
+// Pen and eraser widths are a share of the page width, so a stroke looks the same on a
+// PDF page rendered at 2x, a capped photo or a phone (about 18 px on a 2x A4 page).
+export const MARKER_WIDTH_SHARE = 0.015;
+export const ERASER_WIDTH_SHARE = 0.034;
+// A page counts as highlighted when clearly painted pixels cover at least this share of it:
+// about one short stroke across a word. A single tap stays below it.
+export const MIN_HIGHLIGHT_SHARE = 0.0003;
+// Only clearly painted pixels count: the faint edges the eraser can leave behind never do
+const CLEAR_ALPHA = 128;
+
+/**
+ * Whether a mark layer holds a real highlight: enough clearly painted pixels for its size.
+ * Works on what is left on the layer, so highlighting and then erasing counts as nothing.
+ * @param data   the RGBA bytes of the layer (ImageData.data)
+ * @param width  layer width in pixels
+ * @param height layer height in pixels
+ */
+export const hasEnoughHighlight = (data, width, height, minShare = MIN_HIGHLIGHT_SHARE) => {
+    const needed = Math.max(1, Math.ceil(width * height * minShare));
+    let painted = 0;
+    for (let i = 3; i < data.length; i += 4) {
+        if (data[i] > CLEAR_ALPHA && ++painted >= needed) return true;
+    }
+    return false;
+};
+
 // Width and height scaled so the longer side is at most `max` (never enlarged)
 export const fitWithin = (width, height, max = MAX_IMAGE_SIDE) => {
     const factor = Math.min(1, max / Math.max(width, height));
