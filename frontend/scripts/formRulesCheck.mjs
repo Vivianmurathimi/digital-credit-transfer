@@ -44,7 +44,9 @@ const cases = {
     'missing grade, evidence and grading file': form({ institutions: [inst({ grading_file: '' })], rows: [row({ grade: '  ', file: '' })] }),
     '11 institutions': form({ institutions: Array.from({ length: 11 }, (_, i) => inst({ name: `U${i}` })) }),
     '21 course rows': form({ rows: Array(21).fill(row()) }),
-    'target courses: text, 11, empty': form({ targets: ['1'] }),
+    'target course as text': form({ targets: ['1'] }),
+    'two target courses (one per application)': form({ targets: [1, 2] }),
+    'the same target course twice (counts as one)': form({ targets: [1, 1] }),
     'several mistakes at once': form({ institutions: [inst({ country: '' }), inst({ name: '', grading_file: '' })], rows: [row({ credits: 0 }), row({ institution: 1, grade: '', file: '' })] }),
 };
 
@@ -58,6 +60,27 @@ for (const [name, body] of Object.entries(cases)) {
         ? (count ? `${count} error${count > 1 ? 's' : ''}, identical` : 'valid in both')
         : `\n      browser: ${inBrowser || 'valid'}\n      server:  ${onServer || 'valid'}`);
 }
+
+console.log('\nSyllabus rule: browser vs. server\n');
+const rows = (...list) => list.map(([credits, credit_system]) => ({ credits, credit_system }));
+const syllabusCases = {
+    'one ECTS course, enough credits': [rows([6, 'ECTS']), 6],
+    'one ECTS course, more credits': [rows([7.5, 'ECTS']), 6],
+    'one ECTS course, fewer credits': [rows([5.5, 'ECTS']), 6],
+    'one US course': [rows([3, 'US_CREDIT_HOURS']), 6],
+    'one "Other" course': [rows([10, 'OTHER']), 6],
+    'two ECTS courses, enough together': [rows([3, 'ECTS'], [3, 'ECTS']), 6],
+    'two ECTS courses, too few together': [rows([2, 'ECTS'], [3, 'ECTS']), 6],
+    'ECTS + UK credits combined': [rows([4, 'ECTS'], [15, 'UK_CATS']), 6],
+};
+for (const [name, [list, target]] of Object.entries(syllabusCases)) {
+    const inBrowser = browser.syllabusReasons(list, target).join(', ');
+    const onServer = server.syllabusReasons(list, target).join(', ');
+    report(inBrowser === onServer, name, inBrowser === onServer ? (onServer || 'no syllabus needed') : `browser: ${inBrowser} | server: ${onServer}`);
+}
+const missingB = JSON.stringify(browser.missingSyllabi([{ syllabus_file: 'a' }, { syllabus_file: null }]));
+const missingS = JSON.stringify(server.missingSyllabi([{ syllabus_file: 'a' }, { syllabus_file: null }]).map(({ field, code }) => ({ field, code })));
+report(missingB === missingS, 'Missing syllabi reported at the same paths', missingS);
 
 console.log('\nLimits and stored data\n');
 report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));

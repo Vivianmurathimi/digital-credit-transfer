@@ -61,7 +61,9 @@ router.post('/', verifyToken, requireRole('student'), upload.single('file'), asy
         );
 
         console.log(`✅ File saved to MinIO: ${fileName} (uploaded by user ${req.user.id})`);
-        res.json({ success: true, fileName });
+        // The original name, cleaned for display (no folders or control characters, at most 120 characters)
+        const originalName = path.basename(req.file.originalname).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120);
+        res.json({ success: true, fileName, originalName });
     } catch (err) {
         console.error("❌ MinIO PutObject Error:", err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Upload failed at storage server');

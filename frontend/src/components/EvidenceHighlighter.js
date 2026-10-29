@@ -47,6 +47,12 @@ const flatten = (pageCanvas, marksCanvas) => {
     return canvas;
 };
 
+// "transcript.pdf" -> "transcript (highlighted).pdf", so the student recognises the saved file
+const highlightedName = (original, extension) => {
+    const base = String(original || 'document').replace(/\.[^.]+$/, '').slice(0, 100) || 'document';
+    return `${base} (highlighted).${extension}`;
+};
+
 const smallButton = { padding: '5px 10px', border: '1px solid var(--control-border)', borderRadius: '4px', cursor: 'pointer', backgroundColor: 'var(--surface)' };
 
 /**
@@ -273,13 +279,12 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
         setStatus('saving');
         setMessage('');
         try {
-            const stamp = Date.now();
             if (!isPdf) {
                 // A photo stays a (high-quality) JPEG; anything else becomes a PNG
                 const entry = pagesRef.current.get(1);
                 const jpeg = file.type === 'image/jpeg';
                 const bytes = await canvasBytes(flatten(entry.page, entry.marks), jpeg ? 'image/jpeg' : 'image/png', 0.92);
-                await onSave(new Blob([bytes], { type: jpeg ? 'image/jpeg' : 'image/png' }), `highlighted-${stamp}.${jpeg ? 'jpg' : 'png'}`);
+                await onSave(new Blob([bytes], { type: jpeg ? 'image/jpeg' : 'image/png' }), highlightedName(file.name, jpeg ? 'jpg' : 'png'));
             } else {
                 const marked = [...pagesRef.current.entries()].filter(([, e]) => e.marks).map(([n]) => n);
                 const keep = pagesToKeep(marked);
@@ -300,7 +305,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus' }) => {
                         return bytes;
                     },
                 });
-                await onSave(new Blob([bytes], { type: 'application/pdf' }), `highlighted-${stamp}.pdf`);
+                await onSave(new Blob([bytes], { type: 'application/pdf' }), highlightedName(file.name, 'pdf'));
             }
         } catch (err) {
             console.error('Could not create the highlighted file', err);

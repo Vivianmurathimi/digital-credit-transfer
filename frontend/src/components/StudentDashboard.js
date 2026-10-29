@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath } from '../applicationForm';
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi } from '../applicationForm';
 
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
@@ -64,8 +64,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitRawFile, setResubmitRawFile] = useState(null); 
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
-    const [evidenceRequiredMsg, setEvidenceRequiredMsg] = useState('');
-    const [matches, setMatches] = useState({ credits: false });
+    // Original file names for display: stored name -> name the student chose
+    const [fileNames, setFileNames] = useState({});
+    // Syllabus uploads (only when the syllabus rule applies): the course row being uploaded for,
+    // its chosen file, and a status per row ({ uploading: true } or { message: '…' })
+    const [syllabusRowId, setSyllabusRowId] = useState(null);
+    const [syllabusFile, setSyllabusFile] = useState(null);
+    const [syllabusStatus, setSyllabusStatus] = useState({});
+    const syllabusInput = useRef(null);
+    const syllabusPickRow = useRef(null);
     const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(true);
 
 
@@ -135,7 +142,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const translateError = (e) => t(`errors.${e.code}`, e.params || {});
 
     // DOM id of each field, for labels, focusing the first error and linking the error text
-    const ROW_DOM = { institution: 'row-inst', course_name: 'row-name', course_code: 'row-code', credits: 'row-credits', credit_system: 'row-system', credit_system_other: 'row-system-other', grade: 'row-grade', file: 'row-evidence-btn' };
+    const ROW_DOM = { institution: 'row-inst', course_name: 'row-name', course_code: 'row-code', credits: 'row-credits', credit_system: 'row-system', credit_system_other: 'row-system-other', grade: 'row-grade', file: 'row-evidence-btn', syllabus_file: 'row-syllabus-btn' };
     const INST_DOM = { name: 'inst-name', country: 'inst-country', grading_file: 'inst-grading-btn' };
     const domIdFor = (key) => {
         const [kind, id, field] = key.split(':');
@@ -194,38 +201,17 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     };
     const errorCount = Object.keys(fieldErrors).length;
 
-    // Validation & Credit Math
-    useEffect(() => {
-        if (selectedCourses.length > 0 && fulfilledCourses[0].course_name) {
-            // Different credit systems can't be added up: no comparison, the reviewer judges
-            if (!allEcts(fulfilledCourses)) {
-                setMatches({ credits: false });
-                // While a row has no credit system yet, say nothing about comparing credits
-                const undecided = fulfilledCourses.some(c => !c.credit_system);
-                setEvidenceRequiredMsg(selectedCourses.length > 1
-                    ? t('student_evidence_notice', { reason: t('student_evidence_reason_package') })
-                    : (undecided ? '' : t('student_credits_compare_skipped')));
-                return;
-            }
-            const totalTargetCredits = selectedCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
-            const totalInputCredits = fulfilledCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
-            
-            const creditMatch = totalInputCredits >= totalTargetCredits;
-            setMatches({ credits: creditMatch });
+    // The name the student chose (stored names start with a timestamp)
+    const displayName = (stored) => fileNames[stored] || String(stored || '').replace(/^\d+-/, '');
+    const rememberName = (data) => { if (data.originalName) setFileNames((prev) => ({ ...prev, [data.fileName]: data.originalName })); };
 
-            if (!creditMatch || selectedCourses.length > 1) {
-                const reasonKey = selectedCourses.length > 1
-                    ? 'student_evidence_reason_package'
-                    : 'student_evidence_reason_credit_gap';
-                setEvidenceRequiredMsg(t('student_evidence_notice', { reason: t(reasonKey) }));
-            } else {
-                setEvidenceRequiredMsg('');
-            }
-        } else {
-            setMatches({ credits: false });
-            setEvidenceRequiredMsg('');
-        }
-    }, [fulfilledCourses, selectedCourses, t]);
+    // Syllabus rule and credit check, worked out from the current form (same rule as the server).
+    // null while it can't be judged yet (no PTE course, or a row without credits or credit system).
+    const targetCourse = selectedCourses[0] || null;
+    const syllabusNeededFor = syllabusReasonsWhileEditing(fulfilledCourses, targetCourse);
+    const creditsMatch = syllabusNeededFor !== null && allEcts(fulfilledCourses) && !syllabusNeededFor.includes('CREDIT_GAP');
+    const syllabusNeeded = Boolean(syllabusNeededFor && syllabusNeededFor.length > 0);
+    const allSyllabiAttached = fulfilledCourses.every((c) => c.syllabus_file);
 
     const parseCourses = (jsonStringOrArray) => {
         if (!jsonStringOrArray) return [];
@@ -240,16 +226,18 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const handleRemoveCourseRow = async (id) => {
         const row = fulfilledCourses.find(c => c.id === id);
         if (!row || fulfilledCourses.length <= 1) return;
-        if (rowHasContent(row) && !window.confirm(t(row.file ? 'student_remove_course_confirm_file' : 'student_remove_course_confirm'))) return;
-        if (row.file) {
+        const files = [row.file, row.syllabus_file].filter(Boolean);
+        if (rowHasContent(row) && !window.confirm(t(files.length ? 'student_remove_course_confirm_file' : 'student_remove_course_confirm'))) return;
+        for (const file of files) {
             try {
-                await http.delete(getUploadEndpoint(row.file));
+                await http.delete(getUploadEndpoint(file));
             } catch (err) {
-                console.error('Could not delete evidence', err);
+                console.error('Could not delete a file of the course', err);
                 setFieldError(`row:${id}:file`, t('student_evidence_remove_failed'));
                 return;
             }
         }
+        if (syllabusRowId === id) { setSyllabusRowId(null); setSyllabusFile(null); }
         setFulfilledCourses(list => list.filter(c => c.id !== id));
         dropFieldErrors(`row:${id}:`);
         if (activeUploadId === id) { setActiveUploadId(null); setHighlightFile(null); setRawFile(null); }
@@ -310,6 +298,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 return;
             }
             const previous = current.grading_file;
+            rememberName(data);
             setInstitutions((list) => list.map((i) => (i.key === key ? { ...i, grading_file: data.fileName } : i)));
             setGradingState(key, {});
             setFieldError(`inst:${key}:grading_file`, '');
@@ -318,6 +307,54 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             }
         } catch (err) {
             setGradingState(key, { message: getErrorMessage(err, t, 'student_upload_failed') });
+        }
+    };
+
+    // --- Syllabi (one per fulfilled course, when the syllabus rule applies) ---
+    const setSyllabusState = (rowId, state) => setSyllabusStatus((prev) => ({ ...prev, [rowId]: state }));
+    const chooseSyllabus = (rowId) => { syllabusPickRow.current = rowId; syllabusInput.current?.click(); };
+    const handleSyllabusChosen = (file) => {
+        const rowId = syllabusPickRow.current;
+        if (!file || !rowId) return;
+        // A syllabus must be highlighted, so only PDFs and images are accepted
+        if (!(file.type === 'application/pdf' || file.type.startsWith('image/'))) {
+            setSyllabusState(rowId, { message: t('student_highlighter_open_failed') });
+            return;
+        }
+        setSyllabusState(rowId, {});
+        setSyllabusRowId(rowId);
+        setSyllabusFile(file);
+    };
+    // The highlighted syllabus is uploaded and linked to its course; a replaced one is deleted afterwards
+    const uploadSyllabus = async (rowId, blob, fileName) => {
+        setSyllabusState(rowId, { uploading: true });
+        try {
+            const formData = new FormData();
+            formData.append('file', blob, fileName);
+            const data = await http.post('uploads', { body: formData, timeout: false }).json();
+            const row = rowsRef.current.find((c) => c.id === rowId);
+            if (!row) {
+                http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
+                return;
+            }
+            rememberName(data);
+            setFulfilledCourses((list) => list.map((c) => (c.id === rowId ? { ...c, syllabus_file: data.fileName } : c)));
+            setFieldError(`row:${rowId}:syllabus_file`, '');
+            setSyllabusState(rowId, {});
+            setSyllabusRowId(null);
+            setSyllabusFile(null);
+            if (row.syllabus_file) http.delete(getUploadEndpoint(row.syllabus_file)).catch((err) => console.error('Could not delete replaced syllabus', err));
+        } catch (err) {
+            setSyllabusState(rowId, { message: getErrorMessage(err, t, 'student_upload_failed') });
+        }
+    };
+    const removeSyllabus = async (rowId, file) => {
+        try {
+            await http.delete(getUploadEndpoint(file));
+            setFulfilledCourses((list) => list.map((c) => (c.id === rowId ? { ...c, syllabus_file: null } : c)));
+            setSyllabusState(rowId, {});
+        } catch (err) {
+            setSyllabusState(rowId, { message: getErrorMessage(err, t, 'file_remove_failed') });
         }
     };
 
@@ -437,6 +474,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
                         return;
                     }
+                    rememberName(data);
                     setFulfilledCourses(list => list.map(c => c.id === targetRowId ? { ...c, file: data.fileName } : c));
                     setFieldError(`row:${targetRowId}:file`, '');
                     setTimeout(() => { setHighlightFile(null); setRawFile(null); setActiveUploadId(null); }, 1000);
@@ -460,6 +498,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         const { body, map } = currentSubmission();
         const problems = validateSubmission(body, isCountryCode);
         if (problems.length > 0) return showErrors(problems.map((e) => [e.field, translateError(e)]), map);
+        // Same order as the server: then the syllabus rule (needs the chosen course's credits)
+        if (syllabusReasons(body.fulfilled_courses, Number(targetCourse.credits)).length > 0) {
+            const missing = missingSyllabi(body.fulfilled_courses);
+            if (missing.length > 0) return showErrors(missing.map((e) => [e.field, translateError(e)]), map);
+        }
 
         lastSubmitMap.current = map;
         setFieldErrors({});
@@ -470,7 +513,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             // and stores their code, name and credits itself
             const data = await http.post('applications', { json: {
                 ...body,
-                system_note: evidenceRequiredMsg,
                 student_note: studentNote 
             } }).json();
             
@@ -481,6 +523,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setGradingStatus({});
                 setFieldErrors({});
                 setShowErrorSummary(false);
+                setSyllabusStatus({}); setSyllabusRowId(null); setSyllabusFile(null);
                 setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
@@ -715,7 +758,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                         </button>
                                         {inst.grading_file && (
                                             <>
-                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {inst.grading_file}</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(inst.grading_file)}</span>
                                                 <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
                                                 <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                             </>
@@ -770,7 +813,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     {renderFieldError(`row:${course.id}:course_code`)}
                                 </div>
                                 <div>
-                                    <label htmlFor={`row-credits-${course.id}`} style={fieldLabelStyle}>{t('student_total_credits_label')} {matches.credits && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label>
+                                    <label htmlFor={`row-credits-${course.id}`} style={fieldLabelStyle}>{t('student_total_credits_label')} {creditsMatch && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label>
                                     <input {...fieldProps(`row:${course.id}:credits`)} type="number" step="0.5" min="0.5" inputMode="decimal" value={course.credits} onChange={(e) => handleCourseChange(course.id, 'credits', e.target.value)} style={inputStyle(`row:${course.id}:credits`)} onBlur={(e) => checkField(`row:${course.id}:credits`, e.target.value)} />
                                     {renderFieldError(`row:${course.id}:credits`)}
                                 </div>
@@ -798,7 +841,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <button type="button" id={`row-evidence-btn-${course.id}`} aria-describedby={fieldErrors[`row:${course.id}:file`] ? `row-evidence-btn-${course.id}-error` : undefined} onClick={() => triggerUploadForCourse(course.id)} style={{ padding: '8px 12px', backgroundColor: course.file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                    {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_syllabus'))}
+                                    {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_transcript'))}
                                 </button>
                                 
                                 {/* Clickable Thumbnail! */}
@@ -812,7 +855,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                                     style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                 />
                                             ) : (
-                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold' }}>{course.file}</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>{displayName(course.file)}</span>
                                             )}
                                             <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                         </a>
@@ -861,7 +904,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {noCourses ? (
                             <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', margin: '5px 0 0' }}>{t('student_no_courses_for_programme')}</p>
                         ) : (
-                        <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course && !selectedCourses.find(sc => sc.id === course.id)) { setSelectedCourses([...selectedCourses, course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
+                        <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course) { setSelectedCourses([course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
                             {courses.map(c => <option key={c.id} value={c.id}>{t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits })}</option>)}
                         </select>
@@ -877,7 +920,54 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     </div>
 
-                    {evidenceRequiredMsg && <div style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>{evidenceRequiredMsg}</div>}
+                    {/* Syllabi: needed when the syllabus rule applies; one per fulfilled course, linked to its row */}
+                    {(syllabusNeeded || fulfilledCourses.some((c) => c.syllabus_file)) && (
+                        <section aria-labelledby="syllabus-title" style={{ backgroundColor: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-bg)' : 'var(--surface)', color: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-text)' : 'inherit', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                            <h3 id="syllabus-title" style={{ margin: '0 0 6px 0', fontSize: '15px' }}>
+                                {syllabusNeeded && !allSyllabiAttached ? `⚠ ${t('student_syllabus_needed_title')}` : t('student_syllabi_attached')}
+                            </h3>
+                            {syllabusNeeded && (
+                                <ul style={{ margin: '0 0 10px 0', paddingLeft: '20px' }}>
+                                    {syllabusNeededFor.map((code) => <li key={code}>{t(`student_syllabus_reason_${code}`)}</li>)}
+                                </ul>
+                            )}
+                            {fulfilledCourses.map((course, index) => (
+                                <div key={course.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                        <strong style={{ fontSize: '13px' }}>{t('student_syllabus_for_course', { n: index + 1, name: course.course_name.trim() || '…' })}</strong>
+                                        <button
+                                            type="button" id={`row-syllabus-btn-${course.id}`}
+                                            disabled={syllabusStatus[course.id]?.uploading}
+                                            aria-describedby={fieldErrors[`row:${course.id}:syllabus_file`] ? `row-syllabus-btn-${course.id}-error` : undefined}
+                                            onClick={() => chooseSyllabus(course.id)}
+                                            style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        >
+                                            {course.syllabus_file ? t('student_replace_syllabus') : t('student_upload_syllabus_button')}
+                                        </button>
+                                        {course.syllabus_file && (
+                                            <>
+                                                <span style={{ fontSize: '13px', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(course.syllabus_file)}</span>
+                                                <a href="#open-file" onClick={(e) => handleOpenFile(e, course.syllabus_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
+                                                <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
+                                            </>
+                                        )}
+                                    </div>
+                                    {renderFieldError(`row:${course.id}:syllabus_file`)}
+                                    {syllabusStatus[course.id]?.uploading && <p role="status" style={{ margin: '6px 0 0 0', fontWeight: 'bold' }}>{t('student_upload_saving')}</p>}
+                                    {syllabusStatus[course.id]?.message && <p role="alert" style={{ margin: '6px 0 0 0', color: 'var(--error-text)', fontWeight: 'bold' }}>{syllabusStatus[course.id].message}</p>}
+                                    {syllabusRowId === course.id && syllabusFile && (
+                                        <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                            <EvidenceHighlighter file={syllabusFile} kind="syllabus" onSave={(blob, name) => uploadSyllabus(course.id, blob, name)} onCancel={() => { setSyllabusRowId(null); setSyllabusFile(null); }} />
+                                        </Suspense>
+                                    )}
+                                </div>
+                            ))}
+                            <input
+                                ref={syllabusInput} type="file" accept=".pdf,.jpg,.jpeg,.png" tabIndex={-1} style={{ display: 'none' }}
+                                onChange={(e) => { handleSyllabusChosen(e.target.files[0]); e.target.value = ''; }}
+                            />
+                        </section>
+                    )}
 
                     <div style={{ marginBottom: '20px' }}>
                         <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
