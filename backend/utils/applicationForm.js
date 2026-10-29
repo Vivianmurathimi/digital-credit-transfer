@@ -200,4 +200,16 @@ const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [
     field: `fulfilled_courses[${r}].syllabus_file`, code: 'SYLLABUS_REQUIRED', message: 'Upload the syllabus for this course',
 }]));
 
-module.exports = { validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, CREDIT_MAX, LIMITS };
+// --- One active application per PTE course (Group 6) ---
+// While an application has one of these statuses, the student can't apply for the same PTE course
+// again. Every other status (rejected, and a future "withdrawn") allows a new application.
+// The database enforces the same rule (migration 005, applications_one_active_per_course).
+const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
+
+// Course codes are compared ignoring case and spaces ("cs 202" = "CS202"), like the database index
+const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUpperCase();
+
+module.exports = {
+    validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi,
+    BLOCKING_STATUSES, normalizeCourseCode, CREDIT_MAX, LIMITS,
+};

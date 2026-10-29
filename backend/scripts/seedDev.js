@@ -22,6 +22,7 @@ const PDFDocument = require('pdfkit');
 const pool = require('../db');
 const minioClient = require('../minio');
 const { listPendingMigrations } = require('../utils/migrations');
+const { normalizeCourseCode } = require('../utils/applicationForm');
 
 // One password for every test account (development only)
 const DEV_PASSWORD = 'Test1234!';
@@ -138,13 +139,14 @@ const seed = async () => {
             const targetCourses = [{ course_id: course.id, course_code: course.course_code, course_name: course.course_name, credits: course.credits }];
             await pool.query(
                 `INSERT INTO applications
-                    (student_id, programme_id, fulfilled_courses_json, target_courses, pte_course_names, system_note, student_note, status)
-                 VALUES ($1, $2, $3, $4, $5, '', $6, 'pending')`,
+                    (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, student_note, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending')`,
                 [
                     student.id,
                     programmeIds[account.programme],
                     JSON.stringify([{ id: 1, ...previous, file }]),
                     JSON.stringify(targetCourses),
+                    normalizeCourseCode(course.course_code),
                     `${course.course_code} (${course.course_name})`,
                     'Test application created by seed:dev.',
                 ]

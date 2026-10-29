@@ -5,7 +5,7 @@ import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi } from '../applicationForm';
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode } from '../applicationForm';
 
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
@@ -211,6 +211,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const creditsMatch = syllabusNeededFor !== null && allEcts(fulfilledCourses) && !syllabusNeededFor.includes('CREDIT_GAP');
     const syllabusNeeded = Boolean(syllabusNeededFor && syllabusNeededFor.length > 0);
     const allSyllabiAttached = fulfilledCourses.every((c) => c.syllabus_file);
+    // PTE courses with an open or approved application can't be chosen again (shown with the reason)
+    const blockedCodes = useMemo(() => blockedCourseCodes(myApplications), [myApplications]);
+    const courseOptionLabel = (c) => {
+        const label = t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits });
+        const status = blockedCodes[normalizeCourseCode(c.course_code)];
+        if (!status) return label;
+        return t(status === 'approved' ? 'student_course_already_approved' : 'student_course_already_applied', { course: label });
+    };
 
     const parseCourses = (jsonStringOrArray) => {
         if (!jsonStringOrArray) return [];
@@ -543,6 +551,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             }
 
             // Field-level server errors go under their fields; anything else under Submit
+            // Applied for this course meanwhile (e.g. in another tab): refresh, so the picker shows it
+            if (getErrorCode(err) === 'ALREADY_APPLIED') fetchMyApplications();
             const byField = Object.entries(getFieldErrors(err, t));
             if (byField.length > 0) return showErrors(byField, lastSubmitMap.current);
             setSubmitStatus(message);
@@ -886,7 +896,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         ) : (
                         <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course) { setSelectedCourses([course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
-                            {courses.map(c => <option key={c.id} value={c.id}>{t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits })}</option>)}
+                            {courses.map(c => <option key={c.id} value={c.id} disabled={Boolean(blockedCodes[normalizeCourseCode(c.course_code)])}>{courseOptionLabel(c)}</option>)}
                         </select>
                         )}
                         {renderFieldError('target_course_ids')}

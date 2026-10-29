@@ -171,6 +171,7 @@ const loadTestData = async () => {
         studentB,
         appOfB: apps.find((a) => a.student_id === studentB.id),
         fileOfB: filesByOwner.get(studentB.id)[0],
+        fileOfA: filesByOwner.get(studentA.id)[0],
         goneUser: { id: Math.max(...users.map((u) => u.id)) + 100000, role: 'student' },
         programmeCodes,
     };
@@ -255,10 +256,17 @@ const run = async () => {
         if (!settings.body || settings.body.isOpen !== true) {
             skip("A submits an application with B's file", 'submissions are closed, so the server stops earlier');
         } else {
-            const coursesOf = async (programmeId) => (await pool.query(
-                'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
-            )).rows.map((c) => c.id);
-            const ownCourses = await coursesOf(d.studentA.programme_id);
+            // A's own programme's courses, those A has NOT applied for first: the submit tests must not
+            // run into the one-active-application rule (Group 6), which is tested on its own further down
+            const appliedByA = new Set((await pool.query(
+                "SELECT target_course_code FROM applications WHERE student_id = $1 AND status = ANY($2) AND target_course_code IS NOT NULL",
+                [d.studentA.id, ['pending', 'needs_info', 'approved']]
+            )).rows.map((r) => r.target_course_code));
+            const ownWithCodes = (await pool.query('SELECT id, course_code FROM courses WHERE programme_id = $1 ORDER BY id', [d.studentA.programme_id])).rows;
+            const ownCourses = [
+                ...ownWithCodes.filter((c) => !appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
+                ...ownWithCodes.filter((c) => appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
+            ].map((c) => c.id);
             const otherCourses = (await pool.query(
                 'SELECT id FROM courses WHERE programme_id IS DISTINCT FROM $1 ORDER BY id', [d.studentA.programme_id]
             )).rows.map((c) => c.id);
@@ -410,6 +418,25 @@ const run = async () => {
             // 12 copies of one own course count as 1 after removing duplicates, so they are one course
             // and reach the file check
             await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
+
+            // --- Group 6: one active application per PTE course ---
+            // Student B applies again for the course of B's own open application. The request uses A's
+            // file, so even a broken duplicate check would still be refused by the file check.
+            const openOfB = (await pool.query(
+                "SELECT target_courses->0->>'course_id' AS course_id FROM applications WHERE student_id = $1 AND status = ANY($2) AND target_courses IS NOT NULL LIMIT 1",
+                [d.studentB.id, ['pending', 'needs_info', 'approved']]
+            )).rows[0];
+            if (!openOfB) {
+                skip('Second application for the same PTE course', 'student B has no open application');
+            } else {
+                const again = await call('POST', 'applications', { token: B, json: {
+                    institutions: [{ name: 'Duplicate Check University', country: 'AT', grading_file: d.fileOfA }],
+                    fulfilled_courses: [{ institution: 0, course_name: 'Duplicate check', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfA, syllabus_file: d.fileOfA }],
+                    target_course_ids: [Number(openOfB.course_id)],
+                } });
+                report(again.status === 409 && again.code === 'ALREADY_APPLIED' && again.body?.field === 'target_course_ids',
+                    'Second application for the same PTE course', `${again.status} ${again.code} at ${again.body?.field}`);
+            }
             } // end of: the backend runs the current code
         }
     }

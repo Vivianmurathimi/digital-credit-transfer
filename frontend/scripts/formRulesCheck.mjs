@@ -105,6 +105,18 @@ report(browserFiles.MAX_MB.highlighted === serverFiles.MAX_BYTES.highlighted / s
 const header = serverFiles.contentDisposition('tantárgyleírás "v2".pdf');
 report(browserFiles.fileNameFromDisposition(header) === 'tantárgyleírás "v2".pdf', "The browser reads the server's download name, accents and quotes included", header);
 
+console.log('\nOne application per PTE course: browser vs. server\n');
+report(JSON.stringify(browser.BLOCKING_STATUSES) === JSON.stringify(server.BLOCKING_STATUSES), 'Same blocking statuses', server.BLOCKING_STATUSES.join(', '));
+const codes = ['CS202', 'cs202', ' cs 202 ', 'CS\t202', 'MATH-205', 'math 205'];
+report(codes.every((c) => browser.normalizeCourseCode(c) === server.normalizeCourseCode(c)), 'Course codes normalised the same way', codes.map((c) => `${JSON.stringify(c)}→${server.normalizeCourseCode(c)}`).join(' '));
+const blocked = browser.blockedCourseCodes([
+    { status: 'rejected', target_course_code: 'CS101' }, { status: 'pending', target_course_code: 'CS202' },
+    { status: 'approved', target_course_code: 'CS305' }, { status: 'withdrawn', target_course_code: 'CS310' },
+    { status: 'needs_info', target_courses: [{ course_code: 'cs 401' }] },
+]);
+report(JSON.stringify(blocked) === JSON.stringify({ CS202: 'pending', CS305: 'approved', CS401: 'needs_info' }),
+    'Picker blocks pending, needs-info and approved courses; rejected and withdrawn stay available', JSON.stringify(blocked));
+
 console.log('\nLimits and stored data\n');
 report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));
 report(JSON.stringify(browser.CREDIT_MAX) === JSON.stringify(server.CREDIT_MAX), 'Same credit maximum per system', JSON.stringify(server.CREDIT_MAX));

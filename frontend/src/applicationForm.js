@@ -228,3 +228,24 @@ export const syllabusReasonsWhileEditing = (rows, targetCourse) => {
     if (sent.some((row) => !row.credit_system || row.credits === null)) return null;
     return syllabusReasons(sent, Number(targetCourse.credits));
 };
+
+// ---------------------------------------------------------------------------------------------
+// One active application per PTE course: the same statuses and code comparison as the server
+// (backend/utils/applicationForm.js). Every other status (rejected, a future "withdrawn") allows a new one.
+export const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
+export const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUpperCase();
+
+/**
+ * PTE courses the student can't apply for right now: { normalisedCode: status }.
+ * @param applications the student's own applications (from applications/mine)
+ */
+export const blockedCourseCodes = (applications) => {
+    const blocked = {};
+    for (const app of applications) {
+        if (!BLOCKING_STATUSES.includes(app.status)) continue;
+        const code = normalizeCourseCode(app.target_course_code || app.target_courses?.[0]?.course_code);
+        // "approved" is the stronger reason to show
+        if (code && blocked[code] !== 'approved') blocked[code] = app.status;
+    }
+    return blocked;
+};

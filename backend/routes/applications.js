@@ -7,7 +7,13 @@ const notifyStudent = require('../utils/notifyStudent');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const { sendValidationErrors } = sendError;
-const { validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi } = require('../utils/applicationForm');
+const {
+    validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
+} = require('../utils/applicationForm');
+
+// The database refused a second active application for the same PTE course (migration 005)
+const isDuplicateApplication = (err) => err.code === '23505' && err.constraint === 'applications_one_active_per_course';
+const alreadyApplied = (res) => sendError(res, 409, 'ALREADY_APPLIED', 'There is already an active or approved application for this PTE course', { field: 'target_course_ids' });
 
 
 // The only statuses the app understands (badges, reviewer tabs, emails, term book)
@@ -59,6 +65,15 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // To be dropped after the reviewer and admin rounds (use target_courses instead).
         const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
+        // 2b. One active application per PTE course: refused while one for the same course
+        //     (code + programme, so it also works after courses are re-imported) is still open or approved
+        const targetCode = normalizeCourseCode(targetCourses[0].course_code);
+        const existing = await pool.query(
+            'SELECT 1 FROM applications WHERE student_id = $1 AND programme_id = $2 AND target_course_code = $3 AND status = ANY($4)',
+            [student_id, programmeId, targetCode, BLOCKING_STATUSES]
+        );
+        if (existing.rows.length > 0) return alreadyApplied(res);
+
         // 3. Syllabus rule: when it applies, every fulfilled course needs its syllabus.
         //    The reasons are stored as codes (for translation later) and as an English note.
         const targetCredits = targetCourses.reduce((sum, c) => sum + Number(c.credits), 0);
@@ -75,12 +90,17 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         ));
         if (fileErrors.length > 0) return sendValidationErrors(res, fileErrors, 403);
 
-        await pool.query(
+        const inserted = await pool.query(
             `INSERT INTO applications 
-            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, pte_course_names, system_note, syllabus_reasons, student_note, status) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
-            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), pteCourseNames, syllabusNote(reasons), reasons, student_note]
-        );
+            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
+            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, student_note]
+        ).catch((err) => {
+            // Two submits at the same moment both passed the check above: the database lets only one in
+            if (isDuplicateApplication(err)) return null;
+            throw err;
+        });
+        if (inserted === null) return alreadyApplied(res);
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)
@@ -144,11 +164,19 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
         }
         const previousStatus = current.rows[0].status;
 
-        // Record who made the decision and when (the logged-in reviewer or superadmin)
-        const updated = await pool.query(
-            'UPDATE applications SET status=$1, reviewer_note=$2, reviewed_by=$3, reviewed_at=NOW() WHERE id=$4 RETURNING student_id, reviewer_note',
-            [status, note, req.user.id, req.params.id]
-        );
+        // Record who made the decision and when (the logged-in reviewer or superadmin).
+        // Reopening an old rejected application while the student has a newer active one for the
+        // same PTE course would break the one-active-application rule: the database refuses it.
+        let updated;
+        try {
+            updated = await pool.query(
+                'UPDATE applications SET status=$1, reviewer_note=$2, reviewed_by=$3, reviewed_at=NOW() WHERE id=$4 RETURNING student_id, reviewer_note',
+                [status, note, req.user.id, req.params.id]
+            );
+        } catch (err) {
+            if (isDuplicateApplication(err)) return alreadyApplied(res);
+            throw err;
+        }
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)
