@@ -26,5 +26,28 @@ export const unpackBlobError = async (err) => {
     return err;
 };
 
+/**
+ * Server errors that belong to single form fields, translated:
+ *   { 'fulfilled_courses[1].credits': 'Credits must be …', 'institutions[0].country': '…' }
+ * Read from the optional `errors` list ({ field, code, error, params }) or, if there is none,
+ * from the top-level `field`. A known code is translated (with its params, e.g. { max: 60 });
+ * otherwise the server's English text is used. Only the first message per field is kept.
+ * The form decides where each path goes; paths it doesn't know belong in the top message.
+ */
+export const getFieldErrors = (err, t) => {
+    const data = err?.data || err?.response?.data;
+    const list = Array.isArray(data?.errors)
+        ? data.errors
+        : (data?.field ? [{ field: data.field, code: data.code, error: data.error }] : []);
+    const result = {};
+    for (const item of list) {
+        if (!item || typeof item.field !== 'string' || item.field in result) continue;
+        result[item.field] = item.code && i18n.exists(`errors.${item.code}`)
+            ? t(`errors.${item.code}`, item.params || {})
+            : (item.error || '');
+    }
+    return result;
+};
+
 // The machine code alone, for pages that react to a specific error
 export const getErrorCode = (err) => err?.data?.code || err?.response?.data?.code || null;

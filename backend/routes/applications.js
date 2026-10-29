@@ -6,20 +6,12 @@ const requireRole = require('../middleware/requireRole');
 const notifyStudent = require('../utils/notifyStudent');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
+const { sendValidationErrors } = sendError;
+const { validateApplicationForm, filesWithPaths } = require('../utils/applicationForm');
 
 
 // The only statuses the app understands (badges, reviewer tabs, emails, term book)
 const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
-
-// At most this many target courses per application (after removing duplicates)
-const MAX_TARGET_COURSES = 10;
-
-// A non-empty list of positive whole numbers, duplicates removed; null if the input is not that
-const readTargetCourseIds = (value) => {
-    if (!Array.isArray(value) || !value.every((id) => Number.isInteger(id) && id > 0)) return null;
-    const ids = [...new Set(value)];
-    return ids.length >= 1 && ids.length <= MAX_TARGET_COURSES ? ids : null;
-};
 
 const checkSubmissionsOpen = async () => {
     const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
@@ -28,14 +20,10 @@ const checkSubmissionsOpen = async () => {
 
 // Submit an application. The student, their programme and the target courses' details all
 // come from the database; anything else in the request (student_id, programme_id,
-// pte_course_names) is ignored.
+// pte_course_names) is ignored. Institutions and fulfilled courses are stored only as
+// rebuilt from checked fields (utils/applicationForm.js).
 router.post('/applications', verifyToken, requireRole('student'), async (req, res) => {
-    const { 
-        fulfilled_courses_json, 
-        target_course_ids,
-        system_note,
-        student_note
-    } = req.body;
+    const { system_note, student_note } = req.body;
 
     const student_id = req.user.id;
 
@@ -45,12 +33,12 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             return sendError(res, 403, 'SUBMISSIONS_CLOSED', 'Submissions are currently closed');
         }
 
-        const targetIds = readTargetCourseIds(target_course_ids);
-        if (!targetIds) {
-            return sendError(res, 400, 'INVALID_TARGET_COURSES', `Choose between 1 and ${MAX_TARGET_COURSES} target courses`);
-        }
+        // 1. Every field rule at once (400 with all problems and their field paths)
+        const form = validateApplicationForm(req.body);
+        if (form.errors.length > 0) return sendValidationErrors(res, form.errors);
+        const targetIds = form.targetCourseIds;
 
-        // Every target course must belong to the student's own programme (read from the database).
+        // 2. Every target course must belong to the student's own programme (read from the database).
         // A course of another programme and an id that doesn't exist get the same answer.
         // The same query gives the snapshot that is saved, so it is exactly what was checked.
         const programmeId = (await pool.query('SELECT programme_id FROM users WHERE id = $1', [student_id])).rows[0]?.programme_id;
@@ -59,7 +47,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             [targetIds, programmeId]
         );
         if (!programmeId || found.rows.length !== targetIds.length) {
-            return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme');
+            return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme', { field: 'target_course_ids' });
         }
         // Snapshot in the order the student chose them (kept as is if courses are re-imported later)
         const byId = new Map(found.rows.map((c) => [c.id, c]));
@@ -71,18 +59,20 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // To be dropped after the reviewer and admin rounds (use target_courses instead).
         const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
-        // Only the student's own uploads may be attached as evidence
-        const courses = Array.isArray(fulfilled_courses_json) ? fulfilled_courses_json : [];
-        const attachedFiles = courses.map((course) => course && course.file).filter(Boolean);
-        if ((await findFilesNotOwnedBy(attachedFiles, student_id)).length > 0) {
-            return sendError(res, 403, 'FILES_NOT_OWNED', 'You can only attach files you uploaded yourself');
-        }
+        // 3. Evidence and grading files must be the student's own uploads. A file of someone else
+        //    and a file that doesn't exist get the identical answer (no way to probe file names).
+        const files = filesWithPaths(form.institutions, form.fulfilledCourses);
+        const notOwned = new Set(await findFilesNotOwnedBy([...new Set(files.map((f) => f.file))], student_id));
+        const fileErrors = files.filter((f) => notOwned.has(f.file)).map(({ field }) => (
+            { field, code: 'FILES_NOT_OWNED', message: 'You can only attach files you uploaded yourself' }
+        ));
+        if (fileErrors.length > 0) return sendValidationErrors(res, fileErrors, 403);
 
         await pool.query(
             `INSERT INTO applications 
-            (student_id, programme_id, fulfilled_courses_json, target_courses, pte_course_names, system_note, student_note, status) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-            [student_id, programmeId, JSON.stringify(fulfilled_courses_json), JSON.stringify(targetCourses), pteCourseNames, system_note, student_note]
+            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, pte_course_names, system_note, student_note, status) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
+            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), pteCourseNames, system_note, student_note]
         );
         res.json({ success: true });
 
