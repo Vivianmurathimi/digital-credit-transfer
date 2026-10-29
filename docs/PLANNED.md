@@ -7,11 +7,14 @@ Things deliberately left for later while building the student side, with the rea
 - **Reviewers only see their own programme's applications** (list, single application, evidence files). Every application already records its programme; the filtering and its test are still to do.
 - **One reviewer per programme**, and reviewer registration as a guest with a programme. The registration form currently decides student fields by email domain (`@tr.pte.hu`); that logic changes then.
 - **Show the Group 4 data on the reviewer screen:** institution, country, credit system and the grading-system file of each fulfilled course. Until then the screen shows course name, code, credits, grade and evidence as before.
+- **One decision and one final PTE grade per application** (each application has exactly one target PTE course since Group 5).
+- **Show why a syllabus was required, translated:** the server stores the reasons as codes in `applications.syllabus_reasons` (`CREDIT_GAP`, `CREDIT_SYSTEMS`, `COMBINED_COURSES`); the English `system_note` stays for the term book.
 - **Move the reviewer dashboard to the shared ky client** (it still uses the axios bridge, `src/api.js`).
 - Reviewer page does not refresh by itself after changes.
 
 ## Admin round
 
+- **Term book: append highlighted PDF evidence.** Since Group 5 a syllabus is saved as a highlighted PDF (page 1 plus the highlighted pages). pdfkit can only embed images, so the term book lists PDF evidence by name; merging the PDF pages into the book (e.g. with pdf-lib) would show them.
 - **Term book: add grading-system files** (`applications.institutions[].grading_file`) and show institution, country and credit system. Today it embeds only each course's evidence file.
 - **Impersonation shows every programme's courses** in the student course picker, because the request uses the admin's token. Needs a way for the admin to read the impersonated student's programme. Also no profile card while impersonating.
 - **Role change to "student"** needs a Neptun code and programme picker. Until then it is refused with `STUDENT_PROFILE_REQUIRED`.
@@ -33,10 +36,16 @@ Things deliberately left for later while building the student side, with the rea
 
 - **At least one visible highlight per evidence document.**
 
+## Later (student side)
+
+- **Reusing an institution and its documents** (grading document, transcript) from an earlier application, instead of uploading them again.
+
 ## Other
 
+- **"Add missing info" window texts:** a few labels there ("Upload …", "Attached New Files") are still English; its PDFs share the 30-page syllabus limit.
+
 - **Uploads from forms that are never submitted stay in storage.** Evidence and grading documents are uploaded as soon as they are chosen; if the student leaves without submitting, those files are kept but belong to no application. Removing a course row, a document or an institution in the form deletes its file. Cleaning up the rest needs a background job, e.g. deleting files older than a day that no application refers to.
-- **"Evidence required" note is written by the browser** (`system_note`, in the student's language) and stored as sent. It should be worked out by the server.
+- ~~"Evidence required" note is written by the browser~~ **(fixed in Group 5):** the server works out when a syllabus is required, writes `system_note` itself and ignores what the browser sends.
 - **Register reveals registered addresses and Neptun codes** (`EMAIL_TAKEN`, `NEPTUN_TAKEN`). Fix: always answer "check your inbox" and email the existing account owner.
 - Success messages of forgot / reset password are still English.
 - The PDF highlighter shows an untranslated browser alert.

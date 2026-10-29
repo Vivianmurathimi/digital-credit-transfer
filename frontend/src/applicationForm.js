@@ -19,7 +19,8 @@ export const newCourseRow = () => ({
     credit_system: '',   // chosen deliberately by the student; empty is refused (INVALID_CREDIT_SYSTEM)
     credit_system_other: '',
     grade: '',
-    file: null,
+    file: null,            // the transcript, with this course's line highlighted
+    syllabus_file: null,   // only needed when the syllabus rule applies
 });
 
 // Text from a number input -> a real number for the server ('' or nonsense -> null, which it refuses)
@@ -36,7 +37,7 @@ export const allEcts = (rows) => rows.length > 0 && rows.every((row) => row.cred
 
 // Whether a row holds anything worth confirming before removal
 export const rowHasContent = (row) => Boolean(
-    row.file || row.institutionKey
+    row.file || row.syllabus_file || row.institutionKey
     || ['course_name', 'course_code', 'credits', 'credit_system', 'grade', 'credit_system_other'].some((field) => String(row[field] ?? '').trim() !== '')
 );
 
@@ -80,6 +81,7 @@ export const buildSubmission = (institutions, rows) => {
             ...(row.credit_system === 'OTHER' ? { credit_system_other: row.credit_system_other } : {}),
             grade: row.grade,
             file: row.file,
+            syllabus_file: row.syllabus_file || null,
         })),
         institutionKeyAt: institutions.map((inst) => inst.key),
         rowIdAt: rows.map((row) => row.id),
@@ -91,7 +93,7 @@ export const buildSubmission = (institutions, rows) => {
 // (backend/utils/applicationForm.js), run on the same body that is sent. Only for convenience:
 // the server checks everything again. A test runs both on the same inputs and compares them.
 
-export const LIMITS = { institutions: 10, fulfilledCourses: 20, targetCourses: 10, institutionName: 200, courseName: 200, courseCode: 50, grade: 20, creditSystemOther: 50 };
+export const LIMITS = { institutions: 10, fulfilledCourses: 20, targetCourses: 1, institutionName: 200, courseName: 200, courseCode: 50, grade: 20, creditSystemOther: 50 };
 export const CREDIT_MAX = { ECTS: 60, US_CREDIT_HOURS: 30, UK_CATS: 120, OTHER: 120 };
 const MOST_GENEROUS_MAX = Math.max(...Object.values(CREDIT_MAX));
 
@@ -170,7 +172,7 @@ export const validateSubmission = (body, isCountryCode) => {
 
     const targets = body.target_course_ids;
     const ids = Array.isArray(targets) && targets.every((id) => Number.isInteger(id) && id > 0) ? [...new Set(targets)] : null;
-    if (!ids || ids.length < 1 || ids.length > LIMITS.targetCourses) add('target_course_ids', 'INVALID_TARGET_COURSES', { max: LIMITS.targetCourses });
+    if (!ids || ids.length < 1 || ids.length > LIMITS.targetCourses) add('target_course_ids', 'INVALID_TARGET_COURSES');
 
     const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : 2);
     return errors.sort((a, b) => order(a.field) - order(b.field));
@@ -184,7 +186,7 @@ export const validateSubmission = (body, isCountryCode) => {
  * Returns null for a path the form doesn't know (shown in the message under Submit instead).
  */
 const INSTITUTION_FIELDS = ['name', 'country', 'grading_file'];
-const ROW_FIELDS = ['institution', 'course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade', 'file'];
+const ROW_FIELDS = ['institution', 'course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade', 'file', 'syllabus_file'];
 export const formKeyForPath = (path, map) => {
     if (['target_course_ids', 'institutions', 'fulfilled_courses'].includes(path)) return path;
     let match = /^institutions\[(\d+)\]\.(\w+)$/.exec(path);
@@ -192,4 +194,37 @@ export const formKeyForPath = (path, map) => {
     match = /^fulfilled_courses\[(\d+)\]\.(\w+)$/.exec(path);
     if (match && ROW_FIELDS.includes(match[2]) && map.rowIdAt[match[1]]) return `row:${map.rowIdAt[match[1]]}:${match[2]}`;
     return null;
+};
+
+// ---------------------------------------------------------------------------------------------
+// Syllabus rule: the same reasons as the server (backend/utils/applicationForm.js), in the same
+// order. When any applies, every fulfilled course needs its syllabus.
+
+/**
+ * @param rows          fulfilled courses with numeric credits and a credit system (as sent)
+ * @param targetCredits credits of the chosen PTE course
+ * @returns reason codes: CREDIT_GAP, CREDIT_SYSTEMS, COMBINED_COURSES (empty = no syllabus needed)
+ */
+export const syllabusReasons = (rows, targetCredits) => {
+    const reasons = [];
+    if (rows.every((row) => row.credit_system === 'ECTS')) {
+        const total = rows.reduce((sum, row) => sum + row.credits, 0);
+        if (total < targetCredits) reasons.push('CREDIT_GAP');
+    } else {
+        reasons.push('CREDIT_SYSTEMS');
+    }
+    if (rows.length > 1) reasons.push('COMBINED_COURSES');
+    return reasons;
+};
+
+// One error per fulfilled course without a syllabus (server paths)
+export const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [] : [{ field: `fulfilled_courses[${r}].syllabus_file`, code: 'SYLLABUS_REQUIRED' }]));
+
+// While the form is being filled in: the reasons, or null while it can't be judged yet
+// (no PTE course chosen, or a row without a credit system or valid credits)
+export const syllabusReasonsWhileEditing = (rows, targetCourse) => {
+    if (!targetCourse || rows.length === 0) return null;
+    const sent = rows.map((row) => ({ credits: toCredits(row.credits), credit_system: row.credit_system }));
+    if (sent.some((row) => !row.credit_system || row.credits === null)) return null;
+    return syllabusReasons(sent, Number(targetCourse.credits));
 };

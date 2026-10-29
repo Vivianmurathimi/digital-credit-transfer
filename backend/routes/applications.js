@@ -7,7 +7,7 @@ const notifyStudent = require('../utils/notifyStudent');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const { sendValidationErrors } = sendError;
-const { validateApplicationForm, filesWithPaths } = require('../utils/applicationForm');
+const { validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi } = require('../utils/applicationForm');
 
 
 // The only statuses the app understands (badges, reviewer tabs, emails, term book)
@@ -20,10 +20,10 @@ const checkSubmissionsOpen = async () => {
 
 // Submit an application. The student, their programme and the target courses' details all
 // come from the database; anything else in the request (student_id, programme_id,
-// pte_course_names) is ignored. Institutions and fulfilled courses are stored only as
+// pte_course_names, system_note) is ignored. Institutions and fulfilled courses are stored only as
 // rebuilt from checked fields (utils/applicationForm.js).
 router.post('/applications', verifyToken, requireRole('student'), async (req, res) => {
-    const { system_note, student_note } = req.body;
+    const { student_note } = req.body;
 
     const student_id = req.user.id;
 
@@ -59,7 +59,14 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // To be dropped after the reviewer and admin rounds (use target_courses instead).
         const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
-        // 3. Evidence and grading files must be the student's own uploads. A file of someone else
+        // 3. Syllabus rule: when it applies, every fulfilled course needs its syllabus.
+        //    The reasons are stored as codes (for translation later) and as an English note.
+        const targetCredits = targetCourses.reduce((sum, c) => sum + Number(c.credits), 0);
+        const reasons = syllabusReasons(form.fulfilledCourses, targetCredits);
+        const missing = reasons.length > 0 ? missingSyllabi(form.fulfilledCourses) : [];
+        if (missing.length > 0) return sendValidationErrors(res, missing);
+
+        // 4. Transcripts, syllabi and grading files must be the student's own uploads. A file of someone else
         //    and a file that doesn't exist get the identical answer (no way to probe file names).
         const files = filesWithPaths(form.institutions, form.fulfilledCourses);
         const notOwned = new Set(await findFilesNotOwnedBy([...new Set(files.map((f) => f.file))], student_id));
@@ -70,9 +77,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
         await pool.query(
             `INSERT INTO applications 
-            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, pte_course_names, system_note, student_note, status) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')`,
-            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), pteCourseNames, system_note, student_note]
+            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, pte_course_names, system_note, syllabus_reasons, student_note, status) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
+            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), pteCourseNames, syllabusNote(reasons), reasons, student_note]
         );
         res.json({ success: true });
 

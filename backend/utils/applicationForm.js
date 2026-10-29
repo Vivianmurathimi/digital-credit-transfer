@@ -8,7 +8,7 @@ const { isCountryCode } = require('./countries');
 const LIMITS = {
     institutions: 10,
     fulfilledCourses: 20,
-    targetCourses: 10,
+    targetCourses: 1,   // one PTE course per application (covered by one or more fulfilled courses)
     institutionName: 200,
     courseName: 200,
     courseCode: 50,
@@ -111,8 +111,10 @@ const validateApplicationForm = (body) => {
                 add(`${path}.credits`, 'INVALID_CREDITS', `Credits must be more than 0 and at most ${maxCredits}, in steps of 0.5`, { max: maxCredits });
             }
 
+            // The transcript (evidence) is required; the syllabus only when the syllabus rule applies
             const file = typeof item.file === 'string' && item.file ? item.file : null;
-            if (file === null) add(`${path}.file`, 'EVIDENCE_MISSING', 'No evidence uploaded for this course');
+            if (file === null) add(`${path}.file`, 'EVIDENCE_MISSING', 'No transcript uploaded for this course');
+            const syllabusFile = typeof item.syllabus_file === 'string' && item.syllabus_file ? item.syllabus_file : null;
 
             // Stored row: the keys the reviewer screen, admin screen and term book already read,
             // plus the Group 4 fields. Nothing else from the request is kept.
@@ -122,6 +124,7 @@ const validateApplicationForm = (body) => {
                 credits: item.credits,
                 grade,
                 file,
+                syllabus_file: syllabusFile,
                 institution,
                 credit_system: creditSystem,
                 credit_system_other: creditSystemOther,
@@ -145,7 +148,7 @@ const validateApplicationForm = (body) => {
         if (ids.length >= 1 && ids.length <= LIMITS.targetCourses) targetCourseIds = ids;
     }
     if (!targetCourseIds) {
-        add('target_course_ids', 'INVALID_TARGET_COURSES', `Choose between 1 and ${LIMITS.targetCourses} target courses`, { max: LIMITS.targetCourses });
+        add('target_course_ids', 'INVALID_TARGET_COURSES', 'Choose one PTE course');
     }
 
     // Keep errors in form order: institutions, then course rows, then target courses
@@ -159,6 +162,42 @@ const validateApplicationForm = (body) => {
 const filesWithPaths = (institutions, fulfilledCourses) => [
     ...institutions.map((inst, i) => ({ field: `institutions[${i}].grading_file`, file: inst.grading_file })),
     ...fulfilledCourses.map((course, r) => ({ field: `fulfilled_courses[${r}].file`, file: course.file })),
+    ...fulfilledCourses.flatMap((course, r) => (course.syllabus_file ? [{ field: `fulfilled_courses[${r}].syllabus_file`, file: course.syllabus_file }] : [])),
 ];
 
-module.exports = { validateApplicationForm, filesWithPaths, CREDIT_MAX, LIMITS };
+// --- Syllabus rule: when the reviewer needs a syllabus for every fulfilled course ---
+// The browser shows the same reasons (frontend/src/applicationForm.js); check:form-rules compares them.
+const SYLLABUS_REASON_TEXT = {
+    CREDIT_GAP: 'credits are lower than those of the target PTE course',
+    CREDIT_SYSTEMS: 'credits cannot be compared automatically (different credit systems)',
+    COMBINED_COURSES: 'more than one completed course is combined for this PTE course',
+};
+
+/**
+ * @param rows        checked fulfilled courses ({ credits, credit_system })
+ * @param targetCredits credits of the target PTE course (from the database)
+ * @returns reason codes, in a fixed order; empty = no syllabus needed
+ */
+const syllabusReasons = (rows, targetCredits) => {
+    const reasons = [];
+    if (rows.every((row) => row.credit_system === 'ECTS')) {
+        const total = rows.reduce((sum, row) => sum + row.credits, 0);
+        if (total < targetCredits) reasons.push('CREDIT_GAP');
+    } else {
+        reasons.push('CREDIT_SYSTEMS');
+    }
+    if (rows.length > 1) reasons.push('COMBINED_COURSES');
+    return reasons;
+};
+
+// The English note for the reviewer and the term book ('' when no syllabus is needed)
+const syllabusNote = (reasons) => (reasons.length
+    ? `Syllabus required: ${reasons.map((code) => SYLLABUS_REASON_TEXT[code]).join('; ')}.`
+    : '');
+
+// One error per fulfilled course without a syllabus
+const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [] : [{
+    field: `fulfilled_courses[${r}].syllabus_file`, code: 'SYLLABUS_REQUIRED', message: 'Upload the syllabus for this course',
+}]));
+
+module.exports = { validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, CREDIT_MAX, LIMITS };

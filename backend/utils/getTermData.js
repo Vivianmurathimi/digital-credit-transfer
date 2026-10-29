@@ -54,6 +54,8 @@ const getTermData = async (from, to) => {
         // Evidence in page order: each course's file, then files added with missing info
         const evidence = [
             ...courses.filter((c) => c.file).map((c) => ({ file: c.file, label: c.course_name || c.course_code || '' })),
+            // Syllabi (Group 5): images are embedded, highlighted PDFs are listed by name
+            ...courses.filter((c) => c.syllabus_file).map((c) => ({ file: c.syllabus_file, label: `Syllabus: ${c.course_name || c.course_code || ''}` })),
             ...splitList(row.supplemental_files, ',').map((file, i) => ({ file, label: `Additional file ${i + 1}`, additional: true })),
         ];
 

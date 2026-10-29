@@ -1,14 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
-import * as pdfjsLib from 'pdfjs-dist';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath } from '../applicationForm';
+import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi } from '../applicationForm';
 
-// Set up the worker for PDF.js to handle conversions
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+// The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
+const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
 
 const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
 const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
@@ -49,8 +50,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     
     // --- INLINE UPLOAD STATE ---
     const [activeUploadId, setActiveUploadId] = useState(null); 
-    const [previewUrl, setPreviewUrl] = useState(null);
-    const [rawFile, setRawFile] = useState(null); 
+    // The syllabus file open in the highlighter (PDF or image), per uploader
+    const [highlightFile, setHighlightFile] = useState(null);
     const [uploadStatus, setUploadStatus] = useState('');
     const [submitStatus, setSubmitStatus] = useState('');
     
@@ -59,19 +60,20 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
-    const [resubmitPreviewUrl, setResubmitPreviewUrl] = useState(null); 
-    const [resubmitRawFile, setResubmitRawFile] = useState(null); 
+    const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
-    const [evidenceRequiredMsg, setEvidenceRequiredMsg] = useState('');
-    const [matches, setMatches] = useState({ credits: false });
+    // Original file names for display: stored name -> name the student chose
+    const [fileNames, setFileNames] = useState({});
+    // Syllabus uploads (only when the syllabus rule applies): the course row being uploaded for,
+    // its chosen file, and a status per row ({ uploading: true } or { message: '…' })
+    const [syllabusRowId, setSyllabusRowId] = useState(null);
+    const [syllabusFile, setSyllabusFile] = useState(null);
+    const [syllabusStatus, setSyllabusStatus] = useState({});
+    const syllabusInput = useRef(null);
+    const syllabusPickRow = useRef(null);
     const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(true);
 
-    const imgRef = useRef(null);    
-    const canvasRef = useRef(null); 
-    const [ctx, setCtx] = useState(null);
-    const [isDrawing, setIsDrawing] = useState(false);
-    const [activeTool, setActiveTool] = useState('pen'); 
 
     // Returns the loaded list (or null), so a failed submit can compare against it
     const fetchCourses = useCallback(async () => {
@@ -139,7 +141,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const translateError = (e) => t(`errors.${e.code}`, e.params || {});
 
     // DOM id of each field, for labels, focusing the first error and linking the error text
-    const ROW_DOM = { institution: 'row-inst', course_name: 'row-name', course_code: 'row-code', credits: 'row-credits', credit_system: 'row-system', credit_system_other: 'row-system-other', grade: 'row-grade', file: 'row-evidence-btn' };
+    const ROW_DOM = { institution: 'row-inst', course_name: 'row-name', course_code: 'row-code', credits: 'row-credits', credit_system: 'row-system', credit_system_other: 'row-system-other', grade: 'row-grade', file: 'row-evidence-btn', syllabus_file: 'row-syllabus-btn' };
     const INST_DOM = { name: 'inst-name', country: 'inst-country', grading_file: 'inst-grading-btn' };
     const domIdFor = (key) => {
         const [kind, id, field] = key.split(':');
@@ -198,38 +200,17 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     };
     const errorCount = Object.keys(fieldErrors).length;
 
-    // Validation & Credit Math
-    useEffect(() => {
-        if (selectedCourses.length > 0 && fulfilledCourses[0].course_name) {
-            // Different credit systems can't be added up: no comparison, the reviewer judges
-            if (!allEcts(fulfilledCourses)) {
-                setMatches({ credits: false });
-                // While a row has no credit system yet, say nothing about comparing credits
-                const undecided = fulfilledCourses.some(c => !c.credit_system);
-                setEvidenceRequiredMsg(selectedCourses.length > 1
-                    ? t('student_evidence_notice', { reason: t('student_evidence_reason_package') })
-                    : (undecided ? '' : t('student_credits_compare_skipped')));
-                return;
-            }
-            const totalTargetCredits = selectedCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
-            const totalInputCredits = fulfilledCourses.reduce((sum, c) => sum + parseFloat(c.credits || 0), 0);
-            
-            const creditMatch = totalInputCredits >= totalTargetCredits;
-            setMatches({ credits: creditMatch });
+    // The name the student chose (stored names start with a timestamp)
+    const displayName = (stored) => fileNames[stored] || String(stored || '').replace(/^\d+-/, '');
+    const rememberName = (data) => { if (data.originalName) setFileNames((prev) => ({ ...prev, [data.fileName]: data.originalName })); };
 
-            if (!creditMatch || selectedCourses.length > 1) {
-                const reasonKey = selectedCourses.length > 1
-                    ? 'student_evidence_reason_package'
-                    : 'student_evidence_reason_credit_gap';
-                setEvidenceRequiredMsg(t('student_evidence_notice', { reason: t(reasonKey) }));
-            } else {
-                setEvidenceRequiredMsg('');
-            }
-        } else {
-            setMatches({ credits: false });
-            setEvidenceRequiredMsg('');
-        }
-    }, [fulfilledCourses, selectedCourses, t]);
+    // Syllabus rule and credit check, worked out from the current form (same rule as the server).
+    // null while it can't be judged yet (no PTE course, or a row without credits or credit system).
+    const targetCourse = selectedCourses[0] || null;
+    const syllabusNeededFor = syllabusReasonsWhileEditing(fulfilledCourses, targetCourse);
+    const creditsMatch = syllabusNeededFor !== null && allEcts(fulfilledCourses) && !syllabusNeededFor.includes('CREDIT_GAP');
+    const syllabusNeeded = Boolean(syllabusNeededFor && syllabusNeededFor.length > 0);
+    const allSyllabiAttached = fulfilledCourses.every((c) => c.syllabus_file);
 
     const parseCourses = (jsonStringOrArray) => {
         if (!jsonStringOrArray) return [];
@@ -244,19 +225,21 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const handleRemoveCourseRow = async (id) => {
         const row = fulfilledCourses.find(c => c.id === id);
         if (!row || fulfilledCourses.length <= 1) return;
-        if (rowHasContent(row) && !window.confirm(t(row.file ? 'student_remove_course_confirm_file' : 'student_remove_course_confirm'))) return;
-        if (row.file) {
+        const files = [row.file, row.syllabus_file].filter(Boolean);
+        if (rowHasContent(row) && !window.confirm(t(files.length ? 'student_remove_course_confirm_file' : 'student_remove_course_confirm'))) return;
+        for (const file of files) {
             try {
-                await http.delete(getUploadEndpoint(row.file));
+                await http.delete(getUploadEndpoint(file));
             } catch (err) {
-                console.error('Could not delete evidence', err);
+                console.error('Could not delete a file of the course', err);
                 setFieldError(`row:${id}:file`, t('student_evidence_remove_failed'));
                 return;
             }
         }
+        if (syllabusRowId === id) { setSyllabusRowId(null); setSyllabusFile(null); }
         setFulfilledCourses(list => list.filter(c => c.id !== id));
         dropFieldErrors(`row:${id}:`);
-        if (activeUploadId === id) { setActiveUploadId(null); setPreviewUrl(null); setRawFile(null); }
+        if (activeUploadId === id) { setActiveUploadId(null); setHighlightFile(null); }
     };
     const handleCourseChange = (id, field, value) => {
         setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
@@ -302,9 +285,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // Replacing uploads the new file first and deletes the old one only after that worked.
     const handleGradingFileChosen = async (key, file) => {
         if (!file) return;
+        // Checked before uploading, with the same rules and messages as the server
+        const problem = await checkFile(file, MAX_MB.unchanged);
+        if (problem) { setGradingState(key, { message: t(`errors.${problem.code}`, problem.params || {}) }); return; }
         setGradingState(key, { uploading: true });
         try {
             const formData = new FormData();
+            formData.append('kind', 'unchanged');
             formData.append('file', file);
             const data = await http.post('uploads', { body: formData, timeout: false }).json();
             const current = institutionsRef.current.find((i) => i.key === key);
@@ -314,6 +301,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 return;
             }
             const previous = current.grading_file;
+            rememberName(data);
             setInstitutions((list) => list.map((i) => (i.key === key ? { ...i, grading_file: data.fileName } : i)));
             setGradingState(key, {});
             setFieldError(`inst:${key}:grading_file`, '');
@@ -322,6 +310,55 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             }
         } catch (err) {
             setGradingState(key, { message: getErrorMessage(err, t, 'student_upload_failed') });
+        }
+    };
+
+    // --- Syllabi (one per fulfilled course, when the syllabus rule applies) ---
+    const setSyllabusState = (rowId, state) => setSyllabusStatus((prev) => ({ ...prev, [rowId]: state }));
+    const chooseSyllabus = (rowId) => { syllabusPickRow.current = rowId; syllabusInput.current?.click(); };
+    const handleSyllabusChosen = async (file) => {
+        const rowId = syllabusPickRow.current;
+        if (!file || !rowId) return;
+        // A syllabus must be highlighted: PDF, JPG or PNG, opened in the highlighter
+        const problem = await checkFile(file, MAX_MB.highlighterOriginal);
+        if (problem) { setSyllabusState(rowId, { message: t(`errors.${problem.code}`, problem.params || {}) }); return; }
+        setSyllabusState(rowId, {});
+        setSyllabusRowId(rowId);
+        setSyllabusFile(file);
+    };
+    // The highlighted syllabus is uploaded and linked to its course; a replaced one is deleted afterwards
+    const uploadSyllabus = async (rowId, blob, fileName) => {
+        const tooLarge = tooLargeToUpload(blob, MAX_MB.highlighted);
+        if (tooLarge) { setSyllabusState(rowId, { message: t(`errors.${tooLarge.code}`, tooLarge.params) }); return; }
+        setSyllabusState(rowId, { uploading: true });
+        try {
+            const formData = new FormData();
+            formData.append('kind', 'highlighted');
+            formData.append('file', blob, fileName);
+            const data = await http.post('uploads', { body: formData, timeout: false }).json();
+            const row = rowsRef.current.find((c) => c.id === rowId);
+            if (!row) {
+                http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
+                return;
+            }
+            rememberName(data);
+            setFulfilledCourses((list) => list.map((c) => (c.id === rowId ? { ...c, syllabus_file: data.fileName } : c)));
+            setFieldError(`row:${rowId}:syllabus_file`, '');
+            setSyllabusState(rowId, {});
+            setSyllabusRowId(null);
+            setSyllabusFile(null);
+            if (row.syllabus_file) http.delete(getUploadEndpoint(row.syllabus_file)).catch((err) => console.error('Could not delete replaced syllabus', err));
+        } catch (err) {
+            setSyllabusState(rowId, { message: getErrorMessage(err, t, 'student_upload_failed') });
+        }
+    };
+    const removeSyllabus = async (rowId, file) => {
+        try {
+            await http.delete(getUploadEndpoint(file));
+            setFulfilledCourses((list) => list.map((c) => (c.id === rowId ? { ...c, syllabus_file: null } : c)));
+            setSyllabusState(rowId, {});
+        } catch (err) {
+            setSyllabusState(rowId, { message: getErrorMessage(err, t, 'file_remove_failed') });
         }
     };
 
@@ -344,11 +381,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     
     const clearUploadSelection = (isResubmit = false) => {
         if (isResubmit) {
-            setResubmitPreviewUrl(null);
-            setResubmitRawFile(null);
+            setResubmitHighlightFile(null);
         } else {
-            setPreviewUrl(null);
-            setRawFile(null);
+            setHighlightFile(null);
         }
     };
 
@@ -385,109 +420,38 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             setActiveUploadId(null); 
         } else {
             setActiveUploadId(id); 
-            setPreviewUrl(null); 
-            setRawFile(null); 
+            setHighlightFile(null); 
         }
     };
 
-    // --- SMART FILE HANDLER (Handles Images & Converts PDFs) ---
+    // A chosen syllabus: PDFs and images open in the highlighter; other types are attached as they are
+    // A chosen file is checked (PDF, JPG or PNG; up to 50 MB, since only the saved pages are uploaded)
+    // and then opened in the highlighter. For a transcript a highlight is required; in "add missing
+    // info" it is optional, and without highlights the file is uploaded unchanged.
     const handleFileSelect = async (e, isResubmit = false) => {
         const file = e.target.files[0];
+        e.target.value = ''; // the same file can be chosen again
         if (!file) return;
-
-        if (file.type.startsWith('image/')) {
-            if (isResubmit) {
-                setResubmitRawFile(null);
-                setResubmitPreviewUrl(URL.createObjectURL(file));
-            } else {
-                setRawFile(null);
-                setPreviewUrl(URL.createObjectURL(file));
-            }
-        } else if (file.type === 'application/pdf') {
-            const reader = new FileReader();
-            reader.onload = async function() {
-                try {
-                    const typedarray = new Uint8Array(this.result);
-                    const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                    const page = await pdf.getPage(1); 
-                    const viewport = page.getViewport({ scale: 1.5 }); 
-                    
-                    const tempCanvas = document.createElement('canvas');
-                    const context = tempCanvas.getContext('2d');
-                    tempCanvas.height = viewport.height;
-                    tempCanvas.width = viewport.width;
-                    
-                    await page.render({ canvasContext: context, viewport: viewport }).promise;
-                    const pdfAsImageUrl = tempCanvas.toDataURL('image/png');
-                    
-                    if (isResubmit) {
-                        setResubmitRawFile(null);
-                        setResubmitPreviewUrl(pdfAsImageUrl);
-                    } else {
-                        setRawFile(null);
-                        setPreviewUrl(pdfAsImageUrl);
-                    }
-                } catch (err) {
-                    console.error("Error rendering PDF:", err);
-                    alert("Could not load this PDF for highlighting. You can still attach it as a raw document.");
-                    if (isResubmit) setResubmitRawFile(file);
-                    else setRawFile(file);
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        } else {
-            if (isResubmit) {
-                setResubmitPreviewUrl(null);
-                setResubmitRawFile(file);
-            } else {
-                setPreviewUrl(null);
-                setRawFile(file);
-            }
+        const problem = await checkFile(file, MAX_MB.highlighterOriginal);
+        if (problem) {
+            if (isResubmit) setResubmitHighlightFile(null); else setHighlightFile(null);
+            setUploadStatus(t(`errors.${problem.code}`, problem.params || {}));
+            return;
         }
+        setUploadStatus('');
+        if (isResubmit) setResubmitHighlightFile(file); else setHighlightFile(file);
     };
 
-    // --- YOUR EXACT CANVAS LOGIC --- 
-    const handleImageLoad = () => {
-        if (imgRef.current && canvasRef.current) {
-            const canvas = canvasRef.current;
-            canvas.width = imgRef.current.clientWidth; 
-            canvas.height = imgRef.current.clientHeight;
-            setCtx(canvas.getContext('2d'));
-        }
-    };
-
-    const handleClearCanvas = () => { 
-        if (canvasRef.current && ctx) {
-            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); 
-        }
-    };
-
-    const handleUploadHighlighted = (isResubmit = false) => {
-        if (!canvasRef.current || !imgRef.current) return;
-        setUploadStatus(t('student_upload_saving'));
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvasRef.current.width; 
-        tempCanvas.height = canvasRef.current.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        tempCtx.drawImage(imgRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
-        tempCtx.drawImage(canvasRef.current, 0, 0);
-        
-        tempCanvas.toBlob(async (blob) => {
-            const formData = new FormData(); 
-            formData.append('file', blob, `marked-${Date.now()}.png`);
-            // We use executeUpload here so it knows WHICH course to attach it to!
-            executeUpload(formData, isResubmit);
-        }, 'image/png'); 
-    };
-
-    const handleStandardUpload = (isResubmit = false) => {
-        const fileToUpload = isResubmit ? resubmitRawFile : rawFile;
-        if (!fileToUpload) return;
+    // The highlighter's finished file is uploaded like any evidence. kind is 'highlighted'
+    // (up to 15 MB), or 'unchanged' when "add missing info" saves a file without highlights (10 MB).
+    const uploadHighlighted = (blob, fileName, isResubmit, kind = 'highlighted') => {
+        const tooLarge = tooLargeToUpload(blob, kind === 'highlighted' ? MAX_MB.highlighted : MAX_MB.unchanged);
+        if (tooLarge) { setUploadStatus(t(`errors.${tooLarge.code}`, tooLarge.params)); return undefined; }
         setUploadStatus(t('student_upload_saving'));
         const formData = new FormData();
-        formData.append('file', fileToUpload);
-        executeUpload(formData, isResubmit);
+        formData.append('kind', kind);
+        formData.append('file', blob, fileName);
+        return executeUpload(formData, isResubmit);
     };
 
     // Handles the actual API call and state update for the specific course
@@ -501,17 +465,17 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             if (data.success) {
                 if (isResubmit) {
                     setResubmitFiles(prev => [...prev, data.fileName]);
-                    setResubmitPreviewUrl(null); 
-                    setResubmitRawFile(null);
+                    setResubmitHighlightFile(null); 
                 } else {
                     // The row was removed while uploading: don't leave the new file behind
                     if (!rowsRef.current.some(c => c.id === targetRowId)) {
                         http.delete(getUploadEndpoint(data.fileName)).catch((err) => console.error('Could not delete unused upload', err));
                         return;
                     }
+                    rememberName(data);
                     setFulfilledCourses(list => list.map(c => c.id === targetRowId ? { ...c, file: data.fileName } : c));
                     setFieldError(`row:${targetRowId}:file`, '');
-                    setTimeout(() => { setPreviewUrl(null); setRawFile(null); setActiveUploadId(null); }, 1000);
+                    setTimeout(() => { setHighlightFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));
                 setTimeout(() => setUploadStatus(''), 2000);
@@ -532,6 +496,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         const { body, map } = currentSubmission();
         const problems = validateSubmission(body, isCountryCode);
         if (problems.length > 0) return showErrors(problems.map((e) => [e.field, translateError(e)]), map);
+        // Same order as the server: then the syllabus rule (needs the chosen course's credits)
+        if (syllabusReasons(body.fulfilled_courses, Number(targetCourse.credits)).length > 0) {
+            const missing = missingSyllabi(body.fulfilled_courses);
+            if (missing.length > 0) return showErrors(missing.map((e) => [e.field, translateError(e)]), map);
+        }
 
         lastSubmitMap.current = map;
         setFieldErrors({});
@@ -542,7 +511,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             // and stores their code, name and credits itself
             const data = await http.post('applications', { json: {
                 ...body,
-                system_note: evidenceRequiredMsg,
                 student_note: studentNote 
             } }).json();
             
@@ -553,7 +521,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setGradingStatus({});
                 setFieldErrors({});
                 setShowErrorSummary(false);
-                setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
+                setSyllabusStatus({}); setSyllabusRowId(null); setSyllabusFile(null);
+                setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
             }
@@ -682,32 +651,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
-                            <input type="file" onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '10px' }}/>
+                            <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '4px' }}/>
+                            <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 10px 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
                             
-                            {resubmitPreviewUrl && (
-                                <div style={{ marginTop: '10px' }}>
-                                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                        <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
-                                        <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
-                                        <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
-                                    </div>
-                                    <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                        <img ref={imgRef} src={resubmitPreviewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
-                                        <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
-                                    </div><br/>
-                                    <button onClick={() => handleUploadHighlighted(true)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_save_highlighted')}</button>
-                                </div>
-                            )}
-
-                            {resubmitRawFile && (
-                                <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
-                                    <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{resubmitRawFile.name}</strong></p>
-                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        <button onClick={() => handleStandardUpload(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
-                                    </div>
-                                </div>
+                            {resubmitHighlightFile && (
+                                <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                    {/* Missing information can be a transcript or a syllabus, so the longer (syllabus) limit applies */}
+                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" highlightRequired={false} onSave={(blob, name, kind) => uploadHighlighted(blob, name, true, kind)} onCancel={() => clearUploadSelection(true)} />
+                                </Suspense>
                             )}
 
                             {resubmitFiles.length > 0 && (
@@ -738,7 +689,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginBottom: '10px', textAlign: 'center' }}>{uploadStatus}</p>}
                         
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitPreviewUrl(null); setResubmitRawFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
+                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitHighlightFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
                             <button onClick={submitResubmission} style={{ padding: '10px 15px', cursor: 'pointer', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('student_resubmit_button')}</button>
                         </div>
                     </div>
@@ -782,7 +733,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 {/* Grading-system document: one per institution, no highlighting */}
                                 <div style={{ marginTop: '12px' }}>
                                     <span id={`inst-grading-label-${inst.key}`} style={fieldLabelStyle}>{t('student_grading_doc_label')}</span>
-                                    <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')}</p>
+                                    <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')} {t('student_file_hint', { max: MAX_MB.unchanged })}</p>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                         {/* Translated button; the browser's own "Choose file" input stays hidden */}
                                         <button
@@ -796,7 +747,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                         </button>
                                         {inst.grading_file && (
                                             <>
-                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {inst.grading_file}</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(inst.grading_file)}</span>
                                                 <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
                                                 <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                             </>
@@ -805,7 +756,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     {renderFieldError(`inst:${inst.key}:grading_file`)}
                                     <input
                                         ref={(el) => { gradingInputs.current[inst.key] = el; }}
-                                        type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" tabIndex={-1} style={{ display: 'none' }}
+                                        type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
                                         // Cleared after each choice, so the same file can be chosen again
                                         onChange={(e) => { handleGradingFileChosen(inst.key, e.target.files[0]); e.target.value = ''; }}
                                     />
@@ -851,7 +802,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     {renderFieldError(`row:${course.id}:course_code`)}
                                 </div>
                                 <div>
-                                    <label htmlFor={`row-credits-${course.id}`} style={fieldLabelStyle}>{t('student_total_credits_label')} {matches.credits && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label>
+                                    <label htmlFor={`row-credits-${course.id}`} style={fieldLabelStyle}>{t('student_total_credits_label')} {creditsMatch && <span style={{ color: 'var(--ok-text)' }}>✅</span>}</label>
                                     <input {...fieldProps(`row:${course.id}:credits`)} type="number" step="0.5" min="0.5" inputMode="decimal" value={course.credits} onChange={(e) => handleCourseChange(course.id, 'credits', e.target.value)} style={inputStyle(`row:${course.id}:credits`)} onBlur={(e) => checkField(`row:${course.id}:credits`, e.target.value)} />
                                     {renderFieldError(`row:${course.id}:credits`)}
                                 </div>
@@ -879,7 +830,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <button type="button" id={`row-evidence-btn-${course.id}`} aria-describedby={fieldErrors[`row:${course.id}:file`] ? `row-evidence-btn-${course.id}-error` : undefined} onClick={() => triggerUploadForCourse(course.id)} style={{ padding: '8px 12px', backgroundColor: course.file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                    {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_syllabus'))}
+                                    {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_transcript'))}
                                 </button>
                                 
                                 {/* Clickable Thumbnail! */}
@@ -893,7 +844,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                                     style={{ height: '35px', borderRadius: '3px', border: '2px solid var(--accent)', cursor: 'zoom-in' }} 
                                                 />
                                             ) : (
-                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold' }}>{course.file}</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>{displayName(course.file)}</span>
                                             )}
                                             <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                         </a>
@@ -908,32 +859,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {activeUploadId === course.id && (
                                 <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--blue)', borderRadius: '5px', marginTop: '15px' }}>
                                     <h4 style={{ marginTop: 0 }}>{t('student_upload_evidence_title')}</h4>
-                                    <input type="file" onChange={(e) => handleFileSelect(e, false)} />
+                                    <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, false)} />
+                                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
                                     
-                                    {previewUrl && (
-                                        <div style={{ marginTop: '10px' }}>
-                                            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                                <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
-                                                <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
-                                                <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
-                                            </div>
-                                            <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                                <img ref={imgRef} src={previewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
-                                                <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
-                                            </div><br/>
-                                            <button onClick={() => handleUploadHighlighted(false)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{t('student_save_highlighted')}</button>
-                                        </div>
-                                    )}
-
-                                    {rawFile && (
-                                        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
-                                            <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{rawFile.name}</strong></p>
-                                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                                <button onClick={() => handleStandardUpload(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
-                                            </div>
-                                        </div>
+                                    {highlightFile && (
+                                        <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                            <EvidenceHighlighter file={highlightFile} kind="transcript" onSave={(blob, name, kind) => uploadHighlighted(blob, name, false, kind)} onCancel={() => clearUploadSelection(false)} />
+                                        </Suspense>
                                     )}
 
                                     {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginTop: '10px' }}>{uploadStatus}</p>}
@@ -952,7 +884,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {noCourses ? (
                             <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', margin: '5px 0 0' }}>{t('student_no_courses_for_programme')}</p>
                         ) : (
-                        <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course && !selectedCourses.find(sc => sc.id === course.id)) { setSelectedCourses([...selectedCourses, course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
+                        <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course) { setSelectedCourses([course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
                             {courses.map(c => <option key={c.id} value={c.id}>{t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits })}</option>)}
                         </select>
@@ -968,7 +900,57 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     </div>
 
-                    {evidenceRequiredMsg && <div style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>{evidenceRequiredMsg}</div>}
+                    {/* Syllabi: needed when the syllabus rule applies; one per fulfilled course, linked to its row */}
+                    {(syllabusNeeded || fulfilledCourses.some((c) => c.syllabus_file)) && (
+                        // A light box with a coloured stripe (not a yellow background): the highlighter opens inside it,
+                        // and its yellow marks must stay easy to see
+                        <section aria-labelledby="syllabus-title" style={{ backgroundColor: 'var(--surface)', borderLeft: `5px solid ${syllabusNeeded && !allSyllabiAttached ? 'var(--orange)' : 'var(--accent)'}`, padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
+                            <h3 id="syllabus-title" style={{ margin: '0 0 6px 0', fontSize: '15px', color: syllabusNeeded && !allSyllabiAttached ? 'var(--warning-text)' : 'var(--link)' }}>
+                                {syllabusNeeded && !allSyllabiAttached ? `⚠ ${t('student_syllabus_needed_title')}` : t('student_syllabi_attached')}
+                            </h3>
+                            <p style={{ fontSize: '12px', margin: '0 0 6px 0', opacity: 0.85 }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
+                            {syllabusNeeded && (
+                                <ul style={{ margin: '0 0 10px 0', paddingLeft: '20px' }}>
+                                    {syllabusNeededFor.map((code) => <li key={code}>{t(`student_syllabus_reason_${code}`)}</li>)}
+                                </ul>
+                            )}
+                            {fulfilledCourses.map((course, index) => (
+                                <div key={course.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                        <strong style={{ fontSize: '13px' }}>{t('student_syllabus_for_course', { n: index + 1, name: course.course_name.trim() || '…' })}</strong>
+                                        <button
+                                            type="button" id={`row-syllabus-btn-${course.id}`}
+                                            disabled={syllabusStatus[course.id]?.uploading}
+                                            aria-describedby={fieldErrors[`row:${course.id}:syllabus_file`] ? `row-syllabus-btn-${course.id}-error` : undefined}
+                                            onClick={() => chooseSyllabus(course.id)}
+                                            style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        >
+                                            {course.syllabus_file ? t('student_replace_syllabus') : t('student_upload_syllabus_button')}
+                                        </button>
+                                        {course.syllabus_file && (
+                                            <>
+                                                <span style={{ fontSize: '13px', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(course.syllabus_file)}</span>
+                                                <a href="#open-file" onClick={(e) => handleOpenFile(e, course.syllabus_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
+                                                <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
+                                            </>
+                                        )}
+                                    </div>
+                                    {renderFieldError(`row:${course.id}:syllabus_file`)}
+                                    {syllabusStatus[course.id]?.uploading && <p role="status" style={{ margin: '6px 0 0 0', fontWeight: 'bold' }}>{t('student_upload_saving')}</p>}
+                                    {syllabusStatus[course.id]?.message && <p role="alert" style={{ margin: '6px 0 0 0', color: 'var(--error-text)', fontWeight: 'bold' }}>{syllabusStatus[course.id].message}</p>}
+                                    {syllabusRowId === course.id && syllabusFile && (
+                                        <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                            <EvidenceHighlighter file={syllabusFile} kind="syllabus" onSave={(blob, name) => uploadSyllabus(course.id, blob, name)} onCancel={() => { setSyllabusRowId(null); setSyllabusFile(null); }} />
+                                        </Suspense>
+                                    )}
+                                </div>
+                            ))}
+                            <input
+                                ref={syllabusInput} type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
+                                onChange={(e) => { handleSyllabusChosen(e.target.files[0]); e.target.value = ''; }}
+                            />
+                        </section>
+                    )}
 
                     <div style={{ marginBottom: '20px' }}>
                         <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>

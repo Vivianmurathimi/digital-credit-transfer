@@ -1,4 +1,4 @@
-# Security tests: student side (Groups 1, 2 and 4)
+# Security tests: student side (Groups 1, 2, 4 and 5)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
@@ -6,10 +6,11 @@ This document describes how the access rules of the PTE digital credit transfer 
 - that one student can never read or change another student's data
 - that a student only sees and applies for their own study programme's courses (Group 2)
 - that every field of the application form is checked on the server, and errors name their field (Group 4)
+- that uploads follow the file rules (type by real content, size, generated names) and that a syllabus is required when the rules say so (Group 5)
 
 There are three parts:
 
-1. **Automated API check** (`npm run security-check`): 130 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 144 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
 
@@ -110,6 +111,21 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | 11 institutions; 21 course rows | `INVALID_INSTITUTIONS` / `INVALID_FULFILLED_COURSES` |
 | | | Text the student typed | never repeated in an error answer |
 | | | The old request shape (`fulfilled_courses_json`) | refused |
+| | **One PTE course (Group 5)** | Two different target courses | `400 INVALID_TARGET_COURSES` |
+| | | 12 copies of the same course | counted as one course |
+| | **Syllabus rule (Group 5)** | Two fulfilled courses combined, no syllabi | `400 SYLLABUS_REQUIRED` at `fulfilled_courses[0].syllabus_file` and `[1].syllabus_file` |
+| | | Credits lower than the PTE course (all ECTS), no syllabus | `400 SYLLABUS_REQUIRED` |
+| | | Credits not comparable (US credit hours), no syllabus | `400 SYLLABUS_REQUIRED` |
+| | | Two courses, only one with a syllabus | only the missing one is reported |
+| | | Enough ECTS from one course, no syllabus | accepted (no syllabus needed) |
+| | | Someone else's file as syllabus | `403 FILES_NOT_OWNED` at `fulfilled_courses[0].syllabus_file` |
+| 4b | **File uploads (Group 5)** | A PDF | stored under a generated name (random id); the original name is returned |
+| | | Downloading it | `Content-Disposition` keeps the original name, accents included (`filename*=UTF-8''tant%C3%A1rgyle%C3%ADr%C3%A1s.pdf`) |
+| | | A text file renamed to `.pdf`; a PNG named `.pdf`; a Word file | `400 FILE_TYPE_NOT_ALLOWED` (type taken from the file's first bytes) |
+| | | An unchanged upload over 10 MB | `413 FILE_TOO_LARGE`, `max` 10 |
+| | | A highlighted file of 11 MB | accepted (limit 15 MB) |
+| | | A file over 15 MB | `413 FILE_TOO_LARGE`, refused from its announced size before it is read |
+| | | Refused uploads | nothing stored (file count unchanged) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -156,6 +172,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-28 | local development backend, with rate limiting | **67 passed, 0 failed, 0 skipped**; 0 emails sent; all 81 test rate-limit rows removed |
 | 2026-10-28 | local development backend, Group 2 (programmes), seeded data | **95 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
 | 2026-10-28 | local development backend, Group 4 (application form), seeded data | **130 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
+| 2026-10-29 | throwaway copy with migration 004, Group 5 (evidence and file rules) | **144 passed, 0 failed, 0 skipped**; run 5 times in a row for the 16 MB check; no applications saved, test uploads deleted |
 
 ---
 
@@ -173,6 +190,7 @@ It covers 19 inputs (valid, every kind of error, values exactly at each limit, s
 | Date | Result |
 |---|---|
 | 2026-10-28 | **23 passed, 0 failed**: all 19 inputs identical in browser and server |
+| 2026-10-29 | **46 passed, 0 failed**: also the syllabus rule (8 cases), one PTE course, and the file rules (9 files, sizes, download names) identical in browser and server |
 
 **Term book with Group 4 data** (one-time test on a throwaway copy of the database): an application with a 160-character course name, ECTS credits 7.5, a grade "1,3 (sehr gut)" and an image as evidence was submitted and the term book built with the real code. The book contained the course name (wrapped onto several lines, never past the right margin), code, credits, grade, target course and the embedded image. Institutions, countries and grading documents are not in the term book yet: planned for the admin round (see [PLANNED.md](PLANNED.md)).
 
@@ -256,6 +274,24 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B39 | Screen reader | VoiceOver on (Cmd+F5), press Submit on the empty form | "Please correct the … marked fields." is announced |
 | B40 | Reviewer screen and term book | Submit a complete application; open it as `reviewer.cs@mik.pte.hu`; as admin generate a term book for today and open the PDF | The reviewer screen shows course name, credits, grade and evidence as before; the term book shows the application and long course names wrap inside the page |
 
+**Group 5: evidence and file rules** (as `student.cs@tr.pte.hu`; test PDFs of 6, 12 and 31 pages help)
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| B41 | PDF opens | Upload a transcript PDF on a course row | Opens sharp in the highlighter, no "could not load" alert; no request to cdnjs (the PDF engine is part of the app) |
+| B42 | Highlighter | Drag across a line; cross it twice; erase; "Clear highlights on this page" | See-through yellow, text readable, overlaps not darker; eraser only removes yellow |
+| B43 | Touch and resize | Highlight with a finger (phone/tablet); resize the window | Draws without scrolling the page; marks stay on the same text |
+| B44 | Highlight required | Save without highlighting; then tap once and save; then highlight and erase everything and save | "Highlight this course's line on the transcript before saving." each time; a real stroke allows saving |
+| B45 | Saved PDF | Open the saved file; check it in Chrome, Firefox and Adobe Reader | Page 1 plus highlighted pages; "Original page X of Y" below each page, not over the footer; yellow looks right in all three |
+| B46 | Page navigation | Open a 12-page syllabus; highlight pages 3 and 7; move back and forth | "Page X of Y"; marks kept; "Pages that will be saved: 1, 3, 7" |
+| B47 | Page limits | A 6-page transcript; a 31-page syllabus | Refused with the transcript / syllabus message |
+| B48 | Photos | Highlight a JPG photo and a PNG screenshot | Saved as .jpg / .png, sharp |
+| B49 | Syllabus rule | One PTE course; credits lower; then US credit hours; then two fulfilled courses | The syllabus box appears with the matching reasons and one upload per course; "✓ Syllabi attached" when all are uploaded |
+| B50 | File rules | A Word file; a text file renamed .pdf; a 60 MB PDF for a transcript; an 11 MB grading document | "Only PDF, JPG and PNG files can be uploaded." / same / "…maximum is 50 MB." / "…maximum is 10 MB.", shown at that upload |
+| B51 | Original names | Upload "tantárgyleírás.pdf"; as reviewer, Download it | The form shows the original name; the download is saved as "tantárgyleírás (highlighted).pdf" with accents |
+| B52 | Add missing info | In the resubmit window, save a PDF letter without highlights; then a highlighted one | Without highlights the whole original is uploaded unchanged; with highlights the highlighted version |
+| B53 | Reviewer | Open a Group 5 application as `reviewer.cs` | 📄 icon for PDF transcripts (no broken image); the syllabus under each course with Open and Download |
+
 ---
 
 ## 3. Pending for the reviewer round
@@ -270,6 +306,21 @@ Every application now records its programme (Group 2), so the data supports thes
 
 ---
 
+### Evidence highlighter (Group 5)
+
+The highlighter's rules are tested in Node (`frontend/src/highlighter.js`), with real PDFs:
+
+| What | Result |
+|---|---|
+| Saved PDF | page 1 plus every highlighted page, in order; original pages copied unchanged (text still searchable); "Original page X of Y" in a strip **added below** each page, never over it |
+| Copy-protected PDF | opens; saved from the rendered page images instead, so the student is never blocked |
+| Page limits | transcript 5 pages, syllabus 30 (longer PDFs refused when opened, never cut) |
+| Minimum highlight | clearly painted area of at least 0.03% of the page (a short stroke). A single tap, a stroke erased completely, and faint erasing leftovers do not count; the same on a 2× PDF page and a capped photo |
+
+**The highlight rule is checked in the browser only.** The server cannot see highlights: they are pixels inside an image or PDF. Someone building requests by hand could upload an unhighlighted transcript or syllabus. The reviewer still sees the file and judges it; the rule exists to guide students, not as access control.
+
+---
+
 ## 4. Known limitations
 
 - **CORS is a browser rule.** It stops other websites from reading API answers in a user's browser. It does not stop direct requests (curl, scripts); those are protected by the login token and role checks above.
@@ -279,4 +330,6 @@ Every application now records its programme (Group 2), so the data supports thes
 - ~~Forgot password timing~~ **(fixed 2026-10-28).** A real address used to take about 1.9 s longer than an unknown one, because the email was sent before replying. The reply now comes straight after the lookup in both cases (see section 1).
 - **Older evidence files without an owner tag.** A few files uploaded before ownership tagging can be opened by reviewers and the superadmin, but not by the student who uploaded them. No other student can open them either.
 - **Impersonation shows every programme's courses.** While the superadmin impersonates a student, the course picker uses the admin's token, so it lists the courses of all programmes, not only that student's. Submitting is refused during impersonation anyway. To be fixed in the admin round.
+- **Highlights are not verified by the server** (see "Evidence highlighter" above).
+- **Uploads from forms that are never submitted stay in storage** until a cleanup job exists (see [PLANNED.md](PLANNED.md)).
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

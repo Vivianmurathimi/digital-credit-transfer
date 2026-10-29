@@ -266,7 +266,8 @@ const run = async () => {
             // check were ever broken, the file check still refuses, so these tests can never save an application
             const validForm = (overrides = {}) => ({
                 institutions: [{ name: 'Security Check University', country: 'AT', grading_file: d.fileOfB }],
-                fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: d.fileOfB }],
+                // 60 ECTS: never a credit gap. B's file is also the syllabus, so the syllabus rule is met
+                fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB }],
                 target_course_ids: ownCourses.slice(0, 1),
                 ...overrides,
             });
@@ -280,8 +281,8 @@ const run = async () => {
             const withBsFile = await submitAs(ownCourses.slice(0, 1));
             report(withBsFile.status === 403 && withBsFile.code === 'FILES_NOT_OWNED', "A submits an application with B's file", `${withBsFile.status} ${withBsFile.code}`);
             const filePaths = (withBsFile.body?.errors || []).map((e) => e.field).sort().join(', ');
-            report(filePaths === 'fulfilled_courses[0].file, institutions[0].grading_file',
-                "B's file is reported at both places it was used (evidence and grading file)", filePaths || 'no field paths');
+            report(filePaths === 'fulfilled_courses[0].file, fulfilled_courses[0].syllabus_file, institutions[0].grading_file',
+                "B's file is reported at every place it was used (transcript, syllabus, grading file)", filePaths || 'no field paths');
             if (withBsFile.code === 'FILES_NOT_OWNED') {
                 // Someone else's file and a file that doesn't exist must look identical, so the submit
                 // route can't be used to find out which file names exist. (Runs only after the lines above
@@ -289,7 +290,7 @@ const run = async () => {
                 const missing = `no-such-file-${Date.now()}.pdf`;
                 const withMissingFile = await submitForm(validForm({
                     institutions: [{ name: 'Security Check University', country: 'AT', grading_file: missing }],
-                    fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: missing }],
+                    fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 60, credit_system: 'ECTS', grade: 'A', file: missing, syllabus_file: missing }],
                 }));
                 const strip = (r) => JSON.stringify({ status: r.status, ...r.body });
                 report(strip(withMissingFile) === strip(withBsFile),
@@ -310,7 +311,7 @@ const run = async () => {
                 'Three mistakes in one submit: all three reported with their fields', mistakePaths || `${threeMistakes.status} ${threeMistakes.code}`);
             // --- Group 4: every field rule, proven from both sides (B's file stays the safety net) ---
             const inst = (o = {}) => ({ name: 'Security Check University', country: 'AT', grading_file: d.fileOfB, ...o });
-            const row = (o = {}) => ({ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, ...o });
+            const row = (o = {}) => ({ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 5, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB, ...o });
             const formWith = ({ institutions = [inst()], rows = [row()] } = {}) => validForm({ institutions, fulfilled_courses: rows });
             // Refused with this code at this path; the first error is also at the top level
             const fieldError = async (name, body, path, code, params) => {
@@ -359,13 +360,26 @@ const run = async () => {
             const marker = `ECHO-MARKER-${Date.now()}`;
             const echoed = await submitForm(formWith({ institutions: [inst({ name: marker + 'x'.repeat(200) })], rows: [row({ grade: marker })] }));
             report(echoed.status === 400 && !JSON.stringify(echoed.body).includes('ECHO-MARKER'), 'Error answers never repeat what the student typed', `${echoed.status}, ${echoed.body?.errors?.length} errors, no typed text`);
+            // --- Group 5: syllabus rule (B's file stays the transcript, so nothing can be saved) ---
+            const noSyllabus = (o = {}) => row({ syllabus_file: undefined, ...o });
+            const syllabusPaths = async (name, body, expected) => {
+                const r = await submitForm(body);
+                const got = (r.body?.errors || []).filter((e) => e.code === 'SYLLABUS_REQUIRED').map((e) => e.field).join(', ');
+                report(r.status === 400 && got === expected, name, got ? `SYLLABUS_REQUIRED at ${got}` : `${r.status} ${r.code}`);
+            };
+            await syllabusPaths('Two courses combined without syllabi', formWith({ rows: [noSyllabus({ credits: 60 }), noSyllabus({ credits: 60 })] }),
+                'fulfilled_courses[0].syllabus_file, fulfilled_courses[1].syllabus_file');
+            await syllabusPaths('Credits lower than the PTE course (ECTS), no syllabus', formWith({ rows: [noSyllabus({ credits: 0.5 })] }), 'fulfilled_courses[0].syllabus_file');
+            await syllabusPaths('Credits not comparable (US credit hours), no syllabus', formWith({ rows: [noSyllabus({ credits: 3, credit_system: 'US_CREDIT_HOURS' })] }), 'fulfilled_courses[0].syllabus_file');
+            await syllabusPaths('Two courses: only the one without a syllabus is reported', formWith({ rows: [row({ credits: 60 }), noSyllabus({ credits: 60 })] }), 'fulfilled_courses[1].syllabus_file');
+            await passesFields('Enough ECTS from one course: no syllabus needed', formWith({ rows: [noSyllabus({ credits: 60 })] }));
             await expect('Old request shape (fulfilled_courses_json) is refused',
                 submitForm({ fulfilled_courses_json: [{ course_name: 'x', file: d.fileOfB }], target_course_ids: ownCourses.slice(0, 1) }), 400, 'INVALID_INSTITUTIONS');
             if (otherCourses.length === 0) {
                 skip("Submit with another programme's course", 'there is only one programme with courses');
             } else {
                 await expect("Submit with another programme's course", submitAs([otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
-                await expect("Submit with own and another programme's course mixed", submitAs([ownCourses[0], otherCourses[0]]), 400, 'COURSE_NOT_IN_PROGRAMME');
+                await expect('Submit with two PTE courses (one per application)', submitAs([ownCourses[0], otherCourses[0]]), 400, 'INVALID_TARGET_COURSES');
             }
             await expect('Submit with a course id that does not exist', submitAs([2147483000]), 400, 'COURSE_NOT_IN_PROGRAMME');
             await expect('Submit without target courses', submitAs(undefined), 400, 'INVALID_TARGET_COURSES');
@@ -373,8 +387,8 @@ const run = async () => {
             report(fieldCheck.body?.field === 'target_course_ids', 'Course error names its field', fieldCheck.body?.field || 'no field');
             await expect('Submit with an empty course list', submitAs([]), 400, 'INVALID_TARGET_COURSES');
             await expect('Submit with course ids as text', submitAs(['1', '2']), 400, 'INVALID_TARGET_COURSES');
-            await expect('Submit with 11 different courses (limit is 10)', submitAs(Array.from({ length: 11 }, (_, i) => i + 1)), 400, 'INVALID_TARGET_COURSES');
-            // 12 copies of one own course count as 1 after removing duplicates, so they pass the limit
+            await expect('Submit with two of your own PTE courses', submitAs(ownCourses.slice(0, 2)), 400, 'INVALID_TARGET_COURSES');
+            // 12 copies of one own course count as 1 after removing duplicates, so they are one course
             // and reach the file check
             await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
         }
@@ -420,6 +434,57 @@ const run = async () => {
     const allCourses = (await pool.query('SELECT count(*)::int AS n FROM courses')).rows[0].n;
     const coursesR = await call('GET', 'pte-courses', { token: R });
     report(idsIn(coursesR).length === allCourses, 'Reviewer still sees every course (for now)', `${idsIn(coursesR).length} of ${allCourses}`);
+
+    section('4b. File uploads (Group 5): type, size, names');
+    const objectCount = async () => new Promise((resolve, reject) => {
+        let n = 0;
+        const stream = minioClient.listObjects('transcripts', '', true);
+        stream.on('data', () => { n += 1; });
+        stream.on('end', () => resolve(n));
+        stream.on('error', reject);
+    });
+    const uploadAs = async (name, bytes, mime, kind) => {
+        const form = new FormData();
+        if (kind) form.append('kind', kind);
+        form.append('file', new Blob([bytes], { type: mime }), name);
+        try {
+            const res = await fetch(`${API}/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${A}` }, body: form });
+            const body = await res.json().catch(() => null);
+            return { status: res.status, code: body?.code, body };
+        } catch (err) {
+            return { status: 0, code: `connection closed (${err.cause?.code || err.message})` };
+        }
+    };
+    const pdf = (size = 64) => Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(Math.max(0, size - 9), 0x20)]);
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(56)]);
+    const MB = 1024 * 1024;
+    const created = [];
+    const before = await objectCount();
+
+    const good = await uploadAs('tantárgyleírás.pdf', pdf(), 'application/pdf');
+    if (good.body?.fileName) created.push(good.body.fileName);
+    report(good.status === 200 && /^[0-9a-f-]{36}\.pdf$/.test(good.body?.fileName || '') && good.body?.originalName === 'tantárgyleírás.pdf',
+        'A PDF is stored under a generated name, the original name is returned', `${good.status} ${good.body?.fileName} / ${good.body?.originalName}`);
+    if (good.body?.fileName) {
+        const res = await fetch(`${API}/uploads/${good.body.fileName}`, { headers: { Authorization: `Bearer ${A}` } });
+        const disposition = res.headers.get('content-disposition') || '';
+        report(disposition.includes("filename*=UTF-8''tant%C3%A1rgyle%C3%ADr%C3%A1s.pdf") && disposition.includes('filename="tant_rgyle_r_s.pdf"'),
+            'A download keeps the original name, accents included', disposition);
+    }
+    await expect('A text file renamed to .pdf', uploadAs('fake.pdf', Buffer.from('just some text, not a PDF'), 'application/pdf'), 400, 'FILE_TYPE_NOT_ALLOWED');
+    await expect('A real PNG named .pdf (content and name differ)', uploadAs('picture.pdf', png, 'application/pdf'), 400, 'FILE_TYPE_NOT_ALLOWED');
+    await expect('A Word document', uploadAs('letter.docx', Buffer.from('PK\x03\x04 word'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), 400, 'FILE_TYPE_NOT_ALLOWED');
+    const unchangedBig = await uploadAs('grades.pdf', pdf(11 * MB), 'application/pdf');
+    report(unchangedBig.status === 413 && unchangedBig.code === 'FILE_TOO_LARGE' && unchangedBig.body?.errors?.[0]?.params?.max === 10,
+        'An unchanged file over 10 MB', `${unchangedBig.status} ${unchangedBig.code} max ${unchangedBig.body?.errors?.[0]?.params?.max}`);
+    const highlightedBig = await uploadAs('syllabus (highlighted).pdf', pdf(11 * MB), 'application/pdf', 'highlighted');
+    if (highlightedBig.body?.fileName) created.push(highlightedBig.body.fileName);
+    report(highlightedBig.status === 200, 'A highlighted file of 11 MB is allowed (limit 15 MB)', `${highlightedBig.status}`);
+    const huge = await uploadAs('huge.pdf', pdf(16 * MB), 'application/pdf', 'highlighted');
+    report(huge.status === 413 && huge.code === 'FILE_TOO_LARGE', 'A file over 15 MB is refused before it is read', `${huge.status} ${huge.code}`);
+
+    for (const name of created) await call('DELETE', `uploads/${name}`, { token: A });
+    report(await objectCount() === before, 'Refused uploads leave nothing in storage', `${before} files before and after (test uploads deleted)`);
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
