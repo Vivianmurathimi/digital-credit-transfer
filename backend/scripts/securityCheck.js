@@ -278,6 +278,25 @@ const run = async () => {
                 return submitForm(body);
             };
 
+            // Compatibility probe. Every submit test relies on the server reading the same fields as
+            // this script (B's file only refuses if the server sees it). An outdated backend once saved
+            // such requests. This probe is refused by EVERY version (empty target list), but only the
+            // current code reports both problems with their paths; otherwise no submit test runs.
+            const probe = await submitForm({
+                institutions: [{ name: 'Probe University', country: 'XX', grading_file: d.fileOfB }],
+                fulfilled_courses: [{ institution: 0, course_name: 'Probe', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB }],
+                target_course_ids: [],
+            });
+            const probeCodes = (probe.body?.errors || []).map((e) => `${e.field} ${e.code}`);
+            const serverIsCurrent = probe.status === 400
+                && probeCodes.includes('institutions[0].country INVALID_COUNTRY')
+                && probeCodes.includes('target_course_ids INVALID_TARGET_COURSES');
+            report(serverIsCurrent, 'The backend runs the current code (compatibility probe)', serverIsCurrent ? 'submit tests will run' : `${probe.status} ${probe.code}: RESTART THE BACKEND`);
+            if (!serverIsCurrent) {
+                console.log('WARNING: the backend answers like older code. All submit tests are SKIPPED, so nothing can be saved.');
+                console.log('         Restart the backend (Ctrl+C, then node server.js) and run the check again.');
+                skip('All submit tests', 'the backend runs older code (see the probe above)');
+            } else {
             const withBsFile = await submitAs(ownCourses.slice(0, 1));
             report(withBsFile.status === 403 && withBsFile.code === 'FILES_NOT_OWNED', "A submits an application with B's file", `${withBsFile.status} ${withBsFile.code}`);
             const filePaths = (withBsFile.body?.errors || []).map((e) => e.field).sort().join(', ');
@@ -391,6 +410,7 @@ const run = async () => {
             // 12 copies of one own course count as 1 after removing duplicates, so they are one course
             // and reach the file check
             await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
+            } // end of: the backend runs the current code
         }
     }
 
@@ -443,6 +463,7 @@ const run = async () => {
         stream.on('end', () => resolve(n));
         stream.on('error', reject);
     });
+    const created = [];
     const uploadAs = async (name, bytes, mime, kind) => {
         const form = new FormData();
         if (kind) form.append('kind', kind);
@@ -450,6 +471,9 @@ const run = async () => {
         try {
             const res = await fetch(`${API}/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${A}` }, body: form });
             const body = await res.json().catch(() => null);
+            // Every file the server stored is deleted at the end, even one it should have refused
+            // (e.g. an outdated backend accepting a fake PDF), so the check never leaves files behind
+            if (body?.fileName && !created.includes(body.fileName)) created.push(body.fileName);
             return { status: res.status, code: body?.code, body };
         } catch (err) {
             return { status: 0, code: `connection closed (${err.cause?.code || err.message})` };
@@ -458,11 +482,9 @@ const run = async () => {
     const pdf = (size = 64) => Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(Math.max(0, size - 9), 0x20)]);
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(56)]);
     const MB = 1024 * 1024;
-    const created = [];
     const before = await objectCount();
 
     const good = await uploadAs('tantárgyleírás.pdf', pdf(), 'application/pdf');
-    if (good.body?.fileName) created.push(good.body.fileName);
     report(good.status === 200 && /^[0-9a-f-]{36}\.pdf$/.test(good.body?.fileName || '') && good.body?.originalName === 'tantárgyleírás.pdf',
         'A PDF is stored under a generated name, the original name is returned', `${good.status} ${good.body?.fileName} / ${good.body?.originalName}`);
     if (good.body?.fileName) {
@@ -478,7 +500,6 @@ const run = async () => {
     report(unchangedBig.status === 413 && unchangedBig.code === 'FILE_TOO_LARGE' && unchangedBig.body?.errors?.[0]?.params?.max === 10,
         'An unchanged file over 10 MB', `${unchangedBig.status} ${unchangedBig.code} max ${unchangedBig.body?.errors?.[0]?.params?.max}`);
     const highlightedBig = await uploadAs('syllabus (highlighted).pdf', pdf(11 * MB), 'application/pdf', 'highlighted');
-    if (highlightedBig.body?.fileName) created.push(highlightedBig.body.fileName);
     report(highlightedBig.status === 200, 'A highlighted file of 11 MB is allowed (limit 15 MB)', `${highlightedBig.status}`);
     const huge = await uploadAs('huge.pdf', pdf(16 * MB), 'application/pdf', 'highlighted');
     report(huge.status === 413 && huge.code === 'FILE_TOO_LARGE', 'A file over 15 MB is refused before it is read', `${huge.status} ${huge.code}`);

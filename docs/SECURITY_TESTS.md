@@ -31,7 +31,8 @@ npm run seed:dev     # one student per programme, with a file and an application
 Then:
 
 ```bash
-# 1. Start the backend as usual (it listens on PORT from backend/.env, normally 5050)
+# 1. Start (or RESTART) the backend, so it runs the current code
+#    (it listens on PORT from backend/.env, normally 5050)
 cd backend
 node server.js
 
@@ -51,6 +52,8 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
   - forgot password uses an address that does not exist
   - the only login attempts use wrong passwords
 - **Destructive checks are guarded.** "Student A deletes B's file" and the submit checks would really delete or save something if a check were broken. They only run after the read-only check "A opens B's file" has passed; otherwise they are skipped. In addition, every submit check attaches B's file, so even a broken course check would still be stopped by the file check and nothing could be saved.
+- **Compatibility probe before any submit test.** Every submit test relies on the server reading the same fields as the script. On 2026-10-28 the check was run against a backend that had not been restarted after a code change: the old code did not understand the new request shape, saw no files, and **saved 32 empty applications** (cleaned up with a dev-data reset). Since then a probe runs first: it is refused by every version (empty target course list), but only the current code reports both of its mistakes with their field paths. Otherwise all submit tests are skipped with "restart the backend". Tested against a real older version of the backend: nothing was saved.
+- **Every file the server stores during the check is deleted at the end**, including files an outdated server accepted although it should have refused them.
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
