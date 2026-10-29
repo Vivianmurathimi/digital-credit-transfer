@@ -170,12 +170,21 @@ const ReviewerDashboard = () => {
                                             <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={course.course_name}>
                                                 📄 {course.course_name}
                                             </div>
-                                            <SecureImage 
-                                                fileName={course.file} 
-                                                alt={t('reviewer_evidence')} 
-                                                onClick={() => handleOpenFile(course.file)} 
-                                                style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
-                                            />
+                                            {/* PDF evidence (e.g. a highlighted syllabus) gets a document icon: a PDF can't be shown as an image */}
+                                            {isImageFile(course.file) ? (
+                                                <SecureImage 
+                                                    fileName={course.file} 
+                                                    alt={t('reviewer_evidence')} 
+                                                    onClick={() => handleOpenFile(course.file)} 
+                                                    style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
+                                                />
+                                            ) : (
+                                                <div 
+                                                    onClick={() => handleOpenFile(course.file)} 
+                                                    title={course.file}
+                                                    style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer', backgroundColor: 'var(--surface)' }}
+                                                >📄</div>
+                                            )}
                                             <button onClick={() => handleDownload(course.file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
                                         </div>
                                     ))}

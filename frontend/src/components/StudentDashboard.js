@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
 import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
-import * as pdfjsLib from 'pdfjs-dist';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath } from '../applicationForm';
 
-// Set up the worker for PDF.js to handle conversions
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+// The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
+const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
 
 const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
 const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
@@ -49,7 +49,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     
     // --- INLINE UPLOAD STATE ---
     const [activeUploadId, setActiveUploadId] = useState(null); 
-    const [previewUrl, setPreviewUrl] = useState(null);
+    // The syllabus file open in the highlighter (PDF or image), per uploader
+    const [highlightFile, setHighlightFile] = useState(null);
     const [rawFile, setRawFile] = useState(null); 
     const [uploadStatus, setUploadStatus] = useState('');
     const [submitStatus, setSubmitStatus] = useState('');
@@ -59,7 +60,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
-    const [resubmitPreviewUrl, setResubmitPreviewUrl] = useState(null); 
+    const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [resubmitRawFile, setResubmitRawFile] = useState(null); 
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
@@ -67,11 +68,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [matches, setMatches] = useState({ credits: false });
     const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(true);
 
-    const imgRef = useRef(null);    
-    const canvasRef = useRef(null); 
-    const [ctx, setCtx] = useState(null);
-    const [isDrawing, setIsDrawing] = useState(false);
-    const [activeTool, setActiveTool] = useState('pen'); 
 
     // Returns the loaded list (or null), so a failed submit can compare against it
     const fetchCourses = useCallback(async () => {
@@ -256,7 +252,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         }
         setFulfilledCourses(list => list.filter(c => c.id !== id));
         dropFieldErrors(`row:${id}:`);
-        if (activeUploadId === id) { setActiveUploadId(null); setPreviewUrl(null); setRawFile(null); }
+        if (activeUploadId === id) { setActiveUploadId(null); setHighlightFile(null); setRawFile(null); }
     };
     const handleCourseChange = (id, field, value) => {
         setFulfilledCourses(fulfilledCourses.map(c => c.id === id ? { ...c, [field]: value } : c));
@@ -344,10 +340,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     
     const clearUploadSelection = (isResubmit = false) => {
         if (isResubmit) {
-            setResubmitPreviewUrl(null);
+            setResubmitHighlightFile(null);
             setResubmitRawFile(null);
         } else {
-            setPreviewUrl(null);
+            setHighlightFile(null);
             setRawFile(null);
         }
     };
@@ -385,100 +381,32 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             setActiveUploadId(null); 
         } else {
             setActiveUploadId(id); 
-            setPreviewUrl(null); 
+            setHighlightFile(null); 
             setRawFile(null); 
         }
     };
 
-    // --- SMART FILE HANDLER (Handles Images & Converts PDFs) ---
-    const handleFileSelect = async (e, isResubmit = false) => {
+    // A chosen syllabus: PDFs and images open in the highlighter; other types are attached as they are
+    const handleFileSelect = (e, isResubmit = false) => {
         const file = e.target.files[0];
+        e.target.value = ''; // the same file can be chosen again
         if (!file) return;
-
-        if (file.type.startsWith('image/')) {
-            if (isResubmit) {
-                setResubmitRawFile(null);
-                setResubmitPreviewUrl(URL.createObjectURL(file));
-            } else {
-                setRawFile(null);
-                setPreviewUrl(URL.createObjectURL(file));
-            }
-        } else if (file.type === 'application/pdf') {
-            const reader = new FileReader();
-            reader.onload = async function() {
-                try {
-                    const typedarray = new Uint8Array(this.result);
-                    const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                    const page = await pdf.getPage(1); 
-                    const viewport = page.getViewport({ scale: 1.5 }); 
-                    
-                    const tempCanvas = document.createElement('canvas');
-                    const context = tempCanvas.getContext('2d');
-                    tempCanvas.height = viewport.height;
-                    tempCanvas.width = viewport.width;
-                    
-                    await page.render({ canvasContext: context, viewport: viewport }).promise;
-                    const pdfAsImageUrl = tempCanvas.toDataURL('image/png');
-                    
-                    if (isResubmit) {
-                        setResubmitRawFile(null);
-                        setResubmitPreviewUrl(pdfAsImageUrl);
-                    } else {
-                        setRawFile(null);
-                        setPreviewUrl(pdfAsImageUrl);
-                    }
-                } catch (err) {
-                    console.error("Error rendering PDF:", err);
-                    alert("Could not load this PDF for highlighting. You can still attach it as a raw document.");
-                    if (isResubmit) setResubmitRawFile(file);
-                    else setRawFile(file);
-                }
-            };
-            reader.readAsArrayBuffer(file);
+        const highlightable = file.type === 'application/pdf' || file.type.startsWith('image/');
+        if (isResubmit) {
+            setResubmitHighlightFile(highlightable ? file : null);
+            setResubmitRawFile(highlightable ? null : file);
         } else {
-            if (isResubmit) {
-                setResubmitPreviewUrl(null);
-                setResubmitRawFile(file);
-            } else {
-                setPreviewUrl(null);
-                setRawFile(file);
-            }
+            setHighlightFile(highlightable ? file : null);
+            setRawFile(highlightable ? null : file);
         }
     };
 
-    // --- YOUR EXACT CANVAS LOGIC --- 
-    const handleImageLoad = () => {
-        if (imgRef.current && canvasRef.current) {
-            const canvas = canvasRef.current;
-            canvas.width = imgRef.current.clientWidth; 
-            canvas.height = imgRef.current.clientHeight;
-            setCtx(canvas.getContext('2d'));
-        }
-    };
-
-    const handleClearCanvas = () => { 
-        if (canvasRef.current && ctx) {
-            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); 
-        }
-    };
-
-    const handleUploadHighlighted = (isResubmit = false) => {
-        if (!canvasRef.current || !imgRef.current) return;
+    // The highlighter's finished file (highlighted PDF or image) is uploaded like any evidence
+    const uploadHighlighted = (blob, fileName, isResubmit) => {
         setUploadStatus(t('student_upload_saving'));
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvasRef.current.width; 
-        tempCanvas.height = canvasRef.current.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        tempCtx.drawImage(imgRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
-        tempCtx.drawImage(canvasRef.current, 0, 0);
-        
-        tempCanvas.toBlob(async (blob) => {
-            const formData = new FormData(); 
-            formData.append('file', blob, `marked-${Date.now()}.png`);
-            // We use executeUpload here so it knows WHICH course to attach it to!
-            executeUpload(formData, isResubmit);
-        }, 'image/png'); 
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+        return executeUpload(formData, isResubmit);
     };
 
     const handleStandardUpload = (isResubmit = false) => {
@@ -501,7 +429,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             if (data.success) {
                 if (isResubmit) {
                     setResubmitFiles(prev => [...prev, data.fileName]);
-                    setResubmitPreviewUrl(null); 
+                    setResubmitHighlightFile(null); 
                     setResubmitRawFile(null);
                 } else {
                     // The row was removed while uploading: don't leave the new file behind
@@ -511,7 +439,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     }
                     setFulfilledCourses(list => list.map(c => c.id === targetRowId ? { ...c, file: data.fileName } : c));
                     setFieldError(`row:${targetRowId}:file`, '');
-                    setTimeout(() => { setPreviewUrl(null); setRawFile(null); setActiveUploadId(null); }, 1000);
+                    setTimeout(() => { setHighlightFile(null); setRawFile(null); setActiveUploadId(null); }, 1000);
                 }
                 setUploadStatus(t('student_upload_saved'));
                 setTimeout(() => setUploadStatus(''), 2000);
@@ -553,7 +481,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setGradingStatus({});
                 setFieldErrors({});
                 setShowErrorSummary(false);
-                setSelectedCourses([]); setActiveUploadId(null); setPreviewUrl(null); setSubmitStatus(''); setStudentNote('');
+                setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
             }
@@ -684,20 +612,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
                             <input type="file" onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '10px' }}/>
                             
-                            {resubmitPreviewUrl && (
-                                <div style={{ marginTop: '10px' }}>
-                                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                        <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
-                                        <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
-                                        <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
-                                    </div>
-                                    <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                        <img ref={imgRef} src={resubmitPreviewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
-                                        <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
-                                    </div><br/>
-                                    <button onClick={() => handleUploadHighlighted(true)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_save_highlighted')}</button>
-                                </div>
+                            {resubmitHighlightFile && (
+                                <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                    <EvidenceHighlighter file={resubmitHighlightFile} onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
+                                </Suspense>
                             )}
 
                             {resubmitRawFile && (
@@ -738,7 +656,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginBottom: '10px', textAlign: 'center' }}>{uploadStatus}</p>}
                         
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitPreviewUrl(null); setResubmitRawFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
+                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitHighlightFile(null); setResubmitRawFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
                             <button onClick={submitResubmission} style={{ padding: '10px 15px', cursor: 'pointer', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('student_resubmit_button')}</button>
                         </div>
                     </div>
@@ -910,20 +828,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     <h4 style={{ marginTop: 0 }}>{t('student_upload_evidence_title')}</h4>
                                     <input type="file" onChange={(e) => handleFileSelect(e, false)} />
                                     
-                                    {previewUrl && (
-                                        <div style={{ marginTop: '10px' }}>
-                                            <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
-                                                <button onClick={() => setActiveTool('pen')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'pen' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_pen')}</button>
-                                                <button onClick={() => setActiveTool('eraser')} style={{ padding: '5px 10px', backgroundColor: activeTool === 'eraser' ? 'var(--control-active)' : 'var(--surface)', border: '1px solid var(--control-border)', borderRadius: '4px' }}>{t('student_tool_eraser')}</button>
-                                                <button onClick={handleClearCanvas} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_tool_clear')}</button>
-                                                <button onClick={() => clearUploadSelection(false)} style={{ padding: '5px 10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('student_remove_selected_file')}</button>
-                                            </div>
-                                            <div style={{ position: 'relative', display: 'block', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid #000' }}>
-                                                <img ref={imgRef} src={previewUrl} onLoad={handleImageLoad} style={{ width: '100%', height: 'auto', display: 'block' }} alt={t('student_syllabus_alt')} />
-                                                <canvas ref={canvasRef} onMouseDown={({ nativeEvent: { offsetX, offsetY } }) => { ctx.beginPath(); ctx.moveTo(offsetX, offsetY); ctx.lineWidth = activeTool === 'pen' ? 3 : 30; ctx.strokeStyle = 'red'; ctx.globalCompositeOperation = activeTool === 'pen' ? 'source-over' : 'destination-out'; setIsDrawing(true); }} onMouseMove={({ nativeEvent: { offsetX, offsetY } }) => { if (isDrawing) { ctx.lineTo(offsetX, offsetY); ctx.stroke(); } }} onMouseUp={() => setIsDrawing(false)} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', cursor: activeTool === 'pen' ? 'crosshair' : 'cell' }} />
-                                            </div><br/>
-                                            <button onClick={() => handleUploadHighlighted(false)} style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}>{t('student_save_highlighted')}</button>
-                                        </div>
+                                    {highlightFile && (
+                                        <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                            <EvidenceHighlighter file={highlightFile} onSave={(blob, name) => uploadHighlighted(blob, name, false)} onCancel={() => clearUploadSelection(false)} />
+                                        </Suspense>
                                     )}
 
                                     {rawFile && (
