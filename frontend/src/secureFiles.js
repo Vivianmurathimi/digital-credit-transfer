@@ -1,4 +1,5 @@
 import http from './http';
+import { fileNameFromDisposition } from './fileRules';
 
 // Evidence files need the login token, so plain <img src> and <a href> links cannot load them.
 // These helpers fetch a file WITH the token and hand the browser a temporary local copy.
@@ -27,12 +28,15 @@ export const openSecureFile = async (fileName) => {
     }
 };
 
-// Saves a file to the user's computer under its stored name
+// Saves a file to the user's computer under the name the student chose (sent by the server,
+// accents included); files from before Group 5 keep their stored name
 export const downloadSecureFile = async (fileName) => {
-    const url = URL.createObjectURL(await fetchFileBlob(fileName));
+    const response = await http.get(getUploadEndpoint(fileName), { timeout: false });
+    const name = fileNameFromDisposition(response.headers.get('content-disposition')) || fileName;
+    const url = URL.createObjectURL(await response.blob());
     const link = document.createElement('a');
     link.href = url;
-    link.download = fileName;
+    link.download = name;
     document.body.appendChild(link);
     link.click();
     link.remove();

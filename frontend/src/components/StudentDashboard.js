@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
+import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi } from '../applicationForm';
 
 
@@ -60,7 +61,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
-    const [resubmitRawFile, setResubmitRawFile] = useState(null); 
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
     // Original file names for display: stored name -> name the student chose
@@ -285,9 +285,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // Replacing uploads the new file first and deletes the old one only after that worked.
     const handleGradingFileChosen = async (key, file) => {
         if (!file) return;
+        // Checked before uploading, with the same rules and messages as the server
+        const problem = await checkFile(file, MAX_MB.unchanged);
+        if (problem) { setGradingState(key, { message: t(`errors.${problem.code}`, problem.params || {}) }); return; }
         setGradingState(key, { uploading: true });
         try {
             const formData = new FormData();
+            formData.append('kind', 'unchanged');
             formData.append('file', file);
             const data = await http.post('uploads', { body: formData, timeout: false }).json();
             const current = institutionsRef.current.find((i) => i.key === key);
@@ -312,23 +316,24 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // --- Syllabi (one per fulfilled course, when the syllabus rule applies) ---
     const setSyllabusState = (rowId, state) => setSyllabusStatus((prev) => ({ ...prev, [rowId]: state }));
     const chooseSyllabus = (rowId) => { syllabusPickRow.current = rowId; syllabusInput.current?.click(); };
-    const handleSyllabusChosen = (file) => {
+    const handleSyllabusChosen = async (file) => {
         const rowId = syllabusPickRow.current;
         if (!file || !rowId) return;
-        // A syllabus must be highlighted, so only PDFs and images are accepted
-        if (!(file.type === 'application/pdf' || file.type.startsWith('image/'))) {
-            setSyllabusState(rowId, { message: t('student_highlighter_open_failed') });
-            return;
-        }
+        // A syllabus must be highlighted: PDF, JPG or PNG, opened in the highlighter
+        const problem = await checkFile(file, MAX_MB.highlighterOriginal);
+        if (problem) { setSyllabusState(rowId, { message: t(`errors.${problem.code}`, problem.params || {}) }); return; }
         setSyllabusState(rowId, {});
         setSyllabusRowId(rowId);
         setSyllabusFile(file);
     };
     // The highlighted syllabus is uploaded and linked to its course; a replaced one is deleted afterwards
     const uploadSyllabus = async (rowId, blob, fileName) => {
+        const tooLarge = tooLargeToUpload(blob, MAX_MB.highlighted);
+        if (tooLarge) { setSyllabusState(rowId, { message: t(`errors.${tooLarge.code}`, tooLarge.params) }); return; }
         setSyllabusState(rowId, { uploading: true });
         try {
             const formData = new FormData();
+            formData.append('kind', 'highlighted');
             formData.append('file', blob, fileName);
             const data = await http.post('uploads', { body: formData, timeout: false }).json();
             const row = rowsRef.current.find((c) => c.id === rowId);
@@ -377,7 +382,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const clearUploadSelection = (isResubmit = false) => {
         if (isResubmit) {
             setResubmitHighlightFile(null);
-            setResubmitRawFile(null);
         } else {
             setHighlightFile(null);
         }
@@ -421,41 +425,33 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     };
 
     // A chosen syllabus: PDFs and images open in the highlighter; other types are attached as they are
-    const handleFileSelect = (e, isResubmit = false) => {
+    // A chosen file is checked (PDF, JPG or PNG; up to 50 MB, since only the saved pages are uploaded)
+    // and then opened in the highlighter. For a transcript a highlight is required; in "add missing
+    // info" it is optional, and without highlights the file is uploaded unchanged.
+    const handleFileSelect = async (e, isResubmit = false) => {
         const file = e.target.files[0];
         e.target.value = ''; // the same file can be chosen again
         if (!file) return;
-        const highlightable = file.type === 'application/pdf' || file.type.startsWith('image/');
-        if (isResubmit) {
-            // "Add missing info" may be any document the reviewer asked for: highlighting is optional
-            setResubmitHighlightFile(highlightable ? file : null);
-            setResubmitRawFile(highlightable ? null : file);
-        } else if (highlightable) {
-            setHighlightFile(file);
-            setUploadStatus('');
-        } else {
-            // A transcript must be highlighted, so only PDF, JPG or PNG (no "attach as it is")
-            setHighlightFile(null);
-            setUploadStatus(t('student_highlighter_open_failed'));
+        const problem = await checkFile(file, MAX_MB.highlighterOriginal);
+        if (problem) {
+            if (isResubmit) setResubmitHighlightFile(null); else setHighlightFile(null);
+            setUploadStatus(t(`errors.${problem.code}`, problem.params || {}));
+            return;
         }
+        setUploadStatus('');
+        if (isResubmit) setResubmitHighlightFile(file); else setHighlightFile(file);
     };
 
-    // The highlighter's finished file (highlighted PDF or image) is uploaded like any evidence
-    const uploadHighlighted = (blob, fileName, isResubmit) => {
+    // The highlighter's finished file is uploaded like any evidence. kind is 'highlighted'
+    // (up to 15 MB), or 'unchanged' when "add missing info" saves a file without highlights (10 MB).
+    const uploadHighlighted = (blob, fileName, isResubmit, kind = 'highlighted') => {
+        const tooLarge = tooLargeToUpload(blob, kind === 'highlighted' ? MAX_MB.highlighted : MAX_MB.unchanged);
+        if (tooLarge) { setUploadStatus(t(`errors.${tooLarge.code}`, tooLarge.params)); return undefined; }
         setUploadStatus(t('student_upload_saving'));
         const formData = new FormData();
+        formData.append('kind', kind);
         formData.append('file', blob, fileName);
         return executeUpload(formData, isResubmit);
-    };
-
-    // Only the "add missing info" window attaches files as they are (highlighting is optional there)
-    const handleStandardUpload = () => {
-        const fileToUpload = resubmitRawFile;
-        if (!fileToUpload) return;
-        setUploadStatus(t('student_upload_saving'));
-        const formData = new FormData();
-        formData.append('file', fileToUpload);
-        executeUpload(formData, true);
     };
 
     // Handles the actual API call and state update for the specific course
@@ -470,7 +466,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 if (isResubmit) {
                     setResubmitFiles(prev => [...prev, data.fileName]);
                     setResubmitHighlightFile(null); 
-                    setResubmitRawFile(null);
                 } else {
                     // The row was removed while uploading: don't leave the new file behind
                     if (!rowsRef.current.some(c => c.id === targetRowId)) {
@@ -656,23 +651,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
-                            <input type="file" onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '10px' }}/>
+                            <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '4px' }}/>
+                            <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 10px 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
                             
                             {resubmitHighlightFile && (
                                 <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
                                     {/* Missing information can be a transcript or a syllabus, so the longer (syllabus) limit applies */}
-                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" highlightRequired={false} onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
+                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" highlightRequired={false} onSave={(blob, name, kind) => uploadHighlighted(blob, name, true, kind)} onCancel={() => clearUploadSelection(true)} />
                                 </Suspense>
-                            )}
-
-                            {resubmitRawFile && (
-                                <div style={{ marginTop: '10px', padding: '10px', backgroundColor: 'var(--surface-accent)', borderRadius: '5px' }}>
-                                    <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: 'var(--link)' }}>📄 <strong>{resubmitRawFile.name}</strong></p>
-                                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        <button onClick={() => handleStandardUpload()} style={{ padding: '8px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_attach_document')}</button>
-                                        <button onClick={() => clearUploadSelection(true)} style={{ padding: '8px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_selected_file')}</button>
-                                    </div>
-                                </div>
                             )}
 
                             {resubmitFiles.length > 0 && (
@@ -703,7 +689,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginBottom: '10px', textAlign: 'center' }}>{uploadStatus}</p>}
                         
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitHighlightFile(null); setResubmitRawFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
+                            <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitHighlightFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
                             <button onClick={submitResubmission} style={{ padding: '10px 15px', cursor: 'pointer', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('student_resubmit_button')}</button>
                         </div>
                     </div>
@@ -747,7 +733,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 {/* Grading-system document: one per institution, no highlighting */}
                                 <div style={{ marginTop: '12px' }}>
                                     <span id={`inst-grading-label-${inst.key}`} style={fieldLabelStyle}>{t('student_grading_doc_label')}</span>
-                                    <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')}</p>
+                                    <p id={`inst-grading-help-${inst.key}`} style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px 0' }}>{t('student_grading_doc_help')} {t('student_file_hint', { max: MAX_MB.unchanged })}</p>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                         {/* Translated button; the browser's own "Choose file" input stays hidden */}
                                         <button
@@ -770,7 +756,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     {renderFieldError(`inst:${inst.key}:grading_file`)}
                                     <input
                                         ref={(el) => { gradingInputs.current[inst.key] = el; }}
-                                        type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" tabIndex={-1} style={{ display: 'none' }}
+                                        type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
                                         // Cleared after each choice, so the same file can be chosen again
                                         onChange={(e) => { handleGradingFileChosen(inst.key, e.target.files[0]); e.target.value = ''; }}
                                     />
@@ -873,11 +859,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             {activeUploadId === course.id && (
                                 <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--blue)', borderRadius: '5px', marginTop: '15px' }}>
                                     <h4 style={{ marginTop: 0 }}>{t('student_upload_evidence_title')}</h4>
-                                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => handleFileSelect(e, false)} />
+                                    <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, false)} />
+                                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
                                     
                                     {highlightFile && (
                                         <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
-                                            <EvidenceHighlighter file={highlightFile} kind="transcript" onSave={(blob, name) => uploadHighlighted(blob, name, false)} onCancel={() => clearUploadSelection(false)} />
+                                            <EvidenceHighlighter file={highlightFile} kind="transcript" onSave={(blob, name, kind) => uploadHighlighted(blob, name, false, kind)} onCancel={() => clearUploadSelection(false)} />
                                         </Suspense>
                                     )}
 
@@ -919,6 +906,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             <h3 id="syllabus-title" style={{ margin: '0 0 6px 0', fontSize: '15px' }}>
                                 {syllabusNeeded && !allSyllabiAttached ? `⚠ ${t('student_syllabus_needed_title')}` : t('student_syllabi_attached')}
                             </h3>
+                            <p style={{ fontSize: '12px', margin: '0 0 6px 0', opacity: 0.85 }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
                             {syllabusNeeded && (
                                 <ul style={{ margin: '0 0 10px 0', paddingLeft: '20px' }}>
                                     {syllabusNeededFor.map((code) => <li key={code}>{t(`student_syllabus_reason_${code}`)}</li>)}
@@ -956,7 +944,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 </div>
                             ))}
                             <input
-                                ref={syllabusInput} type="file" accept=".pdf,.jpg,.jpeg,.png" tabIndex={-1} style={{ display: 'none' }}
+                                ref={syllabusInput} type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
                                 onChange={(e) => { handleSyllabusChosen(e.target.files[0]); e.target.value = ''; }}
                             />
                         </section>

@@ -5,6 +5,7 @@ import {
     MARK_COLOR, MARK_OPACITY, MAX_PAGES, MARKER_WIDTH_SHARE, ERASER_WIDTH_SHARE,
     fitWithin, hasVisibleMarks, hasEnoughHighlight, isTooLong, pagesToKeep, rememberRecent, buildHighlightedPdf,
 } from '../highlighter';
+import { MAX_MB, tooLargeToUpload } from '../fileRules';
 
 // The PDF engine's helper (worker) is bundled with the app, so its version always matches
 // the installed pdfjs-dist (it used to come from a CDN under a file name that no longer exists)
@@ -68,7 +69,9 @@ const smallButton = { padding: '5px 10px', border: '1px solid var(--control-bord
  * Pages are rendered only when viewed, and only the last few renderings are kept in memory;
  * marks are kept for every page that has them. Marks are stored in page pixels (not screen
  * pixels), so they stay aligned when the window is resized and the saved file is sharp.
- * Saving hands the finished file to onSave(blob, fileName); uploading is up to the caller.
+ * Saving hands the finished file to onSave(blob, fileName, kind); uploading is up to the caller.
+ * kind is 'highlighted', or 'unchanged' when highlighting is optional and nothing was highlighted
+ * (then the original file is handed over as it is).
  *
  * @param kind 'transcript' or 'syllabus': sets the page limit (longer PDFs are refused when opened)
  *             and the message when nothing is highlighted
@@ -293,8 +296,25 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
         keepShownMarks();
         updateMarked();
         // Highlight required: what counts is what is left now (highlighting and erasing everything is nothing)
-        if (highlightRequired && highlightedIn(pagesRef.current).length === 0) {
+        const nothingHighlighted = highlightedIn(pagesRef.current).length === 0;
+        if (highlightRequired && nothingHighlighted) {
             setNeedHighlight(true);
+            return;
+        }
+        // Highlighting optional and nothing highlighted: the original is uploaded unchanged
+        // (all its pages, not just page 1), within the limit for unchanged files
+        if (nothingHighlighted) {
+            const tooLarge = tooLargeToUpload(file, MAX_MB.unchanged);
+            if (tooLarge) { setMessage(t(`errors.${tooLarge.code}`, tooLarge.params)); return; }
+            setStatus('saving');
+            setMessage('');
+            try {
+                await onSave(file, file.name, 'unchanged');
+            } catch (err) {
+                console.error('Could not upload the file', err);
+                setMessage(t('student_highlighter_save_failed'));
+            }
+            setStatus((current) => (current === 'saving' ? 'ready' : current));
             return;
         }
         setStatus('saving');
@@ -305,7 +325,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                 const entry = pagesRef.current.get(1);
                 const jpeg = file.type === 'image/jpeg';
                 const bytes = await canvasBytes(flatten(entry.page, entry.marks), jpeg ? 'image/jpeg' : 'image/png', 0.92);
-                await onSave(new Blob([bytes], { type: jpeg ? 'image/jpeg' : 'image/png' }), highlightedName(file.name, jpeg ? 'jpg' : 'png'));
+                await onSave(new Blob([bytes], { type: jpeg ? 'image/jpeg' : 'image/png' }), highlightedName(file.name, jpeg ? 'jpg' : 'png'), 'highlighted');
             } else {
                 const keep = pagesToKeep(highlightedIn(pagesRef.current));
                 const { bytes } = await buildHighlightedPdf({
@@ -325,7 +345,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                         return bytes;
                     },
                 });
-                await onSave(new Blob([bytes], { type: 'application/pdf' }), highlightedName(file.name, 'pdf'));
+                await onSave(new Blob([bytes], { type: 'application/pdf' }), highlightedName(file.name, 'pdf'), 'highlighted');
             }
         } catch (err) {
             console.error('Could not create the highlighted file', err);
