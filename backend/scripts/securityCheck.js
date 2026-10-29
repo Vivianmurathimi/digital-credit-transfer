@@ -294,11 +294,14 @@ const run = async () => {
                 institutions: [{ name: 'Probe University', country: 'XX', grading_file: d.fileOfB }],
                 fulfilled_courses: [{ institution: 0, course_name: 'Probe', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB }],
                 target_course_ids: [],
+                student_note: 'x'.repeat(2001),
             });
             const probeCodes = (probe.body?.errors || []).map((e) => `${e.field} ${e.code}`);
+            // The newest rule (note limit, Group 7) must be there too, so an outdated server never passes
             const serverIsCurrent = probe.status === 400
                 && probeCodes.includes('institutions[0].country INVALID_COUNTRY')
-                && probeCodes.includes('target_course_ids INVALID_TARGET_COURSES');
+                && probeCodes.includes('target_course_ids INVALID_TARGET_COURSES')
+                && probeCodes.includes('student_note NOTE_TOO_LONG');
             report(serverIsCurrent, 'The backend runs the current code (compatibility probe)', serverIsCurrent ? 'submit tests will run' : `${probe.status} ${probe.code}: RESTART THE BACKEND`);
             if (!serverIsCurrent) {
                 console.log('WARNING: the backend answers like older code. All submit tests are SKIPPED, so nothing can be saved.');
@@ -419,6 +422,15 @@ const run = async () => {
             // and reach the file check
             await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
 
+            // --- Group 7: note limits (2000 characters, counted like the browser) ---
+            await fieldError('Note of 2001 characters', { ...formWith({}), student_note: 'n'.repeat(2001) }, 'student_note', 'NOTE_TOO_LONG', { max: 2000 });
+            await passesFields('Note of 2000 emoji (2000 characters, although .length says 4000)', { ...formWith({}), student_note: '😀'.repeat(2000) });
+            await passesFields('Note of 2000 accented letters typed as letter + accent', { ...formWith({}), student_note: 'a\u0301'.repeat(2000) });
+            await fieldError('Note that is not text', { ...formWith({}), student_note: { text: 'x' } }, 'student_note', 'INVALID_NOTE');
+            const longReply = await call('PUT', `applications/${d.appOfB.id}/resubmit`, { token: A, json: { student_resubmit_note: 'r'.repeat(2001), new_files: '' } });
+            report(longReply.status === 400 && longReply.code === 'NOTE_TOO_LONG' && longReply.body?.field === 'student_resubmit_note',
+                'Reply note of 2001 characters ("add missing info")', `${longReply.status} ${longReply.code} at ${longReply.body?.field}`);
+
             // --- Group 6: one active application per PTE course ---
             // Student B applies again for the course of B's own open application. The request uses A's
             // file, so even a broken duplicate check would still be refused by the file check.
@@ -533,6 +545,14 @@ const run = async () => {
 
     for (const name of created) await call('DELETE', `uploads/${name}`, { token: A });
     report(await objectCount() === before, 'Refused uploads leave nothing in storage', `${before} files before and after (test uploads deleted)`);
+
+    // Request bodies the server can't take are answered in the usual { error, code } format
+    const bigBody = await fetch(`${API}/applications`, { method: 'POST', headers: { Authorization: `Bearer ${A}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ student_note: 'x'.repeat(200 * 1024) }) });
+    const bigAnswer = await bigBody.json().catch(() => null);
+    report(bigBody.status === 413 && bigAnswer?.code === 'REQUEST_TOO_LARGE', 'A request body over 100 KB gets a JSON answer', `${bigBody.status} ${bigAnswer?.code || 'not JSON'}`);
+    const badJson = await fetch(`${API}/applications`, { method: 'POST', headers: { Authorization: `Bearer ${A}`, 'Content-Type': 'application/json' }, body: '{ this is not json' });
+    const badAnswer = await badJson.json().catch(() => null);
+    report(badJson.status === 400 && badAnswer?.code === 'INVALID_JSON', 'Broken JSON gets a JSON answer', `${badJson.status} ${badAnswer?.code || 'not JSON'}`);
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);

@@ -5,11 +5,30 @@ import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode } from '../applicationForm';
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode,
+    NOTE_MAX, noteLength, checkNote } from '../applicationForm';
 
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
 const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
+
+// Live character counter for a note. Screen readers only hear it at a few points near the limit
+// (200, 100 and 50 left, at the limit, over it), not on every keystroke.
+const visuallyHidden = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
+const NoteCounter = ({ id, text, t }) => {
+    const used = noteLength(text);
+    const left = NOTE_MAX - used;
+    const stage = left < 0 ? 'over' : left === 0 ? 0 : left <= 50 ? 50 : left <= 100 ? 100 : left <= 200 ? 200 : null;
+    let announcement = '';
+    if (stage === 'over') announcement = t('student_note_over', { over: -left });
+    else if (stage !== null) announcement = t('student_note_left', { left: stage === 0 ? 0 : stage });
+    return (
+        <div id={id} style={{ fontSize: '12px', textAlign: 'right', marginTop: '4px', color: left < 0 ? 'var(--error-text)' : 'var(--text-muted)', fontWeight: left < 0 ? 'bold' : 'normal' }}>
+            {t('student_note_counter', { used, max: NOTE_MAX })}
+            <span aria-live="polite" style={visuallyHidden}>{announcement}</span>
+        </div>
+    );
+};
 
 const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
 const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
@@ -60,6 +79,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
+    const [resubmitNoteError, setResubmitNoteError] = useState('');
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
@@ -147,7 +167,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         const [kind, id, field] = key.split(':');
         if (kind === 'row') return `${ROW_DOM[field]}-${id}`;
         if (kind === 'inst') return `${INST_DOM[field]}-${id}`;
-        return { target_course_ids: 'target-course-select', institutions: 'institutions-title', fulfilled_courses: 'fulfilled-courses-start' }[key];
+        return { target_course_ids: 'target-course-select', student_note: 'student-note', institutions: 'institutions-title', fulfilled_courses: 'fulfilled-courses-start' }[key];
     };
     const fieldProps = (key) => {
         const id = domIdFor(key);
@@ -163,7 +183,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // The body that would be sent now, and the maps from its positions back to the form's keys
     const currentSubmission = () => {
         const { institutionKeyAt, rowIdAt, ...form } = buildSubmission(institutions, fulfilledCourses);
-        return { body: { ...form, target_course_ids: selectedCourses.map((c) => c.id) }, map: { institutionKeyAt, rowIdAt } };
+        return { body: { ...form, target_course_ids: selectedCourses.map((c) => c.id), student_note: studentNote }, map: { institutionKeyAt, rowIdAt } };
     };
 
     // On leaving a field: check just that field, and only if something was entered
@@ -517,10 +537,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             setSubmitStatus(t('student_submit_saving'));
             // Only the course ids: the server checks them against the student's programme
             // and stores their code, name and credits itself
-            const data = await http.post('applications', { json: {
-                ...body,
-                student_note: studentNote 
-            } }).json();
+            const data = await http.post('applications', { json: body }).json();
             
             if (data.success) {
                 alert(t('student_submission_success'));
@@ -562,6 +579,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const submitResubmission = async () => {
         if (!isSubmissionsOpen) return alert(t('student_submissions_closed', 'Submissions are currently closed.'));
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
+        // Same note rule as the server: shown under the note, nothing sent
+        const noteProblem = checkNote(resubmitNote);
+        if (noteProblem) { setResubmitNoteError(t(`errors.${noteProblem.code}`, noteProblem.params || {})); return undefined; }
+        setResubmitNoteError('');
         try {
             setUploadStatus(t('student_resubmission_sending'));
             const data = await http.put(`applications/${resubmitModal.app.id}/resubmit`, { json: { 
@@ -573,7 +594,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
             }
-        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed')); }
+        } catch (err) {
+            // A note error from the server goes under the note, anything else into the status line
+            if (getFieldErrors(err, t).student_resubmit_note) setResubmitNoteError(getFieldErrors(err, t).student_resubmit_note);
+            else setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed'));
+        }
     };
 
     return (
@@ -653,11 +678,16 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Your Reply to Reviewer:</label>
                         <textarea 
                             value={resubmitNote}
-                            onChange={(e) => setResubmitNote(e.target.value)}
+                            onChange={(e) => { setResubmitNote(e.target.value); setResubmitNoteError(''); }}
                             rows="3"
-                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid var(--border-strong)', boxSizing: 'border-box', marginBottom: '15px' }}
+                            aria-invalid={resubmitNoteError ? true : undefined}
+                            aria-describedby={resubmitNoteError ? 'resubmit-note-counter resubmit-note-error' : 'resubmit-note-counter'}
+                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: resubmitNoteError ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
                             placeholder="Explain what you have updated or attach new highlighted files below..."
                         />
+                        <NoteCounter id="resubmit-note-counter" text={resubmitNote} t={t} />
+                        {resubmitNoteError && <p id="resubmit-note-error" style={{ color: 'var(--error-text)', fontSize: '12px', fontWeight: 'bold', margin: '4px 0 0 0' }}>{resubmitNoteError}</p>}
+                        <div style={{ marginBottom: '15px' }} />
 
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
@@ -963,15 +993,20 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     )}
 
                     <div style={{ marginBottom: '20px' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
+                        <label htmlFor="student-note" style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
                         <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '5px 0' }}>{t('student_notes_help')}</p>
                         <textarea 
+                            {...fieldProps('student_note')}
                             value={studentNote}
-                            onChange={(e) => setStudentNote(e.target.value)}
+                            onChange={(e) => { setStudentNote(e.target.value); setFieldError('student_note', ''); }}
+                            onBlur={(e) => checkField('student_note', e.target.value)}
                             rows="4"
-                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid var(--border-strong)', boxSizing: 'border-box' }}
+                            aria-describedby={fieldErrors.student_note ? 'student-note-counter student-note-error' : 'student-note-counter'}
+                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: fieldErrors.student_note ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
                             placeholder={t('student_notes_placeholder')}
                         />
+                        <NoteCounter id="student-note-counter" text={studentNote} t={t} />
+                        {renderFieldError('student_note')}
                     </div>
 
                     {!isSubmissionsOpen && (

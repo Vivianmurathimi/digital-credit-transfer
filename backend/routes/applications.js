@@ -9,6 +9,7 @@ const sendError = require('../utils/sendError');
 const { sendValidationErrors } = sendError;
 const {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
+    checkNote, normalizeNote,
 } = require('../utils/applicationForm');
 
 // The database refused a second active application for the same PTE course (migration 005)
@@ -94,7 +95,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             `INSERT INTO applications 
             (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
-            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, student_note]
+            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, normalizeNote(student_note)]
         ).catch((err) => {
             // Two submits at the same moment both passed the check above: the database lets only one in
             if (isDuplicateApplication(err)) return null;
@@ -197,6 +198,15 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
     const { id } = req.params;
     const { student_resubmit_note, new_files } = req.body;
 
+    // The same note rules as the application note (2000 characters, counted the same way)
+    const noteProblem = checkNote(student_resubmit_note);
+    if (noteProblem) {
+        return sendError(res, 400, noteProblem.code, noteProblem.message, {
+            field: 'student_resubmit_note',
+            errors: [{ field: 'student_resubmit_note', code: noteProblem.code, error: noteProblem.message, ...(noteProblem.params ? { params: noteProblem.params } : {}) }],
+        });
+    }
+
     try {
         const ownerCheck = await pool.query('SELECT student_id, status, supplemental_files FROM applications WHERE id = $1', [id]);
         if (ownerCheck.rows.length === 0) {
@@ -226,7 +236,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
 
         await pool.query(
             "UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2 WHERE id = $3", 
-            [student_resubmit_note, updatedFiles, id]
+            [normalizeNote(student_resubmit_note), updatedFiles, id]
         );
         res.json({ success: true });
 

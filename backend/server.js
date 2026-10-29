@@ -6,6 +6,7 @@ const { CORS_ORIGINS } = require('./config/urls');
 // Checks the RATE_LIMIT_* settings
 require('./utils/rateLimit');
 const express = require('express');
+const sendError = require('./utils/sendError');
 const cors = require('cors');
 
 // Import your configuration files
@@ -65,6 +66,16 @@ app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/archive', archiveRoutes);
+
+// Errors that reach here (e.g. a request body that is too large or isn't valid JSON) are answered
+// in the usual { error, code } format instead of Express's HTML error page
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err.type === 'entity.too.large') return sendError(res, 413, 'REQUEST_TOO_LARGE', 'The request is too large');
+    if (err.type === 'entity.parse.failed') return sendError(res, 400, 'INVALID_JSON', 'The request could not be read');
+    console.error('❌ Unhandled error:', err.message);
+    return sendError(res, 500, 'SERVER_ERROR', 'Something went wrong');
+});
 
 // Start Server
 const PORT = process.env.PORT || 5050;

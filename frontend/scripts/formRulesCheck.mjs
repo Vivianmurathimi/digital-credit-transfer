@@ -117,6 +117,25 @@ const blocked = browser.blockedCourseCodes([
 report(JSON.stringify(blocked) === JSON.stringify({ CS202: 'pending', CS305: 'approved', CS401: 'needs_info' }),
     'Picker blocks pending, needs-info and approved courses; rejected and withdrawn stay available', JSON.stringify(blocked));
 
+console.log('\nNote length: browser vs. server\n');
+report(browser.NOTE_MAX === server.NOTE_MAX, 'Same note limit', String(server.NOTE_MAX));
+const noteCases = {
+    'plain text': 'Hello reviewer',
+    'accents typed as one character': 'tantárgyleírás',
+    'accents typed as letter + accent': 'tanta\u0301rgylei\u0301ra\u0301s',
+    'emoji': '👍🎓📚',
+    'combined emoji (family)': '👨‍👩‍👧',
+    'Hungarian ő and ű': 'őű ŐŰ',
+};
+for (const [name, text] of Object.entries(noteCases)) {
+    report(browser.noteLength(text) === server.noteLength(text), `Counted the same: ${name}`, `${server.noteLength(text)} characters (.length ${text.length})`);
+}
+const edge = (text) => `${JSON.stringify(browser.checkNote(text))} / ${JSON.stringify(server.checkNote(text) && { code: server.checkNote(text).code, ...(server.checkNote(text).params ? { params: server.checkNote(text).params } : {}) })}`;
+for (const [name, text] of [['2000 emoji', '😀'.repeat(2000)], ['2001 emoji', '😀'.repeat(2001)], ['2000 letters typed as letter + accent', 'a\u0301'.repeat(2000)], ['2001 letters', 'x'.repeat(2001)], ['not text', 42]]) {
+    const [b, s2] = edge(text).split(' / ');
+    report(b === s2, `Same verdict: ${name}`, b === 'null' ? 'allowed' : b);
+}
+
 console.log('\nLimits and stored data\n');
 report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));
 report(JSON.stringify(browser.CREDIT_MAX) === JSON.stringify(server.CREDIT_MAX), 'Same credit maximum per system', JSON.stringify(server.CREDIT_MAX));

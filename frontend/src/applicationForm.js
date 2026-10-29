@@ -93,6 +93,19 @@ export const buildSubmission = (institutions, rows) => {
 // (backend/utils/applicationForm.js), run on the same body that is sent. Only for convenience:
 // the server checks everything again. A test runs both on the same inputs and compares them.
 
+// Notes to the reviewer: counted like the server (backend/utils/applicationForm.js), after
+// normalising (an "á" typed as "a" + accent is one character), in Unicode characters (an emoji is
+// one, not two as .length would count). check:form-rules compares both.
+export const NOTE_MAX = 2000;
+export const normalizeNote = (text) => (typeof text === 'string' ? text.normalize('NFC') : '');
+export const noteLength = (text) => [...normalizeNote(text)].length;
+export const checkNote = (value) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string') return { code: 'INVALID_NOTE' };
+    if (noteLength(value) > NOTE_MAX) return { code: 'NOTE_TOO_LONG', params: { max: NOTE_MAX } };
+    return null;
+};
+
 export const LIMITS = { institutions: 10, fulfilledCourses: 20, targetCourses: 1, institutionName: 200, courseName: 200, courseCode: 50, grade: 20, creditSystemOther: 50 };
 export const CREDIT_MAX = { ECTS: 60, US_CREDIT_HOURS: 30, UK_CATS: 120, OTHER: 120 };
 const MOST_GENEROUS_MAX = Math.max(...Object.values(CREDIT_MAX));
@@ -170,11 +183,14 @@ export const validateSubmission = (body, isCountryCode) => {
         });
     }
 
+    const noteProblem = checkNote(body.student_note);
+    if (noteProblem) add('student_note', noteProblem.code, noteProblem.params);
+
     const targets = body.target_course_ids;
     const ids = Array.isArray(targets) && targets.every((id) => Number.isInteger(id) && id > 0) ? [...new Set(targets)] : null;
     if (!ids || ids.length < 1 || ids.length > LIMITS.targetCourses) add('target_course_ids', 'INVALID_TARGET_COURSES');
 
-    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : 2);
+    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : field === 'target_course_ids' ? 2 : 3);
     return errors.sort((a, b) => order(a.field) - order(b.field));
 };
 
@@ -188,7 +204,7 @@ export const validateSubmission = (body, isCountryCode) => {
 const INSTITUTION_FIELDS = ['name', 'country', 'grading_file'];
 const ROW_FIELDS = ['institution', 'course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade', 'file', 'syllabus_file'];
 export const formKeyForPath = (path, map) => {
-    if (['target_course_ids', 'institutions', 'fulfilled_courses'].includes(path)) return path;
+    if (['target_course_ids', 'institutions', 'fulfilled_courses', 'student_note', 'student_resubmit_note'].includes(path)) return path;
     let match = /^institutions\[(\d+)\]\.(\w+)$/.exec(path);
     if (match && INSTITUTION_FIELDS.includes(match[2]) && map.institutionKeyAt[match[1]]) return `inst:${map.institutionKeyAt[match[1]]}:${match[2]}`;
     match = /^fulfilled_courses\[(\d+)\]\.(\w+)$/.exec(path);
