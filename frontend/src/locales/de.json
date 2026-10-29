@@ -342,7 +342,9 @@
     "INVALID_TOKEN": "Ihre Sitzung ist ungültig. Bitte melden Sie sich erneut an.",
     "TOKEN_EXPIRED": "Ihre Sitzung ist nach 30 Minuten Inaktivität abgelaufen. Bitte melden Sie sich erneut an.",
     "SESSION_TOO_OLD": "Aus Sicherheitsgründen endet eine Sitzung nach 8 Stunden. Bitte melden Sie sich erneut an.",
-    "ACCOUNT_GONE": "Dieses Konto existiert nicht mehr."
+    "ACCOUNT_GONE": "Dieses Konto existiert nicht mehr.",
+    "DRAFT_TOO_LARGE": "Der Entwurf ist zu groß zum Speichern (höchstens {{max}} KB).",
+    "INVALID_DRAFT": "Der Entwurf konnte nicht gespeichert werden."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -388,5 +390,15 @@
   "student_summary_note": "Hinweis für die prüfende Person",
   "student_summary_no_note": "Kein Hinweis",
   "student_summary_back": "Zurück zur Bearbeitung",
-  "student_summary_confirm": "Bestätigen und absenden"
+  "student_summary_confirm": "Bestätigen und absenden",
+  "student_draft_hint": "Ihr Formular wird automatisch als Entwurf gespeichert.",
+  "student_draft_saving": "Entwurf wird gespeichert…",
+  "student_draft_saved": "Entwurf gespeichert um {{time}}",
+  "student_draft_save_failed": "Der Entwurf konnte nicht gespeichert werden. Bei Ihrer nächsten Änderung wird es erneut versucht.",
+  "student_draft_restored": "Ihr nicht gesendeter Antrag wurde wiederhergestellt (zuletzt gespeichert um {{time}}).",
+  "student_draft_files_dropped_one": "{{count}} Datei aus dem Entwurf ist nicht mehr verfügbar und wurde entfernt. Bitte laden Sie sie erneut hoch.",
+  "student_draft_files_dropped_other": "{{count}} Dateien aus dem Entwurf sind nicht mehr verfügbar und wurden entfernt. Bitte laden Sie sie erneut hoch.",
+  "student_draft_course_dropped": "Der im Entwurf gewählte PTE-Kurs wird nicht mehr angeboten und wurde entfernt. Bitte wählen Sie erneut.",
+  "student_draft_outdated": "Ihr gespeicherter Entwurf stammt aus einer älteren Version dieses Formulars und konnte nicht wiederhergestellt werden.",
+  "student_draft_load_failed": "Ihr gespeicherter Entwurf konnte nicht geladen werden. Das automatische Speichern ist pausiert, damit er nicht überschrieben wird: Laden Sie die Seite neu."
 }

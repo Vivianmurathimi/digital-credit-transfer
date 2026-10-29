@@ -342,7 +342,9 @@
     "INVALID_TOKEN": "A munkamenet érvénytelen. Kérjük, jelentkezzen be újra.",
     "TOKEN_EXPIRED": "A munkamenet 30 perc inaktivitás után lejárt. Kérjük, jelentkezzen be újra.",
     "SESSION_TOO_OLD": "Biztonsági okokból a munkamenet 8 óra után véget ér. Kérjük, jelentkezzen be újra.",
-    "ACCOUNT_GONE": "Ez a fiók már nem létezik."
+    "ACCOUNT_GONE": "Ez a fiók már nem létezik.",
+    "DRAFT_TOO_LARGE": "A vázlat túl nagy a mentéshez (legfeljebb {{max}} KB).",
+    "INVALID_DRAFT": "A vázlatot nem sikerült menteni."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -388,5 +390,15 @@
   "student_summary_note": "Megjegyzés a bírálónak",
   "student_summary_no_note": "Nincs megjegyzés",
   "student_summary_back": "Vissza a szerkesztéshez",
-  "student_summary_confirm": "Megerősítés és beküldés"
+  "student_summary_confirm": "Megerősítés és beküldés",
+  "student_draft_hint": "Az űrlapot vázlatként automatikusan mentjük.",
+  "student_draft_saving": "Vázlat mentése…",
+  "student_draft_saved": "Vázlat mentve: {{time}}",
+  "student_draft_save_failed": "A vázlatot nem sikerült menteni. A következő módosításnál újra megpróbáljuk.",
+  "student_draft_restored": "Visszaállítottuk a be nem küldött kérelmét (utoljára mentve: {{time}}).",
+  "student_draft_files_dropped_one": "A vázlat {{count}} fájlja már nem érhető el, ezért eltávolítottuk. Kérjük, töltse fel újra.",
+  "student_draft_files_dropped_other": "A vázlat {{count}} fájlja már nem érhető el, ezért eltávolítottuk őket. Kérjük, töltse fel őket újra.",
+  "student_draft_course_dropped": "A vázlatban kiválasztott PTE-kurzus már nem elérhető, ezért eltávolítottuk. Kérjük, válasszon újra.",
+  "student_draft_outdated": "A mentett vázlat az űrlap egy korábbi változatával készült, ezért nem lehetett visszaállítani.",
+  "student_draft_load_failed": "A mentett vázlatot nem sikerült betölteni. Az automatikus mentés szünetel, hogy ne íródjon felül: töltse újra az oldalt."
 }

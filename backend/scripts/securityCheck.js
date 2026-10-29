@@ -66,6 +66,22 @@ const cleanupRateLimitRows = async () => {
     return rowCount;
 };
 
+// ---------- drafts of students A and B (put back at the end) ----------
+
+// The drafts tests overwrite A's and B's draft; their real drafts are kept here and restored
+let draftBackup = null; // { ids, rows }
+const restoreDrafts = async () => {
+    if (!draftBackup) return 0;
+    const { ids, rows } = draftBackup;
+    await pool.query('DELETE FROM application_drafts WHERE student_id = ANY($1)', [ids]);
+    for (const r of rows) {
+        await pool.query('INSERT INTO application_drafts (student_id, version, data, updated_at) VALUES ($1, $2, $3, $4)',
+            [r.student_id, r.version, JSON.stringify(r.data), r.updated_at]);
+    }
+    draftBackup = null;
+    return rows.length;
+};
+
 // ---------- small helpers ----------
 
 const results = { pass: 0, fail: 0, skip: 0 };
@@ -554,6 +570,69 @@ const run = async () => {
     const badAnswer = await badJson.json().catch(() => null);
     report(badJson.status === 400 && badAnswer?.code === 'INVALID_JSON', 'Broken JSON gets a JSON answer', `${badJson.status} ${badAnswer?.code || 'not JSON'}`);
 
+    section('4c. Drafts (Group 7): only ever the student\'s own');
+    const draftsTable = (await pool.query("SELECT to_regclass('public.application_drafts') AS t")).rows[0].t;
+    const draftsProbe = draftsTable ? await call('GET', 'drafts/mine', { token: A }) : null;
+    if (!draftsTable) {
+        skip('All drafts tests', 'the application_drafts table is missing: run "npm run migrate" in backend/');
+    } else if (draftsProbe.status !== 200) {
+        report(false, 'The backend knows the drafts routes', `${draftsProbe.status} ${draftsProbe.code || ''}: RESTART THE BACKEND`);
+        skip('All drafts tests', 'the backend runs older code');
+    } else {
+        draftBackup = {
+            ids: [d.studentA.id, d.studentB.id],
+            rows: (await pool.query('SELECT * FROM application_drafts WHERE student_id = ANY($1)', [[d.studentA.id, d.studentB.id]])).rows,
+        };
+        for (const method of ['GET', 'PUT', 'DELETE']) await expect(`${method} /api/drafts/mine without a token`, call(method, 'drafts/mine'), 401, 'NO_TOKEN');
+        await expect('Reviewer reads a draft', call('GET', 'drafts/mine', { token: R }), 403, 'FORBIDDEN_ROLE');
+        await expect('Superadmin saves a draft', call('PUT', 'drafts/mine', { token: S, json: { version: 1, data: {} } }), 403, 'FORBIDDEN_ROLE');
+
+        const marker = `DRAFT-MARKER-${Date.now()}`;
+        const missingFile = `no-such-file-${Date.now()}.pdf`;
+        const draftOfA = (note) => ({ version: 1, data: {
+            institutions: [{ key: 'i1', name: 'Draft University', country: 'AT', grading_file: d.fileOfA }],
+            rows: [{ id: 'r1', institutionKey: 'i1', course_name: 'Draft', file: d.fileOfB, syllabus_file: missingFile }],
+            target_course_id: null, note,
+        } });
+        await expect('A saves a draft', call('PUT', 'drafts/mine', { token: A, json: draftOfA(marker) }), 200);
+        const readA = await call('GET', 'drafts/mine', { token: A });
+        const back = readA.body?.draft;
+        report(back?.data?.note === marker && back.data.institutions[0].grading_file === d.fileOfA, 'A reads the draft back, with A\'s own file', `${readA.status}`);
+        report(back?.data?.rows?.[0]?.file === null && back.data.rows[0].syllabus_file === null && back.dropped_files === 2,
+            "B's file and a missing file are removed when A's draft is read", `${back?.dropped_files} removed`);
+        report(back && !Object.keys(back.file_names || {}).some((name) => name !== d.fileOfA), 'Only names of A\'s own files come back', Object.keys(back?.file_names || {}).length + ' name(s)');
+        report((readA.headers.get('cache-control') || '').includes('no-store'), 'Drafts are sent with Cache-Control: no-store', readA.headers.get('cache-control') || 'missing');
+        const readB = await call('GET', 'drafts/mine', { token: B });
+        report(readB.status === 200 && !JSON.stringify(readB.body).includes(marker), "B never gets A's draft", `${readB.status}`);
+        const marker2 = `${marker}-2`;
+        await call('PUT', `drafts/mine?student_id=${d.studentB.id}`, { token: A, json: { ...draftOfA(marker2), student_id: d.studentB.id } });
+        const readB2 = await call('GET', 'drafts/mine', { token: B });
+        report(!JSON.stringify(readB2.body).includes(marker2), "A can't write B's draft (an id in the address or body is ignored)");
+        await call('DELETE', 'drafts/mine', { token: B });
+        const stillA = await call('GET', 'drafts/mine', { token: A });
+        report(stillA.body?.draft?.data?.note === marker2, "B deleting a draft never touches A's");
+
+        const draftError = async (name, json, status, code, field) => {
+            const r = await call('PUT', 'drafts/mine', { token: A, json });
+            report(r.status === status && r.code === code && (!field || r.body?.field === field), name, `${r.status} ${r.code || ''}${r.body?.field ? ` at ${r.body.field}` : ''}`);
+        };
+        await draftError('Draft without a format version', { data: {} }, 400, 'INVALID_DRAFT', 'version');
+        await draftError('Draft version as text', { version: '1', data: {} }, 400, 'INVALID_DRAFT', 'version');
+        await draftError('Draft that is a list', { version: 1, data: [] }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft with 11 institutions (limit 10)', { version: 1, data: { institutions: Array(11).fill({}) } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft with 21 course rows (limit 20)', { version: 1, data: { rows: Array(21).fill({}) } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft of 210 KB (limit 200 KB)', { version: 1, data: { note: 'x'.repeat(210 * 1024) } }, 413, 'DRAFT_TOO_LARGE', 'data');
+        await draftError('Draft with a NUL character', { version: 1, data: { note: 'a\u0000b' } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft request over 256 KB', { version: 1, data: { note: 'x'.repeat(300 * 1024) } }, 413, 'REQUEST_TOO_LARGE');
+        const unchanged = await call('GET', 'drafts/mine', { token: A });
+        report(unchanged.body?.draft?.data?.note === marker2, 'Refused drafts never replace the saved one');
+        await expect('A deletes the draft', call('DELETE', 'drafts/mine', { token: A }), 200);
+        const gone = await call('GET', 'drafts/mine', { token: A });
+        report(gone.status === 200 && gone.body?.draft === null, 'After deleting, there is no draft', JSON.stringify(gone.body?.draft));
+        const restored = await restoreDrafts();
+        console.log(`(put back ${restored} real draft(s) of students A and B)`);
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -662,6 +741,11 @@ const run = async () => {
 
 // Removes this run's rate-limit rows, also after a crash
 const finish = async (ok) => {
+    try {
+        await restoreDrafts();
+    } catch (err) {
+        console.error('Could not put back the drafts of students A and B:', err.message);
+    }
     try {
         const removed = await cleanupRateLimitRows();
         if (removed) console.log(`(removed ${removed} rate-limit rows created by this run)`);

@@ -265,3 +265,80 @@ export const blockedCourseCodes = (applications) => {
     }
     return blocked;
 };
+
+// --- Drafts (Group 7): the unsent form, saved on the server while the student types ---
+// Raise DRAFT_VERSION whenever the shape below changes: a draft in an older shape is then
+// discarded with a notice instead of being restored wrongly.
+export const DRAFT_VERSION = 1;
+export const DRAFT_SAVE_DELAY_MS = 3000; // saved this long after the last change
+// Same limit as the server (backend/utils/drafts.js)
+export const DRAFT_MAX_KB = 200;
+
+const ROW_TEXT_FIELDS = ['course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade'];
+
+// What a draft keeps: the typed fields, the uploaded files' stored names, the target course and the note.
+// Not kept: upload progress, error messages, what is open in the highlighter.
+export const draftFromForm = ({ institutions, rows, targetCourseId, note }) => ({
+    institutions: institutions.map(({ key, name, country, grading_file }) => ({ key, name, country, grading_file })),
+    rows: rows.map((row) => ({
+        id: row.id,
+        institutionKey: row.institutionKey,
+        ...Object.fromEntries(ROW_TEXT_FIELDS.map((field) => [field, row[field]])),
+        file: row.file,
+        syllabus_file: row.syllabus_file,
+    })),
+    target_course_id: targetCourseId ?? null,
+    note,
+});
+
+// Whether a draft holds nothing the student typed or uploaded (then there is nothing to keep)
+export const isEmptyDraft = (draft) => draft.institutions.every((inst) => !inst.name.trim() && !inst.country && !inst.grading_file)
+    && !draft.rows.some(rowHasContent)
+    && draft.target_course_id === null
+    && !draft.note.trim();
+
+const text = (value) => (typeof value === 'string' ? value : (Number.isFinite(value) ? String(value) : ''));
+const fileName = (value) => (typeof value === 'string' && value ? value : null);
+
+/**
+ * A stored draft -> form state. The draft comes back from the server, but it is still checked
+ * here field by field, so an odd draft can never break the form: wrong types become empty,
+ * missing or repeated keys get new ones, and a row pointing to an unknown institution loses that choice.
+ * @returns {{ institutions, rows, targetCourseId: number|null, note: string }}
+ */
+export const formFromDraft = (data) => {
+    const seen = new Set();
+    const uniqueKey = (value, make) => {
+        const key = typeof value === 'string' && value && !seen.has(value) ? value : make();
+        seen.add(key);
+        return key;
+    };
+    const listOf = (value, max) => (Array.isArray(value) ? value : []).filter((item) => item && typeof item === 'object').slice(0, max);
+
+    const institutions = listOf(data?.institutions, LIMITS.institutions).map((inst) => ({
+        ...newInstitution(),
+        key: uniqueKey(inst.key, () => newInstitution().key),
+        name: text(inst.name),
+        country: text(inst.country),
+        grading_file: fileName(inst.grading_file),
+    }));
+    const keys = new Set(institutions.map((inst) => inst.key));
+    const rows = listOf(data?.rows, LIMITS.fulfilledCourses).map((row) => {
+        const fresh = newCourseRow();
+        return {
+            ...fresh,
+            id: uniqueKey(row.id, () => newCourseRow().id),
+            institutionKey: keys.has(row.institutionKey) ? row.institutionKey : '',
+            ...Object.fromEntries(ROW_TEXT_FIELDS.map((field) => [field, text(row[field])])),
+            credit_system: CREDIT_SYSTEMS.includes(row.credit_system) ? row.credit_system : '',
+            file: fileName(row.file),
+            syllabus_file: fileName(row.syllabus_file),
+        };
+    });
+    return {
+        institutions: institutions.length > 0 ? institutions : [newInstitution()],
+        rows: rows.length > 0 ? rows : [newCourseRow()],
+        targetCourseId: Number.isInteger(data?.target_course_id) ? data.target_course_id : null,
+        note: text(data?.note),
+    };
+};

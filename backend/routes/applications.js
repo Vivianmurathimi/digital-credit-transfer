@@ -102,6 +102,10 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             throw err;
         });
         if (inserted === null) return alreadyApplied(res);
+        // The draft has become this application. A failure here must not fail the submit:
+        // the browser's next autosave of the now empty form deletes it anyway.
+        await pool.query('DELETE FROM application_drafts WHERE student_id = $1', [student_id])
+            .catch((err) => console.error('Could not delete the draft after submit:', err.message));
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)

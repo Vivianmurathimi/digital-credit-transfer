@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
-import http from '../http';
+import http, { API_PREFIX } from '../http';
+import { getToken } from '../session';
+import { onSessionEnding } from '../sessionKeeper';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
@@ -7,8 +9,11 @@ import SubmitSummary from './SubmitSummary';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode,
-    NOTE_MAX, noteLength, checkNote } from '../applicationForm';
+    NOTE_MAX, noteLength, checkNote, DRAFT_VERSION, DRAFT_SAVE_DELAY_MS, draftFromForm, isEmptyDraft, formFromDraft, DRAFT_MAX_KB } from '../applicationForm';
 
+
+// What the form's draft remembers when the server holds no draft (see the draft section below)
+const NOTHING_SAVED = '';
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
 const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
@@ -238,6 +243,147 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const creditsMatch = syllabusNeededFor !== null && allEcts(fulfilledCourses) && !syllabusNeededFor.includes('CREDIT_GAP');
     const syllabusNeeded = Boolean(syllabusNeededFor && syllabusNeededFor.length > 0);
     const allSyllabiAttached = fulfilledCourses.every((c) => c.syllabus_file);
+
+    // --- Draft (Group 7): the unsent form is saved on the server while the student types ---
+    // Restored when the form is opened again (also in another browser). One draft per student;
+    // with two tabs open, the last save wins. Off while the superadmin views a student's dashboard.
+    const draftsEnabled = !isImpersonating;
+    // 'loading' -> 'ready' (autosave on) | 'failed' (autosave paused, so the stored draft is never overwritten)
+    const [draftPhase, setDraftPhase] = useState(draftsEnabled ? 'loading' : 'off');
+    const draftReady = useRef(false);
+    // { kind: 'saving' } | { kind: 'saved', at } | { kind: 'error', code } | null
+    const [draftStatus, setDraftStatus] = useState(null);
+    const [draftNotices, setDraftNotices] = useState([]);
+    // JSON of what the server holds now (NOTHING_SAVED = no draft there)
+    const lastSavedDraft = useRef(NOTHING_SAVED);
+    const draftTimer = useRef(null);
+    const draftQueue = useRef(Promise.resolve()); // saves run one after another, never out of order
+    // The token at the last change: when the page is left after Log Out, the stored one is already gone
+    const draftToken = useRef(null);
+
+    const currentDraft = draftFromForm({ institutions, rows: fulfilledCourses, targetCourseId: targetCourse ? targetCourse.id : null, note: studentNote });
+    const currentDraftJson = JSON.stringify(currentDraft);
+    const currentDraftRef = useRef(currentDraft);
+    currentDraftRef.current = currentDraft;
+
+    // Saves the form now if it changed since the last save (an emptied form deletes the draft)
+    const saveDraft = useCallback(() => {
+        clearTimeout(draftTimer.current);
+        draftQueue.current = draftQueue.current.then(async () => {
+            if (!draftReady.current) return;
+            const draft = currentDraftRef.current;
+            const json = JSON.stringify(draft);
+            if (json === lastSavedDraft.current) return;
+            const empty = isEmptyDraft(draft);
+            if (empty && lastSavedDraft.current === NOTHING_SAVED) return;
+            setDraftStatus({ kind: 'saving' });
+            try {
+                if (empty) {
+                    await http.delete('drafts/mine');
+                    lastSavedDraft.current = NOTHING_SAVED;
+                    setDraftStatus(null);
+                } else {
+                    const data = await http.put('drafts/mine', { json: { version: DRAFT_VERSION, data: draft } }).json();
+                    lastSavedDraft.current = json;
+                    setDraftStatus({ kind: 'saved', at: data.updated_at });
+                }
+            } catch (err) {
+                // Tried again at the next change, on leaving the page and before an idle logout
+                setDraftStatus({ kind: 'error', code: getErrorCode(err) });
+            }
+        });
+        return draftQueue.current;
+    }, []);
+
+    // Leaving the page (closing the tab, reloading, Log Out): a normal request could be cut off,
+    // so the last changes go with keepalive, which the browser finishes after the page is gone
+    const saveDraftOnLeave = useCallback(() => {
+        clearTimeout(draftTimer.current);
+        if (!draftReady.current) return;
+        const draft = currentDraftRef.current;
+        const json = JSON.stringify(draft);
+        if (json === lastSavedDraft.current) return;
+        const empty = isEmptyDraft(draft);
+        if (empty && lastSavedDraft.current === NOTHING_SAVED) return;
+        const token = getToken() || draftToken.current;
+        if (!token) return;
+        const body = empty ? undefined : JSON.stringify({ version: DRAFT_VERSION, data: draft });
+        try {
+            fetch(`${API_PREFIX}/drafts/mine`, {
+                method: empty ? 'DELETE' : 'PUT',
+                headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+                body,
+                // Browsers allow keepalive only up to 64 KB; a larger draft (rare) is sent normally
+                keepalive: !body || new Blob([body]).size < 60 * 1024,
+            }).catch(() => {});
+            lastSavedDraft.current = json;
+        } catch { /* nothing more can be done while the page closes */ }
+    }, []);
+
+    // Restore the draft once the course list is there (the target course is kept by its id)
+    const draftLoadStarted = useRef(false);
+    useEffect(() => {
+        if (!draftsEnabled || !coursesLoaded || draftLoadStarted.current) return;
+        draftLoadStarted.current = true;
+        (async () => {
+            try {
+                const { draft } = await http.get('drafts/mine').json();
+                const notices = [];
+                if (draft && draft.version !== DRAFT_VERSION) {
+                    // Made with an older form: not restored, so nothing is filled in wrongly
+                    await http.delete('drafts/mine');
+                    notices.push({ key: 'student_draft_outdated' });
+                } else if (draft) {
+                    const form = formFromDraft(draft.data);
+                    const target = courses.find((c) => c.id === form.targetCourseId) || null;
+                    setInstitutions(form.institutions);
+                    setFulfilledCourses(form.rows);
+                    setSelectedCourses(target ? [target] : []);
+                    setStudentNote(form.note);
+                    setFileNames((prev) => ({ ...prev, ...(draft.file_names || {}) }));
+                    notices.push({ key: 'student_draft_restored', params: { time: draft.updated_at } });
+                    if (draft.dropped_files > 0) notices.push({ key: 'student_draft_files_dropped', params: { count: draft.dropped_files } });
+                    const courseDropped = form.targetCourseId !== null && !target;
+                    if (courseDropped) notices.push({ key: 'student_draft_course_dropped' });
+                    // With something removed, the cleaned form is saved at once; otherwise it matches the server
+                    const restored = JSON.stringify(draftFromForm({ ...form, targetCourseId: target ? target.id : null }));
+                    lastSavedDraft.current = draft.dropped_files > 0 || courseDropped ? null : restored;
+                }
+                setDraftNotices(notices);
+                draftReady.current = true;
+                setDraftPhase('ready');
+            } catch (err) {
+                setDraftPhase('failed');
+            }
+        })();
+    }, [draftsEnabled, coursesLoaded, courses]);
+
+    // Autosave: DRAFT_SAVE_DELAY_MS after the last change
+    useEffect(() => {
+        if (draftPhase !== 'ready') return undefined;
+        draftToken.current = getToken() || draftToken.current;
+        if (currentDraftJson === lastSavedDraft.current) return undefined;
+        clearTimeout(draftTimer.current);
+        draftTimer.current = setTimeout(saveDraft, DRAFT_SAVE_DELAY_MS);
+        return undefined;
+    }, [currentDraftJson, draftPhase, saveDraft]);
+
+    // Also saved when the tab is hidden, when the page is left, and shortly before an idle logout
+    useEffect(() => {
+        if (!draftsEnabled) return undefined;
+        const onHidden = () => { if (document.visibilityState === 'hidden') saveDraft(); };
+        document.addEventListener('visibilitychange', onHidden);
+        window.addEventListener('pagehide', saveDraftOnLeave);
+        const stopListening = onSessionEnding(saveDraft);
+        return () => {
+            document.removeEventListener('visibilitychange', onHidden);
+            window.removeEventListener('pagehide', saveDraftOnLeave);
+            stopListening();
+            saveDraftOnLeave(); // the dashboard closes (e.g. Log Out)
+        };
+    }, [draftsEnabled, saveDraft, saveDraftOnLeave]);
+
+    const clockTime = (at) => new Date(at).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
     // PTE courses with an open or approved application can't be chosen again (shown with the reason)
     const blockedCodes = useMemo(() => blockedCourseCodes(myApplications), [myApplications]);
     const courseOptionLabel = (c) => {
@@ -563,6 +709,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         // The form can't change while the summary is open, so this is exactly what was shown
         const { body } = currentSubmission();
         setSummaryBusy(true);
+        // Pending draft changes are saved first, so no autosave can arrive after the submit
+        // (the server deletes the draft when it stores the application)
+        await saveDraft();
         try {
             setSubmitStatus(t('student_submit_saving'));
             // Only the course ids: the server checks them against the student's programme
@@ -581,6 +730,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
                 setSubmitSuccess(true); // shown at the top of "My Status" instead of a pop-up
+                // The server has deleted the draft; the emptied form must not be saved again
+                lastSavedDraft.current = NOTHING_SAVED;
+                setDraftStatus(null);
+                setDraftNotices([]);
             }
         } catch (err) {
             // The server still refused: back to the form, where the errors appear under their fields
@@ -783,6 +936,23 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {studentTab === 'submit' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
+
+                    {/* Draft: what was restored or removed, or why autosave is paused */}
+                    <div role="status" aria-live="polite">
+                        {(draftNotices.length > 0 || draftPhase === 'failed') && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', backgroundColor: 'var(--info-surface)', border: '1px solid var(--info-border)', color: 'var(--info-text)', padding: '10px 15px', borderRadius: '5px', marginBottom: '15px' }}>
+                                <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                                    {draftPhase === 'failed' && <li>{t('student_draft_load_failed')}</li>}
+                                    {draftNotices.map(({ key, params }) => (
+                                        <li key={key}>{t(key, key === 'student_draft_restored' ? { time: clockTime(params.time) } : params)}</li>
+                                    ))}
+                                </ul>
+                                {draftNotices.length > 0 && (
+                                    <button type="button" onClick={() => setDraftNotices([])} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     {/* Previous institutions: entered once, then chosen on each course row */}
                     <section aria-labelledby="institutions-title" style={{ backgroundColor: 'var(--surface)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
@@ -1058,6 +1228,21 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     )}
 
+                    {/* Autosave state. Only a failed save is announced: "saved" every few seconds would be noise. */}
+                    {draftPhase === 'ready' && draftStatus?.kind !== 'error' && (
+                        <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--text-muted)' }}>
+                            {draftStatus?.kind === 'saving' && t('student_draft_saving')}
+                            {draftStatus?.kind === 'saved' && t('student_draft_saved', { time: clockTime(draftStatus.at) })}
+                            {!draftStatus && t('student_draft_hint')}
+                        </p>
+                    )}
+                    <div role="alert">
+                        {draftStatus?.kind === 'error' && (
+                            <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--error-text)', fontWeight: 'bold' }}>
+                                {draftStatus.code === 'DRAFT_TOO_LARGE' ? t('errors.DRAFT_TOO_LARGE', { max: DRAFT_MAX_KB }) : t('student_draft_save_failed')}
+                            </p>
+                        )}
+                    </div>
                     <button
                         ref={submitButtonRef}
                         onClick={handleSubmitApplication}

@@ -15,6 +15,14 @@ let lastActivity = Date.now();
 let timer = null;
 let isRenewing = false;
 
+// Pages that keep unsent work (the application form's draft) can save it before an idle logout:
+// called at each check during the last minutes of a session that won't be renewed
+const sessionEndingListeners = new Set();
+export const onSessionEnding = (listener) => {
+    sessionEndingListeners.add(listener);
+    return () => sessionEndingListeners.delete(listener);
+};
+
 // Kept as cheap as possible: it runs on every mouse move, so it only stores a timestamp
 const markActive = () => {
     lastActivity = Date.now();
@@ -51,6 +59,8 @@ const check = () => {
     const recentlyActive = Date.now() - lastActivity < IDLE_LIMIT_MS;
     if (left < RENEW_WHEN_LEFT_MS && recentlyActive && !isRenewing) {
         renew();
+    } else if (left < RENEW_WHEN_LEFT_MS && !recentlyActive) {
+        sessionEndingListeners.forEach((listener) => listener());
     }
 };
 
