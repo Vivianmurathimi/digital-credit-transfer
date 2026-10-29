@@ -3,6 +3,7 @@ import http from '../http';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
+import SubmitSummary from './SubmitSummary';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode,
@@ -80,6 +81,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
     const [resubmitNoteError, setResubmitNoteError] = useState('');
+    // Confirmation summary before the final submit, and the success message afterwards
+    const [summaryOpen, setSummaryOpen] = useState(false);
+    const [summaryBusy, setSummaryBusy] = useState(false);
+    const [submitSuccess, setSubmitSuccess] = useState(false);
+    const submitButtonRef = useRef(null);
+    const successRef = useRef(null);
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
@@ -515,12 +522,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const noCourses = coursesLoaded && courses.length === 0;
     const canSubmit = isSubmissionsOpen && !noCourses;
 
-    const handleSubmitApplication = async () => {
+    // Step 1: the browser runs the server's rules; if all is well, the summary opens (nothing is sent yet)
+    const handleSubmitApplication = () => {
         if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
         if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
+        setSubmitSuccess(false);
 
         // Institution keys -> positions, credits -> numbers (see applicationForm.js).
-        // The browser runs the server's rules first: with any problem nothing is sent.
+        // With any problem nothing is sent.
         const { body, map } = currentSubmission();
         const problems = validateSubmission(body, isCountryCode);
         if (problems.length > 0) return showErrors(problems.map((e) => [e.field, translateError(e)]), map);
@@ -533,6 +542,27 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         lastSubmitMap.current = map;
         setFieldErrors({});
         setShowErrorSummary(false);
+        setSubmitStatus('');
+        setSummaryOpen(true);
+        return undefined;
+    };
+
+    // The success message takes focus when it appears
+    useEffect(() => {
+        if (submitSuccess && studentTab === 'dashboard') successRef.current?.focus();
+    }, [submitSuccess, studentTab]);
+
+    // Closing the summary puts keyboard focus back on the Submit button
+    const closeSummary = () => {
+        setSummaryOpen(false);
+        setTimeout(() => submitButtonRef.current?.focus(), 0);
+    };
+
+    // Step 2: "Confirm and submit" in the summary sends the application
+    const confirmSubmit = async () => {
+        // The form can't change while the summary is open, so this is exactly what was shown
+        const { body } = currentSubmission();
+        setSummaryBusy(true);
         try {
             setSubmitStatus(t('student_submit_saving'));
             // Only the course ids: the server checks them against the student's programme
@@ -540,7 +570,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             const data = await http.post('applications', { json: body }).json();
             
             if (data.success) {
-                alert(t('student_submission_success'));
+                setSummaryOpen(false);
                 setInstitutions([newInstitution()]);
                 setFulfilledCourses([newCourseRow()]);
                 setGradingStatus({});
@@ -550,8 +580,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
+                setSubmitSuccess(true); // shown at the top of "My Status" instead of a pop-up
             }
         } catch (err) {
+            // The server still refused: back to the form, where the errors appear under their fields
+            closeSummary();
             const message = getErrorMessage(err, t, 'student_submission_failed');
 
             if (getErrorCode(err) === 'COURSE_NOT_IN_PROGRAMME') {
@@ -573,6 +606,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             const byField = Object.entries(getFieldErrors(err, t));
             if (byField.length > 0) return showErrors(byField, lastSubmitMap.current);
             setSubmitStatus(message);
+        } finally {
+            setSummaryBusy(false);
         }
     };
 
@@ -611,6 +646,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {/* STATUS TAB */}
             {studentTab === 'dashboard' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
+                    {/* After a successful submit: a message here instead of a browser pop-up.
+                        It gets keyboard focus (so screen readers read it), and can be closed. */}
+                    {submitSuccess && (
+                        <div role="status" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', backgroundColor: 'var(--surface)', borderLeft: '5px solid var(--success-accent)', padding: '10px 15px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
+                            <span ref={successRef} tabIndex={-1}>✓ {t('student_submission_success')}</span>
+                            <button type="button" onClick={() => setSubmitSuccess(false)} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
+                        </div>
+                    )}
                     <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
                     <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
                         <thead>
@@ -1016,6 +1059,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     )}
 
                     <button
+                        ref={submitButtonRef}
                         onClick={handleSubmitApplication}
                         disabled={!canSubmit}
                         style={{
@@ -1031,6 +1075,22 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     >
                         {t('student_submit_package')}
                     </button>
+                    {summaryOpen && targetCourse && (
+                        <SubmitSummary
+                            institutions={institutions}
+                            rows={fulfilledCourses}
+                            targetCourse={targetCourse}
+                            syllabusReasons={syllabusNeededFor || []}
+                            note={studentNote}
+                            countryName={countryName}
+                            institutionLabel={institutionLabel}
+                            fileName={displayName}
+                            busy={summaryBusy}
+                            onBack={closeSummary}
+                            onConfirm={confirmSubmit}
+                        />
+                    )}
+
                     {/* Announced by screen readers when it changes */}
                     <div role="status" aria-live="polite">
                         {showErrorSummary && errorCount > 0 && <p style={{ color: 'var(--error-text)', textAlign: 'center', fontWeight: 'bold', marginTop: '10px' }}>{t('student_form_has_errors', { count: errorCount })}</p>}

@@ -375,5 +375,18 @@
   "file_remove_failed": "Could not remove the uploaded file. Please try again.",
   "notice_close": "Close",
   "superadmin_role_update_failed": "Failed to update role.",
-  "reviewer_download_failed": "Could not download the file."
+  "reviewer_download_failed": "Could not download the file.",
+  "student_summary_title": "Check your application before submitting",
+  "student_summary_intro": "This is what will be sent to the reviewer.",
+  "student_summary_target": "Target PTE course",
+  "student_summary_institutions": "Previous institutions",
+  "student_summary_grading": "Grading document: {{file}}",
+  "student_summary_courses": "Completed courses",
+  "student_summary_course_line": "{{credits}} {{system}} · Grade: {{grade}}",
+  "student_summary_transcript": "Transcript: {{file}}",
+  "student_summary_syllabus": "Syllabus: {{file}}",
+  "student_summary_note": "Note to the reviewer",
+  "student_summary_no_note": "No note",
+  "student_summary_back": "Back to edit",
+  "student_summary_confirm": "Confirm and submit"
 }

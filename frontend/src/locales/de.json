@@ -373,7 +373,20 @@
   "archive_error_download": "Das Semesterbuch konnte nicht heruntergeladen werden.",
   "file_open_failed": "Die Datei konnte nicht geöffnet werden.",
   "file_remove_failed": "Die hochgeladene Datei konnte nicht entfernt werden. Bitte versuchen Sie es erneut.",
-  "notice_close": "Schlie\u00dfen",
+  "notice_close": "Schließen",
   "superadmin_role_update_failed": "Die Rolle konnte nicht geändert werden.",
-  "reviewer_download_failed": "Die Datei konnte nicht heruntergeladen werden."
+  "reviewer_download_failed": "Die Datei konnte nicht heruntergeladen werden.",
+  "student_summary_title": "Prüfen Sie Ihren Antrag vor dem Absenden",
+  "student_summary_intro": "Das erhält die prüfende Person.",
+  "student_summary_target": "Ziel-PTE-Kurs",
+  "student_summary_institutions": "Bisherige Hochschulen",
+  "student_summary_grading": "Bewertungsdokument: {{file}}",
+  "student_summary_courses": "Absolvierte Kurse",
+  "student_summary_course_line": "{{credits}} {{system}} · Note: {{grade}}",
+  "student_summary_transcript": "Leistungsübersicht: {{file}}",
+  "student_summary_syllabus": "Kursbeschreibung: {{file}}",
+  "student_summary_note": "Hinweis für die prüfende Person",
+  "student_summary_no_note": "Kein Hinweis",
+  "student_summary_back": "Zurück zur Bearbeitung",
+  "student_summary_confirm": "Bestätigen und absenden"
 }

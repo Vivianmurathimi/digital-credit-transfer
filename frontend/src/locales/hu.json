@@ -373,7 +373,20 @@
   "archive_error_download": "A félévi könyv letöltése nem sikerült.",
   "file_open_failed": "A fájl megnyitása nem sikerült.",
   "file_remove_failed": "A feltöltött fájl eltávolítása nem sikerült. Kérjük, próbálja újra.",
-  "notice_close": "Bez\u00e1r\u00e1s",
+  "notice_close": "Bezárás",
   "superadmin_role_update_failed": "A szerepkör módosítása nem sikerült.",
-  "reviewer_download_failed": "A fájl letöltése nem sikerült."
+  "reviewer_download_failed": "A fájl letöltése nem sikerült.",
+  "student_summary_title": "Ellenőrizze a kérelmét a beküldés előtt",
+  "student_summary_intro": "Ezt kapja meg a bíráló.",
+  "student_summary_target": "Cél PTE-kurzus",
+  "student_summary_institutions": "Korábbi intézmények",
+  "student_summary_grading": "Értékelési dokumentum: {{file}}",
+  "student_summary_courses": "Teljesített kurzusok",
+  "student_summary_course_line": "{{credits}} {{system}} · Érdemjegy: {{grade}}",
+  "student_summary_transcript": "Tanulmányi kivonat: {{file}}",
+  "student_summary_syllabus": "Tantárgyleírás: {{file}}",
+  "student_summary_note": "Megjegyzés a bírálónak",
+  "student_summary_no_note": "Nincs megjegyzés",
+  "student_summary_back": "Vissza a szerkesztéshez",
+  "student_summary_confirm": "Megerősítés és beküldés"
 }
