@@ -614,7 +614,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             
                             {resubmitHighlightFile && (
                                 <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
-                                    <EvidenceHighlighter file={resubmitHighlightFile} onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
+                                    {/* Missing information can be a transcript or a syllabus, so the longer (syllabus) limit applies */}
+                                    <EvidenceHighlighter file={resubmitHighlightFile} kind="syllabus" onSave={(blob, name) => uploadHighlighted(blob, name, true)} onCancel={() => clearUploadSelection(true)} />
                                 </Suspense>
                             )}
 
@@ -830,7 +831,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                     
                                     {highlightFile && (
                                         <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
-                                            <EvidenceHighlighter file={highlightFile} onSave={(blob, name) => uploadHighlighted(blob, name, false)} onCancel={() => clearUploadSelection(false)} />
+                                            <EvidenceHighlighter file={highlightFile} kind="transcript" onSave={(blob, name) => uploadHighlighted(blob, name, false)} onCancel={() => clearUploadSelection(false)} />
                                         </Suspense>
                                     )}
 

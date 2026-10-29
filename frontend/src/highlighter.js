@@ -2,6 +2,9 @@
 // The component (components/EvidenceHighlighter.js) renders pages and records marks;
 // this file decides which pages are kept and builds the saved file.
 import { PDFDocument, StandardFonts, BlendMode, rgb } from 'pdf-lib';
+import { MAX_PAGES } from './evidenceLimits';
+
+export { MAX_PAGES };
 
 // How the yellow marks look: drawn opaque on their own layer, then shown and saved
 // see-through with "multiply", so text stays readable and overlaps don't get darker
@@ -30,6 +33,17 @@ export const hasVisibleMarks = (data, alphaThreshold = 16) => {
         if (data[i] > alphaThreshold) return true;
     }
     return false;
+};
+
+// Whether a PDF has more pages than allowed (it is refused when opened, never cut)
+export const isTooLong = (pageCount, maxPages) => pageCount > maxPages;
+
+// Rendered page images take a lot of memory, so only the most recently viewed few are kept.
+// Returns the new order (most recent last) and the pages whose rendering can be dropped.
+export const RENDERED_PAGES_KEPT = 3;
+export const rememberRecent = (recent, number, keep = RENDERED_PAGES_KEPT) => {
+    const list = [...recent.filter((n) => n !== number), number];
+    return { recent: list.slice(-keep), evicted: list.slice(0, Math.max(0, list.length - keep)) };
 };
 
 // Width and height scaled so the longer side is at most `max` (never enlarged)
