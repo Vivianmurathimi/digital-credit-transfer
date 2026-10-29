@@ -11,10 +11,12 @@
  */
 import { createRequire } from 'module';
 import * as browser from '../src/applicationForm.js';
+import * as browserFiles from '../src/fileRules.js';
 
 const require = createRequire(new URL('../../backend/utils/', import.meta.url));
 const server = require('./applicationForm.js');
 const { isCountryCode } = require('./countries.js');
+const serverFiles = require('./fileRules.js');
 
 let failed = 0;
 const report = (ok, name, detail = '') => {
@@ -81,6 +83,27 @@ for (const [name, [list, target]] of Object.entries(syllabusCases)) {
 const missingB = JSON.stringify(browser.missingSyllabi([{ syllabus_file: 'a' }, { syllabus_file: null }]));
 const missingS = JSON.stringify(server.missingSyllabi([{ syllabus_file: 'a' }, { syllabus_file: null }]).map(({ field, code }) => ({ field, code })));
 report(missingB === missingS, 'Missing syllabi reported at the same paths', missingS);
+
+console.log('\nFile rules: browser vs. server\n');
+const pdfBytes = Buffer.from('%PDF-1.4\n%test');
+const jpgBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46]);
+const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
+const fileCases = [
+    ['a PDF', pdfBytes, 'syllabus.pdf'], ['a JPG', jpgBytes, 'photo.jpg'], ['a JPEG named .jpeg', jpgBytes, 'photo.jpeg'], ['a PNG', pngBytes, 'scan.PNG'],
+    ['text renamed to .pdf', Buffer.from('hello world'), 'fake.pdf'], ['a PNG named .pdf', pngBytes, 'scan.pdf'],
+    ['a PDF named .png', pdfBytes, 'doc.png'], ['a Word file', Buffer.from('PK\x03\x04xxxx'), 'letter.docx'], ['a PDF without extension', pdfBytes, 'syllabus'],
+];
+for (const [name, bytes, fileName] of fileCases) {
+    const inBrowser = (await browserFiles.checkFile(new File([bytes], fileName), 50)) === null;
+    const onServer = serverFiles.detectFileType(bytes, fileName) !== null;
+    report(inBrowser === onServer, name, inBrowser === onServer ? (onServer ? 'allowed in both' : 'refused in both') : `browser ${inBrowser}, server ${onServer}`);
+}
+const big = await browserFiles.checkFile(new File([pdfBytes, new Uint8Array(11 * 1024 * 1024)], 'big.pdf'), browserFiles.MAX_MB.unchanged);
+report(big?.code === 'FILE_TOO_LARGE' && big.params.max === 10, 'An 11 MB file is too large for an unchanged upload', JSON.stringify(big));
+report(browserFiles.MAX_MB.highlighted === serverFiles.MAX_BYTES.highlighted / serverFiles.MB && browserFiles.MAX_MB.unchanged === serverFiles.MAX_BYTES.unchanged / serverFiles.MB,
+    'Same size limits (highlighted 15 MB, unchanged 10 MB)');
+const header = serverFiles.contentDisposition('tantárgyleírás "v2".pdf');
+report(browserFiles.fileNameFromDisposition(header) === 'tantárgyleírás "v2".pdf', "The browser reads the server's download name, accents and quotes included", header);
 
 console.log('\nLimits and stored data\n');
 report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));
