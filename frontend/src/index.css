@@ -11,3 +11,31 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* My Status table: on a narrow screen each application becomes a card,
+   and every cell shows its column name above the value (from data-label) */
+@media (max-width: 640px) {
+  .status-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .status-table, .status-table tbody, .status-table tr, .status-table td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .status-table td {
+    text-align: left !important;
+    padding: 6px 12px !important;
+  }
+  .status-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--text-muted);
+  }
+}

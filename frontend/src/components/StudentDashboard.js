@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
+import ApplicationDetail from './ApplicationDetail';
+import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode, statusKey,
@@ -98,6 +100,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [submitSuccess, setSubmitSuccess] = useState(false);
     const submitButtonRef = useRef(null);
     const successRef = useRef(null);
+    // The application open in the detail view (null = closed), and the button that opened it
+    const [detailId, setDetailId] = useState(null);
+    const detailOpener = useRef(null);
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
@@ -403,12 +408,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         return t(status === 'approved' ? 'student_course_already_approved' : 'student_course_already_applied', { course: label });
     };
 
-    const parseCourses = (jsonStringOrArray) => {
-        if (!jsonStringOrArray) return [];
-        if (Array.isArray(jsonStringOrArray)) return jsonStringOrArray;
-        try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
-    };
-
     // Row Management
     const handleAddCourseRow = () => { if (fulfilledCourses.length < LIMITS.fulfilledCourses) setFulfilledCourses([...fulfilledCourses, newCourseRow()]); };
     // Removing a row also deletes its evidence from storage. At least one row always stays.
@@ -709,6 +708,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     }, [submitSuccess, studentTab]);
 
     // Closing the summary puts keyboard focus back on the Submit button
+    // Detail view: focus goes back to the "Details" button that opened it
+    const openDetail = (id, event) => { detailOpener.current = event.currentTarget; setDetailId(id); };
+    const closeDetail = useCallback(() => {
+        setDetailId(null);
+        setTimeout(() => detailOpener.current?.focus(), 0);
+    }, []);
+    // "Add missing info" inside the detail view: close it first (a modal dialog would cover the reply window)
+    const replyFromDetail = (app) => { setDetailId(null); setResubmitModal({ isOpen: true, app }); };
+
     const closeSummary = () => {
         setSummaryOpen(false);
         setTimeout(() => submitButtonRef.current?.focus(), 0);
@@ -818,48 +826,84 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     )}
                     <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
+                    {myApplications.length === 0 ? (
+                        // Empty state, with the way to start
+                        <div style={{ backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
+                            <p style={{ marginTop: 0 }}>{t('student_no_applications')}</p>
+                            {!isImpersonating && (
+                                <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                    {t('student_start_request')}
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                    // One row per application (= one PTE course). On a phone each row becomes a card (index.css).
+                    <table className="status-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', tableLayout: 'fixed' }}>
                         <thead>
                             <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
-                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('student_column_fulfilled')}</th>
-                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('reviewer_target_courses')}</th>
-                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('student_column_status')}</th>
-                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('student_column_next')}</th>
+                                <th style={{ padding: '12px', textAlign: 'left', width: '28%' }}>{t('student_column_course')}</th>
+                                <th style={{ padding: '12px', textAlign: 'left', width: '18%' }}>{t('student_column_status')}</th>
+                                <th style={{ padding: '12px', textAlign: 'left', width: '15%' }}>{t('student_column_submitted')}</th>
+                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('student_column_next')}</th>
+                                <th style={{ padding: '12px', textAlign: 'center', width: '12%' }}>{t('student_column_details')}</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {myApplications.length === 0 ? (
-                                <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('student_no_applications')}</td></tr>
-                            ) : myApplications.map(app => {
-                                const coursesList = parseCourses(app.fulfilled_courses_json);
+                            {myApplications.map(app => {
+                                const target = app.target_courses?.[0];
+                                const course = target
+                                    ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits })
+                                    : app.pte_course_names || '';
+                                // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters
+                                const note = ['needs_info', 'rejected'].includes(app.status)
+                                    ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
+                                    : '';
                                 return (
                                 <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                                    <td style={{ padding: '12px', verticalAlign: 'top' }}>
-                                        <ul style={{ margin: 0, paddingLeft: '15px' }}>
-                                            {coursesList.map((c, idx) => <li key={idx}><strong>{c.course_name}</strong> ({c.credits} Cr)</li>)}
-                                        </ul>
-                                    </td>
-                                    <td style={{ padding: '12px', color: 'var(--link)', verticalAlign: 'top' }}>
-                                        <ul style={{ margin: 0, paddingLeft: '15px' }}>
-                                            {app.pte_course_names ? app.pte_course_names.split(' + ').map((courseName, idx) => (
-                                                <li key={idx}>{courseName}</li>
-                                            )) : <li>{t('reviewer_no_courses_listed')}</li>}
-                                        </ul>
-                                    </td>
-                                    <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                        <span style={{ fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '11px', backgroundColor: statusColor(app.status) }}>
+                                    <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
+                                    <td data-label={t('student_column_status')} style={{ padding: '12px', verticalAlign: 'top' }}>
+                                        <span style={{ display: 'inline-block', fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(app.status) }}>
                                             {statusLabel(app.status)}
                                         </span>
+                                        {app.resubmit_count > 0 && (
+                                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                                                {t('student_resubmitted', { count: app.resubmit_count, date: formatDate(app.last_resubmitted_at, language) })}
+                                            </div>
+                                        )}
                                     </td>
-                                    <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                        {app.status === 'needs_info' ? (
-                                            <button onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
-                                        ) : <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
+                                    <td data-label={t('student_column_submitted')} style={{ padding: '12px', verticalAlign: 'top' }}>{formatDate(app.submitted_at, language)}</td>
+                                    <td data-label={t('student_column_next')} style={{ padding: '12px', verticalAlign: 'top' }}>
+                                        {note && (
+                                            <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                                <strong>{t('student_reviewer_note')}</strong> {note}
+                                            </p>
+                                        )}
+                                        {app.status === 'needs_info' && !isImpersonating ? (
+                                            <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
+                                        ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
+                                    </td>
+                                    <td data-label={t('student_column_details')} style={{ padding: '12px', verticalAlign: 'top', textAlign: 'center' }}>
+                                        <button type="button" onClick={(e) => openDetail(app.id, e)} aria-label={t('student_view_details_label', { course })} style={{ padding: '6px 12px', backgroundColor: 'var(--surface-accent)', color: 'var(--link)', border: '1px solid var(--link)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                            {t('student_view_details')}
+                                        </button>
                                     </td>
                                 </tr>
                             )})}
                         </tbody>
                     </table>
+                    )}
+                    {detailId !== null && (
+                        <ApplicationDetail
+                            applicationId={detailId}
+                            userId={userId}
+                            isImpersonating={isImpersonating}
+                            countryName={countryName}
+                            statusLabel={statusLabel}
+                            statusColor={statusColor}
+                            onClose={closeDetail}
+                            onReply={replyFromDetail}
+                        />
+                    )}
                 </div>
             )}
 
