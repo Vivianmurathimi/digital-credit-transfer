@@ -8,6 +8,7 @@ import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
+import SubmissionBanner, { CLOSED_CODES } from './SubmissionBanner';
 import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
@@ -117,7 +118,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [syllabusStatus, setSyllabusStatus] = useState({});
     const syllabusInput = useRef(null);
     const syllabusPickRow = useRef(null);
-    const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(true);
+    // What students can do right now (Group 3): { state, canSubmit, semester } from the server,
+    // null until it has loaded (the server refuses a submit anyway when it isn't possible)
+    const [submission, setSubmission] = useState(null);
+    const isSubmissionsOpen = submission ? submission.canSubmit : true;
+    // Drafts are only saved while submitting is possible (also not before the state is known)
+    const autosaveAllowed = useRef(false);
+    autosaveAllowed.current = submission?.canSubmit === true;
 
 
     // Returns the loaded list (or null), so a failed submit can compare against it
@@ -146,7 +153,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const fetchSystemStatus = useCallback(async () => {
         try {
             const data = await http.get('settings/status').json();
-            if (data.success) setIsSubmissionsOpen(data.isOpen);
+            // Older backends send only the admin toggle
+            if (data.success) setSubmission(data.submission || { state: data.isOpen ? 'open' : 'closed_by_admin', canSubmit: data.isOpen, semester: null });
         } catch (err) {
             console.error('Error fetching system status', err);
         }
@@ -283,7 +291,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const saveDraft = useCallback(() => {
         clearTimeout(draftTimer.current);
         draftQueue.current = draftQueue.current.then(async () => {
-            if (!draftReady.current) return;
+            if (!draftReady.current || !autosaveAllowed.current) return;
             const draft = currentDraftRef.current;
             const json = JSON.stringify(draft);
             if (json === lastSavedDraft.current) return;
@@ -301,18 +309,24 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     setDraftStatus({ kind: 'saved', at: data.updated_at });
                 }
             } catch (err) {
+                // Submitting became impossible meanwhile (e.g. the admin closed it): show why and stop autosaving
+                if (CLOSED_CODES.includes(getErrorCode(err))) {
+                    setDraftStatus(null);
+                    fetchSystemStatus();
+                    return;
+                }
                 // Tried again at the next change, on leaving the page and before an idle logout
                 setDraftStatus({ kind: 'error', code: getErrorCode(err) });
             }
         });
         return draftQueue.current;
-    }, []);
+    }, [fetchSystemStatus]);
 
     // Leaving the page (closing the tab, reloading, Log Out): a normal request could be cut off,
     // so the last changes go with keepalive, which the browser finishes after the page is gone
     const saveDraftOnLeave = useCallback(() => {
         clearTimeout(draftTimer.current);
-        if (!draftReady.current) return;
+        if (!draftReady.current || !autosaveAllowed.current) return;
         const draft = currentDraftRef.current;
         const json = JSON.stringify(draft);
         if (json === lastSavedDraft.current) return;
@@ -373,13 +387,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Autosave: DRAFT_SAVE_DELAY_MS after the last change
     useEffect(() => {
-        if (draftPhase !== 'ready') return undefined;
+        if (draftPhase !== 'ready' || !isSubmissionsOpen) return undefined;
         draftToken.current = getToken() || draftToken.current;
         if (currentDraftJson === lastSavedDraft.current) return undefined;
         clearTimeout(draftTimer.current);
         draftTimer.current = setTimeout(saveDraft, DRAFT_SAVE_DELAY_MS);
         return undefined;
-    }, [currentDraftJson, draftPhase, saveDraft]);
+    }, [currentDraftJson, draftPhase, isSubmissionsOpen, saveDraft]);
 
     // Also saved when the tab is hidden, when the page is left, and shortly before an idle logout
     useEffect(() => {
@@ -681,7 +695,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Step 1: the browser runs the server's rules; if all is well, the summary opens (nothing is sent yet)
     const handleSubmitApplication = () => {
-        if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
+        if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed'));
         if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
         setSubmitSuccess('');
 
@@ -765,6 +779,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             // The server still refused: back to the form, where the errors appear under their fields
             closeSummary();
             const message = getErrorMessage(err, t, 'student_submission_failed');
+            if (CLOSED_CODES.includes(getErrorCode(err))) fetchSystemStatus();
 
             if (getErrorCode(err) === 'COURSE_NOT_IN_PROGRAMME') {
                 // The course list changed since the page loaded (e.g. a new import): reload it,
@@ -1001,6 +1016,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {studentTab === 'submit' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
+                    {/* The application period: not started, closed, over, or its last days (Group 3) */}
+                    <SubmissionBanner submission={submission} />
 
                     {/* Draft: what was restored or removed, or why autosave is paused */}
                     <div role="status" aria-live="polite">
@@ -1287,18 +1304,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {renderFieldError('student_note')}
                     </div>
 
-                    {!isSubmissionsOpen && (
-                        <div style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
-                            {t('student_submissions_closed', 'Submissions are currently closed. Please check back later.')}
-                        </div>
-                    )}
-
                     {/* Autosave state. Only a failed save is announced: "saved" every few seconds would be noise. */}
                     {draftPhase === 'ready' && draftStatus?.kind !== 'error' && (
                         <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--text-muted)' }}>
                             {draftStatus?.kind === 'saving' && t('student_draft_saving')}
                             {draftStatus?.kind === 'saved' && t('student_draft_saved', { time: clockTime(draftStatus.at) })}
-                            {!draftStatus && t('student_draft_hint')}
+                            {!draftStatus && t(isSubmissionsOpen ? 'student_draft_hint' : 'student_draft_paused_closed')}
                         </p>
                     )}
                     <div role="alert">

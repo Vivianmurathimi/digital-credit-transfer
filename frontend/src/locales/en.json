@@ -401,7 +401,9 @@
     "INVALID_DRAFT": "The draft could not be saved.",
     "CANNOT_WITHDRAW": "Only an application under review or waiting for your reply can be withdrawn.",
     "APPLICATION_WITHDRAWN": "The student has withdrawn this application, so it can no longer be changed.",
-    "INFO_DEADLINE_PASSED": "The deadline for replying has passed, so the information can no longer be added."
+    "INFO_DEADLINE_PASSED": "The deadline for replying has passed, so the information can no longer be added.",
+    "NO_APPLICATION_PERIOD": "There is no open application period right now.",
+    "APPLICATION_PERIOD_NOT_STARTED": "The application period has not started yet."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
@@ -457,5 +459,11 @@
   "student_draft_files_dropped_other": "{{count}} files from the draft are no longer available and were removed. Please upload them again.",
   "student_draft_course_dropped": "The PTE course chosen in the draft is no longer offered and was removed. Please choose it again.",
   "student_draft_outdated": "Your saved draft was made with an older version of this form and could not be restored.",
-  "student_draft_load_failed": "Your saved draft could not be loaded. Autosave is paused so it isn't overwritten: reload the page to try again."
+  "student_draft_load_failed": "Your saved draft could not be loaded. Autosave is paused so it isn't overwritten: reload the page to try again.",
+  "student_submissions_closed": "Submissions are currently closed. Please check back later.",
+  "student_period_not_started": "The application period has not started yet. You can apply from {{date}}.",
+  "student_period_none": "No open application period.",
+  "student_period_over": "No open application period. The last day to apply was {{date}}.",
+  "student_period_last_days": "The application period ends on {{closes}}. Applications not reviewed by {{ends}} are closed automatically.",
+  "student_draft_paused_closed": "Autosave is off while applications cannot be submitted."
 }

@@ -24,6 +24,29 @@ const minioClient = require('../minio');
 const { listPendingMigrations } = require('../utils/migrations');
 const { normalizeCourseCode } = require('../utils/applicationForm');
 const { addEvent } = require('../utils/applicationEvents');
+const { createSemester } = require('../utils/semesters');
+
+// A current semester for development: applications open from 30 days ago until 30 days from
+// now, ending in 90 days (Budapest days). Kept if one is already current; if the dates would
+// overlap a semester created by hand, nothing is created and the seed says so.
+const ensureDevSemester = async () => {
+    const current = await pool.query('SELECT id, name FROM semester_bounds WHERE opens_at <= now() AND ends_at > now()');
+    if (current.rows.length > 0) return current.rows[0].id;
+    const days = (await pool.query(
+        `SELECT d::text AS today, (d - 30)::text AS apply_from, (d + 30)::text AS apply_until, (d + 90)::text AS ends
+         FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t`
+    )).rows[0];
+    try {
+        const { id } = await createSemester(pool, {
+            name: `Development semester ${days.today}`, applyFrom: days.apply_from, applyUntil: days.apply_until, ends: days.ends,
+        });
+        console.log(`Semester created: applications ${days.apply_from} to ${days.apply_until}, ends ${days.ends}.`);
+        return id;
+    } catch (err) {
+        console.warn(`No development semester created: ${err.message}`);
+        return null;
+    }
+};
 
 // One password for every test account (development only)
 const DEV_PASSWORD = 'Test1234!';
@@ -104,12 +127,13 @@ const seed = async () => {
     );
     const pteId = pte.rows[0].id;
 
+    const semesterId = await ensureDevSemester();
     let newCourses = 0;
     for (const [programme, courses] of Object.entries(COURSES)) {
         for (const [code, name, credits] of courses) {
             const result = await pool.query(
-                'INSERT INTO courses (university_id, programme_id, course_code, course_name, credits) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING',
-                [pteId, programmeIds[programme], code, name, credits]
+                'INSERT INTO courses (university_id, programme_id, course_code, course_name, credits, semester_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING',
+                [pteId, programmeIds[programme], code, name, credits, semesterId]
             );
             newCourses += result.rowCount;
         }
@@ -134,14 +158,14 @@ const seed = async () => {
             const { previous, target } = account.application;
             const file = await uploadEvidence(student, previous.course_name);
             const course = (await pool.query(
-                'SELECT id, course_code, course_name, credits FROM courses WHERE programme_id = $1 AND course_code = $2',
-                [programmeIds[account.programme], target]
+                'SELECT id, course_code, course_name, credits FROM courses WHERE programme_id = $1 AND course_code = $2 AND semester_id IS NOT DISTINCT FROM $3',
+                [programmeIds[account.programme], target, semesterId]
             )).rows[0];
             const targetCourses = [{ course_id: course.id, course_code: course.course_code, course_name: course.course_name, credits: course.credits }];
             const application = await pool.query(
                 `INSERT INTO applications
-                    (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, student_note, status)
-                 VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending') RETURNING id, student_note`,
+                    (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, student_note, status, semester_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending', $8) RETURNING id, student_note`,
                 [
                     student.id,
                     programmeIds[account.programme],
@@ -150,6 +174,7 @@ const seed = async () => {
                     normalizeCourseCode(course.course_code),
                     `${course.course_code} (${course.course_name})`,
                     'Test application created by seed:dev.',
+                    semesterId,
                 ]
             );
             // Its history starts like a real submit

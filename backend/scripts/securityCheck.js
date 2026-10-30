@@ -134,6 +134,10 @@ const expect = async (name, request, status, code) => {
 };
 
 // Test tokens (never printed)
+// Whether students can submit now: the semester's application period and the admin toggle (Group 3);
+// an older backend only sends the toggle
+const canSubmitNow = (settings) => (settings.body?.submission ? settings.body.submission.canSubmit === true : settings.body?.isOpen === true);
+
 const tokenFor = (user) => signSessionToken({ id: user.id, role: user.role });
 const now = () => Math.floor(Date.now() / 1000);
 const expiredToken = (user) => jwt.sign({ id: user.id, role: user.role, sessionStart: now() - 3600, exp: now() - 60 }, JWT_SECRET, { algorithm: ALGORITHM });
@@ -280,8 +284,8 @@ const run = async () => {
     } else {
         await expect("A deletes B's file", call('DELETE', `uploads/${fileB}`, { token: A }), 403, 'NOT_OWNER');
         const settings = await call('GET', 'settings/status', { token: A });
-        if (!settings.body || settings.body.isOpen !== true) {
-            skip("A submits an application with B's file", 'submissions are closed, so the server stops earlier');
+        if (!canSubmitNow(settings)) {
+            skip("A submits an application with B's file", `submissions aren't possible now (${settings.body?.submission?.state || 'closed'}), so the server stops earlier`);
         } else {
             // A's own programme's courses, those A has NOT applied for first: the submit tests must not
             // run into the one-active-application rule (Group 6), which is tested on its own further down
@@ -589,6 +593,9 @@ const run = async () => {
     } else if (draftsProbe.status !== 200) {
         report(false, 'The backend knows the drafts routes', `${draftsProbe.status} ${draftsProbe.code || ''}: RESTART THE BACKEND`);
         skip('All drafts tests', 'the backend runs older code');
+    } else if (!canSubmitNow(await call('GET', 'settings/status', { token: A }))) {
+        // Drafts are only saved while submitting is possible (Group 3)
+        skip('All drafts tests', 'no open application period: create a current semester (npm run semester:create) and open submissions');
     } else {
         draftBackup = {
             ids: [d.studentA.id, d.studentB.id],

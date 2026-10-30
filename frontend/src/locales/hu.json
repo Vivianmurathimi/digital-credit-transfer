@@ -401,7 +401,9 @@
     "INVALID_DRAFT": "A vázlatot nem sikerült menteni.",
     "CANNOT_WITHDRAW": "Csak elbírálás alatt álló vagy az Ön válaszára váró kérelmet lehet visszavonni.",
     "APPLICATION_WITHDRAWN": "A hallgató visszavonta ezt a kérelmet, ezért már nem módosítható.",
-    "INFO_DEADLINE_PASSED": "A válaszhatáridő lejárt, ezért a kiegészítés már nem küldhető be."
+    "INFO_DEADLINE_PASSED": "A válaszhatáridő lejárt, ezért a kiegészítés már nem küldhető be.",
+    "NO_APPLICATION_PERIOD": "Jelenleg nincs nyitott jelentkezési időszak.",
+    "APPLICATION_PERIOD_NOT_STARTED": "A jelentkezési időszak még nem kezdődött el."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -457,5 +459,11 @@
   "student_draft_files_dropped_other": "A vázlat {{count}} fájlja már nem érhető el, ezért eltávolítottuk őket. Kérjük, töltse fel őket újra.",
   "student_draft_course_dropped": "A vázlatban kiválasztott PTE-kurzus már nem elérhető, ezért eltávolítottuk. Kérjük, válasszon újra.",
   "student_draft_outdated": "A mentett vázlat az űrlap egy korábbi változatával készült, ezért nem lehetett visszaállítani.",
-  "student_draft_load_failed": "A mentett vázlatot nem sikerült betölteni. Az automatikus mentés szünetel, hogy ne íródjon felül: töltse újra az oldalt."
+  "student_draft_load_failed": "A mentett vázlatot nem sikerült betölteni. Az automatikus mentés szünetel, hogy ne íródjon felül: töltse újra az oldalt.",
+  "student_submissions_closed": "A kérelembeadás jelenleg szünetel. Kérjük, nézzen vissza később.",
+  "student_period_not_started": "A jelentkezési időszak még nem kezdődött el. Kérelmet ettől a naptól adhat be: {{date}}.",
+  "student_period_none": "Nincs nyitott jelentkezési időszak.",
+  "student_period_over": "Nincs nyitott jelentkezési időszak. A kérelembeadás utolsó napja: {{date}}.",
+  "student_period_last_days": "A jelentkezési időszak utolsó napja: {{closes}}. A bírálat határideje: {{ends}}; az addig el nem bírált kérelmeket a rendszer automatikusan lezárja.",
+  "student_draft_paused_closed": "Az automatikus mentés ki van kapcsolva, amíg nem lehet kérelmet beadni."
 }

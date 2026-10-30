@@ -401,7 +401,9 @@
     "INVALID_DRAFT": "Der Entwurf konnte nicht gespeichert werden.",
     "CANNOT_WITHDRAW": "Nur ein Antrag in Prüfung oder einer, der auf Ihre Antwort wartet, kann zurückgezogen werden.",
     "APPLICATION_WITHDRAWN": "Dieser Antrag wurde zurückgezogen und kann nicht mehr geändert werden.",
-    "INFO_DEADLINE_PASSED": "Die Antwortfrist ist abgelaufen, die Informationen können nicht mehr nachgereicht werden."
+    "INFO_DEADLINE_PASSED": "Die Antwortfrist ist abgelaufen, die Informationen können nicht mehr nachgereicht werden.",
+    "NO_APPLICATION_PERIOD": "Derzeit gibt es keinen offenen Antragszeitraum.",
+    "APPLICATION_PERIOD_NOT_STARTED": "Der Antragszeitraum hat noch nicht begonnen."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -457,5 +459,11 @@
   "student_draft_files_dropped_other": "{{count}} Dateien aus dem Entwurf sind nicht mehr verfügbar und wurden entfernt. Bitte laden Sie sie erneut hoch.",
   "student_draft_course_dropped": "Der im Entwurf gewählte PTE-Kurs wird nicht mehr angeboten und wurde entfernt. Bitte wählen Sie erneut.",
   "student_draft_outdated": "Ihr gespeicherter Entwurf stammt aus einer älteren Version dieses Formulars und konnte nicht wiederhergestellt werden.",
-  "student_draft_load_failed": "Ihr gespeicherter Entwurf konnte nicht geladen werden. Das automatische Speichern ist pausiert, damit er nicht überschrieben wird: Laden Sie die Seite neu."
+  "student_draft_load_failed": "Ihr gespeicherter Entwurf konnte nicht geladen werden. Das automatische Speichern ist pausiert, damit er nicht überschrieben wird: Laden Sie die Seite neu.",
+  "student_submissions_closed": "Anträge können derzeit nicht eingereicht werden. Bitte schauen Sie später wieder vorbei.",
+  "student_period_not_started": "Der Antragszeitraum hat noch nicht begonnen. Anträge sind ab {{date}} möglich.",
+  "student_period_none": "Kein offener Antragszeitraum.",
+  "student_period_over": "Kein offener Antragszeitraum. Der letzte Tag für Anträge war der {{date}}.",
+  "student_period_last_days": "Der Antragszeitraum endet am {{closes}}. Anträge, die bis zum {{ends}} nicht geprüft sind, werden automatisch geschlossen.",
+  "student_draft_paused_closed": "Die automatische Speicherung ist aus, solange keine Anträge eingereicht werden können."
 }
