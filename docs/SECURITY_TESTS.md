@@ -1,4 +1,4 @@
-# Security tests: student side (Groups 1, 2 and 4–9)
+# Security tests: student side (Groups 1–10)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
@@ -11,13 +11,16 @@ This document describes how the access rules of the PTE digital credit transfer 
 - that the note to the reviewer is limited to 2000 characters, counted the same in browser and server, and that a saved draft of the form is only ever the student's own (Group 7)
 - that My Status and the detail view only ever show the student's own applications, without internal fields, and that only the student can withdraw their own application, only while it is waiting (Group 8)
 - that the "needs info" reply deadline, the reminder and the automatic rejection work exactly once, also with two backend processes and across a clock change (Group 9)
+- that students can only submit inside the current semester's application period with submissions open, that a semester end closes unreviewed applications exactly once, and that a course approved in an earlier semester can't be applied for again (Group 3)
+- that every student-facing text and email exists in English, Hungarian and German, with nothing hard-coded (Group 10)
 
-There are four parts:
+There are five parts:
 
-1. **Automated API check** (`npm run security-check`): 195 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 213 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
-3. **Background job tests** (`npm test` in `backend/`): reminders and automatic rejections with a fake clock (section 1c).
-4. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
+3. **Background job tests** (`npm test` in `backend/`): reminders, automatic rejections and the semester end with a fake clock (section 1c).
+4. **Translation check** (`npm run check:translations` in `frontend/`): missing, unused and inconsistent texts, hard-coded English, emails (section 1d).
+5. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
 
 ---
 
@@ -61,6 +64,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 - **Every file the server stores during the check is deleted at the end**, including files an outdated server accepted although it should have refused them.
 - **Drafts of students A and B are put back.** The drafts checks (section 4c) save and delete drafts of A and B. Their real drafts are copied first and restored afterwards, also after a crash; the script prints how many it put back. Without migration 006, or against a backend that doesn't know the drafts routes yet, the drafts checks are skipped and the reason is printed.
 - **Temporary applications of student A are deleted again.** Section 4d needs a rejected and a withdrawn application to try forbidden changes on. It adds one of each for student A (neither blocks anything), checks that every request was refused and nothing changed, and deletes both with their history, also after a crash. Every withdraw request the script sends is one the server must refuse.
+- **The current semester's days and the admin toggle are put back.** Section 4e moves the current semester's days (relative to today) to produce each state of the application period, closes submissions once, and adds a temporary past semester with two applications of student A. Afterwards the days and the toggle are put back and the temporary semester and applications deleted, also after a crash; the script prints what it put back. The current semester is never made to end, so a running background job can never close anything meanwhile. Without a current semester, a temporary one is used.
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
@@ -167,6 +171,14 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A withdraws own rejected application; own withdrawn one again | `409 CANNOT_WITHDRAW` |
 | | | Reviewer changes a withdrawn application | `409 APPLICATION_WITHDRAWN`; nothing changed |
 | | | Changing a history entry in the database | refused by the database (append-only) |
+| 4e | **Application period and semesters (Group 3)** | Submit and save a draft before the period starts | state `not_started`; `403 APPLICATION_PERIOD_NOT_STARTED` for both |
+| | | Submit during the period; in its last 7 days | states `open` / `last_days`; the period check lets an (empty) form through to the field checks (`400`) |
+| | | Submit and save a draft after the period (semester still running) | state `period_over`; `403 NO_APPLICATION_PERIOD` for both |
+| | | Submit and save a draft while the admin has closed submissions | state `closed_by_admin`; `403 SUBMISSIONS_CLOSED` for both |
+| | | A applies for a course approved in an earlier semester | `409 ALREADY_APPLIED` |
+| | | A applies for a course rejected in an earlier semester | passes the duplicate check (stopped at the file check, `403 FILES_NOT_OWNED`: nothing saved) |
+| | | A's earlier-semester application in A's list | listed with its semester, not as current |
+| | | B opens or withdraws A's earlier-semester application | `404 APPLICATION_NOT_FOUND` |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -216,6 +228,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 004, Group 5 (evidence and file rules) | **144 passed, 0 failed, 0 skipped**; run 5 times in a row for the 16 MB check; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
+| 2026-10-30 | throwaway copy with migration 008, semesters (Group 3) and the translation sweep (Group 10) | **212 passed, 0 failed, 1 skipped** (213 checks); the skip is the duplicate check, because in the development data student B's only application is withdrawn. Semester days, admin toggle, applications and drafts compared before and after: unchanged |
 | 2026-10-30 | throwaway copy with migration 007, My Status, withdrawing, deadline (Groups 8 and 9) | **195 passed, 0 failed, 0 skipped**; the 2 temporary applications deleted. With student B's only application withdrawn (after a browser test), the duplicate check is skipped with "student B has no open application": submit a new one for B to run it |
 
 **One-time tests on throwaway copies of the database (Groups 6 and 7):**
@@ -252,6 +265,25 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | Backend started with jobs on; with `JOBS_DISABLED=1`; with `JOBS_DISABLED=1` and `NODE_ENV=production` | "Background jobs running every 5 minutes"; a warning; a large ❌ block saying no automatic rejections will happen |
 | Dates in My Status in EN/HU/DE, on both sides of the clock change | always Budapest time (e.g. 27 Oct 23:59, 24 Oct 23:30), whatever the computer's time zone |
 | Emails: needs info, reminder, withdrawn, automatic rejection, in HU/EN/DE | deadline in the student's language and Budapest time; the automatic rejection shows "Reason: No response to information request." translated |
+
+**One-time tests on throwaway copies of the database (Groups 3 and 10):**
+
+| What | Result |
+|---|---|
+| Migration 008 on a copy of the development data | applied; no semester yet, so the state is "between semesters" and submitting and saving drafts are refused (`NO_APPLICATION_PERIOD`); reading and deleting a draft still work |
+| `npm run semester:create` with 30 February, month 13, days out of order, no name, a name that exists | refused with a message naming the problem |
+| `npm run semester:create` overlapping another semester | refused: "It overlaps "…" (2026-09-30 to 2027-01-28): semesters can't overlap." |
+| `npm run seed:dev` | creates "Development semester" around today once; existing courses and the applications submitted during it join it; running it again creates nothing more |
+| States at the exact boundaries, spring semester opening on 29 Mar 2026 (summer time starts) | 28 Mar 23:59:59 Budapest not started, 29 Mar 00:00 open; last 7 days from 4 Apr 00:00 (UTC+2); 10 Apr 23:59:59 still submitting, 11 Apr 00:00 period over |
+| Autumn semester closing on 25 Oct 2026 (winter time starts) | 25 Oct 23:59:59 Budapest (22:59:59 UTC) still submitting; 26 Oct 00:00 (23:00 UTC) period over |
+| Admin toggle closed | "closed by admin" only inside the period; never hides "not started" or "period over" |
+| `settings/status` | the admin's toggle as before (`isOpen`) plus the state and the semester's Budapest days, no internal ids |
+| Course picker with a course of the coming semester | only the current semester's courses; submitting the other one: `400 COURSE_NOT_IN_PROGRAMME` |
+| Semester end on a copy with a past semester | pending and needs-info applications rejected with "Not reviewed before the semester closed." (history `auto_rejected` by `system`, one status email each); approved untouched; the current semester untouched; a draft saved during the semester deleted, one saved now kept; a second run changes nothing |
+| Reply to a needs-info application after its semester ended | `409 SEMESTER_ENDED` |
+| Term book with a semester-end rejection | listed as "Not reviewed before semester close" |
+| `npm run check:translations` with a German key removed, a wrong placeholder and an extra key | all three reported, exit code 1 |
+| Verification and password-reset emails | built in HU, EN, DE; an unknown language falls back to Hungarian |
 
 ---
 
@@ -296,7 +328,40 @@ They use the database from `backend/.env` (run `npm run migrate` first). They ad
 | Date | Result |
 |---|---|
 | 2026-10-30 | **7 passed, 0 failed** (throwaway copy with migration 007) |
+| 2026-10-30 | **12 passed, 0 failed** (throwaway copy with migration 008): the 7 above and the 5 semester tests below |
 
+**Semesters** (`backend/tests/semesterJobs.test.js`): a test semester in 2099 that ends on the day winter time starts (25 Oct 2099), with its own applications; two students' drafts are put back afterwards.
+
+| Test | Checks |
+|---|---|
+| Application period, to the second | opens 1 Sep 00:00 Budapest (31 Aug 22:00 UTC); last 7 days from 24 Sep; last second 30 Sep 23:59:59; then period over |
+| Semester end on the clock-change day | last second "period over"; at 26 Oct 00:00 Budapest = 25 Oct 23:00 UTC (already winter time) "between semesters" |
+| At the semester end | not one second before; then pending and needs-info rejected as System with `SEMESTER_ENDED`, deadline cleared, one history entry and one email each; approved untouched; a draft saved during the semester deleted, one saved after the end kept |
+| Running again, and after a restart (job module loaded fresh) | nothing more happens |
+| Two runs at the same moment | each application closed once |
+
+## 1d. Translations: complete, used and consistent
+
+```bash
+cd frontend
+npm run check:translations
+```
+
+Needs no server or database. It reports:
+- keys missing in `en.json`, `hu.json` or `de.json`
+- `{{placeholders}}` that differ between the languages
+- unused keys (keys built at run time count through their prefix, plural forms through their base key, `errors.CODE` through the code appearing in the backend)
+- hard-coded English in the student's screens and the pages before login (18 files): visible text, `alert()`/`confirm()` with fixed text, `aria-label`, `title`, `placeholder`, `alt`, `t('key', 'English fallback')`, and showing the server's English `data.message`
+- student email templates that don't have the same parts in HU, EN and DE
+
+| Date | Result |
+|---|---|
+| 2026-10-30, first run | 37 problems: 32 unused keys, 4 hard-coded texts in the reply window, emails not comparable |
+| 2026-10-30, after the fixes | **all clear**: 435 keys in EN/HU/DE with matching placeholders, none unused, no hard-coded English in 18 files, emails in HU/EN/DE |
+
+It can't judge whether a translation is good: every new or changed HU and DE text of Groups 3 and 10 is listed for review in [TRANSLATION_REVIEW.md](TRANSLATION_REVIEW.md), with the terms that must stay the same.
+
+**Term book with Group 4 data**
 **Term book with Group 4 data** (one-time test on a throwaway copy of the database): an application with a 160-character course name, ECTS credits 7.5, a grade "1,3 (sehr gut)" and an image as evidence was submitted and the term book built with the real code. The book contained the course name (wrapped onto several lines, never past the right margin), code, credits, grade, target course and the embedded image. Institutions, countries and grading documents are not in the term book yet: planned for the admin round (see [PLANNED.md](PLANNED.md)).
 
 ---
@@ -456,6 +521,43 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B96 | Reply while submissions are closed | As admin, close submissions; as the student, reply to an information request | Accepted; back to "Under review" |
 | B97 | Jobs switched off | Start the backend with `JOBS_DISABLED=1 node server.js` | Warning "Background jobs are switched off" in the terminal |
 
+**Semesters (Group 3):** run `npm run migrate` (008) and `npm run seed:dev` (creates the development semester) first, and restart the backend. The SQL lines change the current semester's days relative to today; `<id>` is its id (`SELECT id, name FROM semesters;`). Put the original days back afterwards (or run `npm run reset:dev -- --yes`, `npm run migrate`, `npm run seed:dev`). **B104–B106 close applications for real: use test accounts.**
+
+| # | What | How | Expected |
+|---|---|---|---|
+| B98 | Not started yet | `UPDATE semesters SET applications_open_on = current_date + 10, applications_close_on = current_date + 20, ends_on = current_date + 40 WHERE id = <id>;` reload the submit tab | Red banner "The application period has not started yet. You can apply from …" (date in the chosen language); Submit disabled; above Submit "Autosave is off while applications cannot be submitted."; typing and reloading restores nothing new |
+| B99 | Open | `… applications_open_on = current_date - 10, applications_close_on = current_date + 20, ends_on = current_date + 40 …` | No banner; "Draft saved …" after typing |
+| B100 | Last 7 days | `… applications_close_on = current_date + 3 …` | Orange banner "The application period ends on … Applications not reviewed by … are closed automatically." with both dates; submitting works |
+| B101 | Period over | `… applications_open_on = current_date - 20, applications_close_on = current_date - 1, ends_on = current_date + 40 …` | Red banner "No open application period. The last day to apply was …"; no autosave |
+| B102 | Closed by admin while typing | Days as in B99; open the submit tab and type; as admin (other browser) close submissions; type again | Within a few seconds: "Submissions are currently closed. Please check back later." at the top; autosave stops; no error |
+| B103 | Between semesters | Start the backend with `JOBS_DISABLED=1 node server.js`; `… ends_on = current_date - 1, applications_close_on = current_date - 2, applications_open_on = current_date - 20 …` | "No open application period."; no courses in the picker. Put the days back **before** starting the backend normally (otherwise the job closes the semester) |
+| B104 | Semester end | With a test student's pending and needs-info applications and a draft: days as in B103, then restart the backend normally | Both applications "Rejected" with "Not reviewed before the semester closed." (translated); Details: "Last status change: System", history "Rejected automatically · System"; status email with "Reason: …" in the student's language; the draft is gone; the term book lists them as "Not reviewed before semester close" |
+| B105 | New semester | `npm run semester:create -- --name "Test semester" --apply-from <today> --apply-until <in 30 days> --ends <in 90 days>`; copy the courses: `INSERT INTO courses (university_id, programme_id, course_code, course_name, credits, semester_id) SELECT university_id, programme_id, course_code, course_name, credits, <new id> FROM courses WHERE semester_id = <old id>;` | My Status: "No applications in this semester yet." and a closed **Previous semesters (n)**; opened, the earlier applications under their semester's name, read-only (Details without Withdraw or reply) |
+| B106 | Approved earlier | Before B104, have the reviewer approve one test application; after B105 open the course picker | That course greyed out "— already approved"; a course rejected earlier can be chosen |
+| B107 | Reply after the semester end | With `JOBS_DISABLED=1`, end the semester of a needs-info application (as B103) and reply from a tab opened before | "The semester has ended, so the application can no longer be changed." |
+
+**Translations (Group 10):**
+
+| # | What | How | Expected |
+|---|---|---|---|
+| B108 | No English left | Switch to HU, then DE; go through login, register, forgot password, reset password, verify page, the form (banners, reply window labels and placeholder), My Status, Details, withdraw | Every text in the chosen language; German says "Gutachter", Hungarian "PTE-kurzus" |
+| B109 | No pop-ups | Reply with no note and no file; send a reply; open a file that no longer exists | Message under the note; "Your reply was sent to the reviewer." at the top of My Status; the error in the status line; no browser pop-up |
+| B110 | Verification email | Register once with HU selected, once with DE | The verification email in Hungarian / German |
+| B111 | Password reset email | Forgot password for a student whose saved language is DE | The reset email in German; the page shows its own translated confirmation |
+| B112 | Highlighter messages | Open a copy-protected PDF, a PDF over the page limit and a damaged file in the highlighter | Messages on the page in the chosen language; no browser pop-up |
+
+**Full student walkthrough, once per language (EN, HU, DE):** switch the language on the login page first, and check that nothing on any screen or in any email is in another language.
+
+| # | Step | Expected |
+|---|---|---|
+| B113 | Register a new student (name, university email, Neptun code, programme) | "Registration Complete" page; verification email in the chosen language |
+| B114 | Open the link in the email; log in | Account verified; My Status empty with "Start a new request" |
+| B115 | Submit: institution with grading document, a course with highlighted transcript (and syllabus if asked), the target course, a note; Submit, check the summary, confirm | Summary lists everything; My Status "Under review" with the submission date; "submitted" email |
+| B116 | As `reviewer.<programme>`, request information with a note | My Status "Information needed", the note and "Respond by …"; needs-info email with the deadline |
+| B117 | Reply with a note and a highlighted file | "Your reply was sent to the reviewer."; "Under review" with "Resubmitted on …"; Details shows the request and the reply in order |
+| B118 | Reviewer approves (or rejects) | Status updated; status email; Details: "Last status change: Reviewer, …" |
+| B119 | Submit a second application for another course and withdraw it | Withdraw question, then "Your application was withdrawn."; status "Withdrawn"; withdrawn email |
+
 ---
 
 ## 3. Pending for the reviewer round
@@ -502,4 +604,10 @@ The highlighter's rules are tested in Node (`frontend/src/highlighter.js`), with
 - **Automatic rejection can come up to 5 minutes after the deadline**, because the job runs every 5 minutes. Replies are refused exactly at the deadline, so nothing can arrive in between.
 - **History rebuilt by migration 007 is incomplete.** For applications from before Group 8, only the latest note of each kind and the closest recorded time were still known; those entries are marked as rebuilt.
 - **Withdrawing cannot be undone.** The student can submit a new application for the same course instead.
+- **Applications from before semesters are never closed automatically.** Applications without a semester (submitted before migration 008, outside any semester's dates) stay as they are at a semester end; a new semester takes in only those submitted during its dates.
+- **A semester end is processed up to 5 minutes after midnight**, because the job runs every 5 minutes. Submitting already stops when the application period ends, and replies are refused from the semester end on.
+- **"Between semesters" is not tested through the API**, because producing it would end the real current semester; it is tested with a fake clock (section 1c).
+- **A new semester has no courses until they are imported** (Neptun CSV import, admin round). `npm run semester:create` only takes in courses that have no semester; the browser checklist copies them with SQL.
+- **Files of earlier semesters are kept indefinitely.** How long to keep them is to be confirmed with the institution (see [PLANNED.md](PLANNED.md)).
+- **The reviewer and admin screens still have English texts and pop-ups.** The translation check looks for hard-coded English only in the student's screens and the pages before login; the reviewer and admin rounds will widen it.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

@@ -78,7 +78,7 @@ const templates = {
         withdrawn: {
             subject: 'Kreditátviteli kérelmét visszavonta',
             body: () => `<p>Kreditátviteli kérelmét visszavonta. A bíráló már nem foglalkozik vele.</p>
-                <p>Ugyanarra a PTE tárgyra bármikor beadhat új kérelmet. Ha nem Ön vonta vissza, kérjük, forduljon a Tanulmányi Osztályhoz.</p>`,
+                <p>Ugyanarra a PTE-kurzusra bármikor beadhat új kérelmet. Ha nem Ön vonta vissza, kérjük, forduljon a Tanulmányi Osztályhoz.</p>`,
         },
         statusUpdate: {
             subject: 'Kreditátviteli kérelmének állapota megváltozott',
