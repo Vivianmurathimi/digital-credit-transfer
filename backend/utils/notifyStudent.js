@@ -11,7 +11,7 @@ const { createEmailLink } = require('./emailLink');
  *
  * @param {number} studentId
  * @param {'submitted'|'resubmitted'|'needsInfo'|'withdrawn'|'statusUpdate'} type
- * @param {{ status?: string, note?: string }} data
+ * @param {{ status?: string, note?: string, deadline?: Date }} data
  */
 const notifyStudent = async (studentId, type, data = {}) => {
     try {

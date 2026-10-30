@@ -173,6 +173,9 @@
   "student_event_files": "Files added:",
   "student_event_backfilled": "Rebuilt from older records: the exact time and any earlier notes are not known.",
   "student_reason_NO_INFO_RESPONSE": "No response to information request.",
+  "student_respond_by": "Respond by {{date}}",
+  "student_deadline_soon": "Less than a day left to respond.",
+  "student_deadline_passed": "The deadline for replying has passed. The application will be rejected automatically.",
   "student_withdraw": "Withdraw application",
   "student_withdraw_confirm_title": "Withdraw this application?",
   "student_withdraw_confirm_text": "The reviewer will no longer work on it, and this cannot be undone. You can submit a new request for the same PTE course later.",
@@ -397,7 +400,8 @@
     "DRAFT_TOO_LARGE": "The draft is too large to save (limit {{max}} KB).",
     "INVALID_DRAFT": "The draft could not be saved.",
     "CANNOT_WITHDRAW": "Only an application under review or waiting for your reply can be withdrawn.",
-    "APPLICATION_WITHDRAWN": "The student has withdrawn this application, so it can no longer be changed."
+    "APPLICATION_WITHDRAWN": "The student has withdrawn this application, so it can no longer be changed.",
+    "INFO_DEADLINE_PASSED": "The deadline for replying has passed, so the information can no longer be added."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",

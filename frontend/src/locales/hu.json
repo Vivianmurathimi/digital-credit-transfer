@@ -173,6 +173,9 @@
   "student_event_files": "Csatolt fájlok:",
   "student_event_backfilled": "Régebbi adatokból helyreállítva: a pontos időpont és a korábbi üzenetek nem ismertek.",
   "student_reason_NO_INFO_RESPONSE": "Nem érkezett válasz az információkérésre.",
+  "student_respond_by": "Válaszhatáridő: {{date}}",
+  "student_deadline_soon": "Kevesebb mint egy napja maradt a válaszra.",
+  "student_deadline_passed": "A válaszhatáridő lejárt. A kérelmet a rendszer automatikusan elutasítja.",
   "student_withdraw": "Kérelem visszavonása",
   "student_withdraw_confirm_title": "Visszavonja ezt a kérelmet?",
   "student_withdraw_confirm_text": "A bíráló a továbbiakban nem foglalkozik vele, és ez nem vonható vissza. Ugyanarra a PTE tárgyra később új kérelmet adhat be.",
@@ -397,7 +400,8 @@
     "DRAFT_TOO_LARGE": "A vázlat túl nagy a mentéshez (legfeljebb {{max}} KB).",
     "INVALID_DRAFT": "A vázlatot nem sikerült menteni.",
     "CANNOT_WITHDRAW": "Csak elbírálás alatt álló vagy az Ön válaszára váró kérelmet lehet visszavonni.",
-    "APPLICATION_WITHDRAWN": "A hallgató visszavonta ezt a kérelmet, ezért már nem módosítható."
+    "APPLICATION_WITHDRAWN": "A hallgató visszavonta ezt a kérelmet, ezért már nem módosítható.",
+    "INFO_DEADLINE_PASSED": "A válaszhatáridő lejárt, ezért a kiegészítés már nem küldhető be."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

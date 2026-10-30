@@ -173,6 +173,9 @@
   "student_event_files": "Hinzugefügte Dateien:",
   "student_event_backfilled": "Aus älteren Daten wiederhergestellt: genaue Uhrzeit und frühere Nachrichten sind nicht bekannt.",
   "student_reason_NO_INFO_RESPONSE": "Keine Antwort auf die Informationsanfrage.",
+  "student_respond_by": "Antworten bis {{date}}",
+  "student_deadline_soon": "Weniger als ein Tag bleibt für die Antwort.",
+  "student_deadline_passed": "Die Antwortfrist ist abgelaufen. Der Antrag wird automatisch abgelehnt.",
   "student_withdraw": "Antrag zurückziehen",
   "student_withdraw_confirm_title": "Diesen Antrag zurückziehen?",
   "student_withdraw_confirm_text": "Der Prüfer bearbeitet ihn dann nicht mehr, und das kann nicht rückgängig gemacht werden. Für denselben PTE-Kurs können Sie später einen neuen Antrag stellen.",
@@ -397,7 +400,8 @@
     "DRAFT_TOO_LARGE": "Der Entwurf ist zu groß zum Speichern (höchstens {{max}} KB).",
     "INVALID_DRAFT": "Der Entwurf konnte nicht gespeichert werden.",
     "CANNOT_WITHDRAW": "Nur ein Antrag in Prüfung oder einer, der auf Ihre Antwort wartet, kann zurückgezogen werden.",
-    "APPLICATION_WITHDRAWN": "Dieser Antrag wurde zurückgezogen und kann nicht mehr geändert werden."
+    "APPLICATION_WITHDRAWN": "Dieser Antrag wurde zurückgezogen und kann nicht mehr geändert werden.",
+    "INFO_DEADLINE_PASSED": "Die Antwortfrist ist abgelaufen, die Informationen können nicht mehr nachgereicht werden."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",

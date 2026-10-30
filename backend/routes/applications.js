@@ -229,7 +229,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                         info_requested_at     = CASE WHEN $5 THEN COALESCE(info_requested_at, now()) END,
                         info_deadline         = CASE WHEN $5 THEN COALESCE(info_deadline, info_reply_deadline(now())) END,
                         info_reminder_sent_at = CASE WHEN $5 THEN info_reminder_sent_at END
-                     WHERE id=$4 RETURNING student_id, reviewer_note`,
+                     WHERE id=$4 RETURNING student_id, reviewer_note, info_deadline`,
                     [status, newNote, req.user.id, id, status === 'needs_info']
                 );
                 // Saving the same status and note again adds nothing to the history
@@ -251,9 +251,9 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
 
         // Respond first, then email in the background (never blocks or fails the request)
         if (status !== updated.previousStatus) {
-            const { student_id, reviewer_note } = updated;
+            const { student_id, reviewer_note, info_deadline } = updated;
             const type = status === 'needs_info' ? 'needsInfo' : 'statusUpdate';
-            notifyStudent(student_id, type, { status, note: reviewer_note });
+            notifyStudent(student_id, type, { status, note: reviewer_note, deadline: info_deadline });
         }
     } catch (err) {
        console.error("❌ Status update error:", err.message);
@@ -314,7 +314,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
 
     try {
         const ownerCheck = Number.isSafeInteger(id) && id > 0
-            ? await pool.query('SELECT student_id, status, supplemental_files FROM applications WHERE id = $1', [id])
+            ? await pool.query('SELECT student_id, status, supplemental_files, info_deadline <= now() AS deadline_passed FROM applications WHERE id = $1', [id])
             : { rows: [] };
         if (ownerCheck.rows.length === 0) {
             return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
@@ -327,10 +327,12 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             return sendError(res, 409, 'NOT_WAITING_FOR_INFO', 'This application is not waiting for more information');
         }
 
-        const isOpen = await checkSubmissionsOpen();
-        if (!isOpen) {
-            return sendError(res, 403, 'SUBMISSIONS_CLOSED', 'Submissions are currently closed');
+        // After the deadline the reply is refused; the background job rejects the application
+        if (ownerCheck.rows[0].deadline_passed) {
+            return sendError(res, 409, 'INFO_DEADLINE_PASSED', 'The deadline for replying has passed');
         }
+        // A reply is allowed while new submissions are closed: it answers an existing application,
+        // and its deadline keeps running either way
 
         // Only the student's own uploads may be added as evidence
         const newFiles = splitFileList(new_files);
@@ -349,7 +351,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             const { rowCount } = await client.query(
                 `UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2,
                     info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
-                 WHERE id = $3 AND student_id = $4 AND status = 'needs_info'`,
+                 WHERE id = $3 AND student_id = $4 AND status = 'needs_info' AND (info_deadline IS NULL OR info_deadline > now())`,
                 [replyNote, updatedFiles, id, req.user.id]
             );
             if (rowCount === 0) return false;

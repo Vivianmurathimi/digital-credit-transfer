@@ -7,6 +7,7 @@ import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
+import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
@@ -790,7 +791,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     };
 
     const submitResubmission = async () => {
-        if (!isSubmissionsOpen) return alert(t('student_submissions_closed', 'Submissions are currently closed.'));
+        // Replies are allowed while new submissions are closed (the deadline keeps running)
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
         // Same note rule as the server: shown under the note, nothing sent
         const noteProblem = checkNote(resubmitNote);
@@ -885,7 +886,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                                 <strong>{t('student_reviewer_note')}</strong> {note}
                                             </p>
                                         )}
-                                        {app.status === 'needs_info' && !isImpersonating ? (
+                                        {app.status === 'needs_info' && <ReplyDeadline deadline={app.info_deadline} />}
+                                        {app.status === 'needs_info' && !isImpersonating && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
                                             <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
                                         ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
                                     </td>
@@ -920,12 +922,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'var(--overlay)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, overflowY: 'auto' }}>
                     <div style={{ backgroundColor: 'var(--surface)', padding: '25px', borderRadius: '10px', width: '90vw', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 5px 15px rgba(0,0,0,0.3)' }}>
                         <h3 style={{ marginTop: 0, color: 'var(--orange-text)' }}>{t('student_action_required')}</h3>
+                        <ReplyDeadline deadline={resubmitModal.app.info_deadline} />
                         
                         <div style={{ backgroundColor: 'var(--warning-bg)', padding: '15px', borderRadius: '5px', marginBottom: '15px', borderLeft: '5px solid var(--orange)' }}>
                             <strong style={{ color: 'var(--warning-text)' }}>{t('student_reviewer_note')}</strong>
                             <p style={{ margin: '5px 0 0 0', color: 'var(--text-secondary)', fontStyle: 'italic', wordBreak: 'break-word' }}>
-                                "{resubmitModal.app.reviewer_note.length > 150 && !isNoteExpanded ? resubmitModal.app.reviewer_note.substring(0, 150) + '...' : resubmitModal.app.reviewer_note}"
-                                {resubmitModal.app.reviewer_note.length > 150 && (
+                                "{(resubmitModal.app.reviewer_note || '').length > 150 && !isNoteExpanded ? (resubmitModal.app.reviewer_note || '').substring(0, 150) + '...' : (resubmitModal.app.reviewer_note || '')}"
+                                {(resubmitModal.app.reviewer_note || '').length > 150 && (
                                     <button onClick={() => setIsNoteExpanded(!isNoteExpanded)} style={{ background: 'none', border: 'none', color: 'var(--link-alt)', cursor: 'pointer', fontWeight: 'bold', padding: '0 5px', fontSize: '13px' }}>
                                         {isNoteExpanded ? t('student_see_less') : t('student_see_more')}
                                     </button>

@@ -20,6 +20,13 @@ const escapeHtml = (text) => String(text)
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+// "2 November 2026, 23:59" in the student's language, always Budapest time (the job sends
+// these emails from the server, whatever time zone it runs in)
+const DATE_LOCALES = { hu: 'hu-HU', en: 'en-GB', de: 'de-DE' };
+const formatDeadline = (date, language) => new Intl.DateTimeFormat(DATE_LOCALES[language], {
+    timeZone: 'Europe/Budapest', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(new Date(date));
+
 // Reviewer's message exactly as written: escaped, with line breaks kept
 const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
@@ -52,6 +59,7 @@ const templates = {
         needsInfo: {
             subject: 'Teendő: további információ szükséges a kérelméhez',
             body: () => `<p>A bírálónak további információra van szüksége, mielőtt döntést hozna kreditátviteli kérelméről.</p>`,
+            deadline: (date) => `<p>Kérjük, válaszoljon eddig: <strong>${date}</strong> (budapesti idő szerint). Ha addig nem érkezik válasz, a kérelmet a rendszer automatikusan elutasítja.</p>`,
             after: () => `<p>Kérjük, jelentkezzen be, nyissa meg az <strong>Állapotom</strong> fület, és kattintson a <strong>Hiányzó információ hozzáadása</strong> gombra a válaszadáshoz és a dokumentumok feltöltéséhez.</p>`,
         },
         withdrawn: {
@@ -79,6 +87,7 @@ const templates = {
         needsInfo: {
             subject: 'Action required: more information needed for your application',
             body: () => `<p>The reviewer needs more information before they can decide on your credit transfer application.</p>`,
+            deadline: (date) => `<p>Please reply by <strong>${date}</strong> (Budapest time). If there is no reply by then, the application is rejected automatically.</p>`,
             after: () => `<p>Please log in, open the <strong>My Status</strong> tab and click <strong>Add Missing Info</strong> to reply and upload documents.</p>`,
         },
         withdrawn: {
@@ -106,6 +115,7 @@ const templates = {
         needsInfo: {
             subject: 'Handlungsbedarf: weitere Informationen zu Ihrem Antrag erforderlich',
             body: () => `<p>Der Prüfer benötigt weitere Informationen, bevor über Ihren Antrag auf Kreditübertragung entschieden werden kann.</p>`,
+            deadline: (date) => `<p>Bitte antworten Sie bis <strong>${date}</strong> (Budapester Zeit). Geht bis dahin keine Antwort ein, wird der Antrag automatisch abgelehnt.</p>`,
             after: () => `<p>Bitte melden Sie sich an, öffnen Sie den Reiter <strong>Mein Status</strong> und klicken Sie auf <strong>Fehlende Informationen hinzufügen</strong>, um zu antworten und Dokumente hochzuladen.</p>`,
         },
         withdrawn: {
@@ -131,7 +141,7 @@ const noteBlock = (title, note) => `
  * Builds a notification email.
  * @param {'submitted'|'resubmitted'|'needsInfo'|'withdrawn'|'statusUpdate'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
- * @param {{ name: string, status?: string, note?: string, linkUrl?: string }} data
+ * @param {{ name: string, status?: string, note?: string, deadline?: Date|string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send
  */
 const buildEmail = (type, lang, data) => {
@@ -153,6 +163,7 @@ const buildEmail = (type, lang, data) => {
     } else {
         content += template.body();
         if (type === 'needsInfo' && hasNote) content += noteBlock(words.noteTitle, data.note);
+        if (template.deadline && data.deadline) content += template.deadline(escapeHtml(formatDeadline(data.deadline, language)));
         if (template.after) content += template.after();
     }
 
