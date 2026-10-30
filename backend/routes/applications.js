@@ -7,6 +7,7 @@ const notifyStudent = require('../utils/notifyStudent');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
+const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { sendValidationErrors } = sendError;
 const {
@@ -26,11 +27,6 @@ const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
 // A student may withdraw an application while it is waiting: under review or waiting for their reply
 const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
 
-const checkSubmissionsOpen = async () => {
-    const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
-    return result.rows.length > 0 ? result.rows[0].is_submissions_open : false;
-};
-
 // Submit an application. The student, their programme and the target courses' details all
 // come from the database; anything else in the request (student_id, programme_id,
 // pte_course_names, system_note) is ignored. Institutions and fulfilled courses are stored only as
@@ -41,10 +37,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
     const student_id = req.user.id;
 
     try {
-        const isOpen = await checkSubmissionsOpen();
-        if (!isOpen) {
-            return sendError(res, 403, 'SUBMISSIONS_CLOSED', 'Submissions are currently closed');
-        }
+        // 0. Only inside the current semester's application period, with submissions open (Group 3)
+        const submission = await getSubmissionState();
+        if (refuseUnlessSubmitting(res, submission)) return undefined;
 
         // 1. Every field rule at once (400 with all problems and their field paths)
         const form = validateApplicationForm(req.body);
@@ -55,9 +50,10 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // A course of another programme and an id that doesn't exist get the same answer.
         // The same query gives the snapshot that is saved, so it is exactly what was checked.
         const programmeId = (await pool.query('SELECT programme_id FROM users WHERE id = $1', [student_id])).rows[0]?.programme_id;
+        // ... and to the current semester (courses are imported per semester)
         const found = await pool.query(
-            'SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2',
-            [targetIds, programmeId]
+            'SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2 AND semester_id = $3',
+            [targetIds, programmeId, submission.semester.id]
         );
         if (!programmeId || found.rows.length !== targetIds.length) {
             return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme', { field: 'target_course_ids' });
@@ -73,7 +69,10 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
         // 2b. One active application per PTE course: refused while one for the same course
-        //     (code + programme, so it also works after courses are re-imported) is still open or approved
+        //     (code + programme, so it also works after courses are re-imported) is still open or approved.
+        //     Deliberately in every semester (Group 3): a course approved in an earlier semester can't be
+        //     applied for again; a rejected (or withdrawn) one can. Earlier semesters' pending ones are
+        //     closed at their semester end, so in practice only "approved" carries over.
         const targetCode = normalizeCourseCode(targetCourses[0].course_code);
         const existing = await pool.query(
             'SELECT 1 FROM applications WHERE student_id = $1 AND programme_id = $2 AND target_course_code = $3 AND status = ANY($4)',
@@ -102,9 +101,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         const inserted = await inTransaction(async (client) => {
             const { rows } = await client.query(
                 `INSERT INTO applications 
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending') RETURNING id`,
-                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote]
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11) RETURNING id`,
+                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: 'student', actorId: student_id, status: 'pending', note: studentNote });
             return rows[0];
@@ -314,7 +313,9 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
 
     try {
         const ownerCheck = Number.isSafeInteger(id) && id > 0
-            ? await pool.query('SELECT student_id, status, supplemental_files, info_deadline <= now() AS deadline_passed FROM applications WHERE id = $1', [id])
+            ? await pool.query(
+                `SELECT a.student_id, a.status, a.supplemental_files, a.info_deadline <= now() AS deadline_passed, b.ends_at <= now() AS semester_ended
+                 FROM applications a LEFT JOIN semester_bounds b ON b.id = a.semester_id WHERE a.id = $1`, [id])
             : { rows: [] };
         if (ownerCheck.rows.length === 0) {
             return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
@@ -327,7 +328,11 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             return sendError(res, 409, 'NOT_WAITING_FOR_INFO', 'This application is not waiting for more information');
         }
 
-        // After the deadline the reply is refused; the background job rejects the application
+        // After the semester end (Group 3) or the deadline the reply is refused; the background job
+        // rejects the application
+        if (ownerCheck.rows[0].semester_ended) {
+            return sendError(res, 409, 'SEMESTER_ENDED', 'The semester has ended, so the application can no longer be changed');
+        }
         if (ownerCheck.rows[0].deadline_passed) {
             return sendError(res, 409, 'INFO_DEADLINE_PASSED', 'The deadline for replying has passed');
         }
@@ -351,7 +356,8 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             const { rowCount } = await client.query(
                 `UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2,
                     info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
-                 WHERE id = $3 AND student_id = $4 AND status = 'needs_info' AND (info_deadline IS NULL OR info_deadline > now())`,
+                 WHERE id = $3 AND student_id = $4 AND status = 'needs_info' AND (info_deadline IS NULL OR info_deadline > now())
+                   AND NOT EXISTS (SELECT 1 FROM semester_bounds b WHERE b.id = applications.semester_id AND b.ends_at <= now())`,
                 [replyNote, updatedFiles, id, req.user.id]
             );
             if (rowCount === 0) return false;

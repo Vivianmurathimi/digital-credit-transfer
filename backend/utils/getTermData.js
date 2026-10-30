@@ -33,6 +33,8 @@ const getTermData = async (from, to) => {
         `SELECT a.id, a.status, a.fulfilled_courses_json, a.pte_course_names,
                 a.student_note, a.system_note, a.reviewer_note, a.student_resubmit_note,
                 a.supplemental_files,
+                (SELECT e.reason_code FROM application_events e
+                 WHERE e.application_id = a.id AND e.kind = 'auto_rejected' ORDER BY e.id DESC LIMIT 1) AS auto_reason,
                 a.created_at AT TIME ZONE 'UTC' AS submitted_at,
                 a.reviewed_at AT TIME ZONE 'UTC' AS reviewed_at,
                 s.name AS student_name, s.email AS student_email,
@@ -62,6 +64,8 @@ const getTermData = async (from, to) => {
         return {
             id: row.id,
             status: row.status,
+            // Rejected by the system at the semester end (Group 3): shown as not reviewed in the book
+            notReviewedBySemesterEnd: row.status === 'rejected' && row.auto_reason === 'SEMESTER_ENDED',
             submittedAt: row.submitted_at,
             reviewedAt: row.reviewed_at,
             student: { name: row.student_name, email: row.student_email },

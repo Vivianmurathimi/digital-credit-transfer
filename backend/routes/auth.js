@@ -6,7 +6,7 @@ const verifyToken = require('../middleware/verifyToken');
 const pool = require('../db');
 const crypto = require('crypto'); 
 const sendEmail = require('../utils/sendEmail');
-const { normalizeLanguage } = require('../utils/emailTemplates');
+const { normalizeLanguage, buildAccountEmail } = require('../utils/emailTemplates');
 const { checkEmailLink } = require('../utils/emailLink');
 const sendError = require('../utils/sendError');
 const { FRONTEND_URL } = require('../config/urls');
@@ -98,20 +98,10 @@ router.post('/register', async (req, res) => {
             throw err;
         }
 
-        // Build the verification link & send the email
+        // The verification link, in the language chosen on the registration form
         const verifyUrl = `${FRONTEND_URL}/verify/${verificationToken}`;
-        const message = `
-            <h2>Welcome to the PTE Credit Transfer System!</h2>
-            <p>Please click the button below to verify your official university email address and activate your account.</p>
-            <a href="${verifyUrl}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify My Account</a>
-            <p>If the button doesn't work, copy and paste this link into your browser: <br/> ${verifyUrl}</p>
-        `;
-
-        await sendEmail({
-            email: lowerEmail,
-            subject: 'Action Required: Verify Your PTE Account',
-            html: message
-        });
+        const { subject, html } = buildAccountEmail('verifyAccount', language, { url: verifyUrl });
+        await sendEmail({ email: lowerEmail, subject, html });
 
         res.json({ success: true, message: "Registration successful! Please check your email to verify your account." });
 
@@ -205,25 +195,15 @@ const sendResetLink = async (lowerEmail) => {
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetExpires = Date.now() + 3600000; // 1 hour in milliseconds
 
-    await pool.query(
-        'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3',
+    const updated = await pool.query(
+        'UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE email = $3 RETURNING preferred_language',
         [resetToken, resetExpires, lowerEmail]
     );
 
+    // In the account's saved language
     const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
-    const message = `
-            <h2>Password Reset Request</h2>
-            <p>You requested a password reset for your PTE Credit Transfer account.</p>
-            <p>Please click the button below to set a new password. This link is valid for 1 hour.</p>
-            <a href="${resetUrl}" style="background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-            <p>If you did not request this, please ignore this email.</p>
-        `;
-
-    await sendEmail({
-        email: lowerEmail,
-        subject: 'PTE Portal: Password Reset Request',
-        html: message
-    });
+    const { subject, html } = buildAccountEmail('resetPassword', updated.rows[0]?.preferred_language, { url: resetUrl });
+    await sendEmail({ email: lowerEmail, subject, html });
 };
 
 router.post('/forgot-password', async (req, res) => {

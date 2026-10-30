@@ -8,6 +8,7 @@ import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
+import SubmissionBanner, { CLOSED_CODES } from './SubmissionBanner';
 import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
@@ -104,6 +105,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const successRef = useRef(null);
     // The application open in the detail view (null = closed), and the button that opened it
     const [detailId, setDetailId] = useState(null);
+    const [detailReadOnly, setDetailReadOnly] = useState(false);
     const detailOpener = useRef(null);
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
@@ -117,7 +119,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [syllabusStatus, setSyllabusStatus] = useState({});
     const syllabusInput = useRef(null);
     const syllabusPickRow = useRef(null);
-    const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(true);
+    // What students can do right now (Group 3): { state, canSubmit, semester } from the server,
+    // null until it has loaded (the server refuses a submit anyway when it isn't possible)
+    const [submission, setSubmission] = useState(null);
+    const isSubmissionsOpen = submission ? submission.canSubmit : true;
+    // Drafts are only saved while submitting is possible (also not before the state is known)
+    const autosaveAllowed = useRef(false);
+    autosaveAllowed.current = submission?.canSubmit === true;
 
 
     // Returns the loaded list (or null), so a failed submit can compare against it
@@ -146,7 +154,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const fetchSystemStatus = useCallback(async () => {
         try {
             const data = await http.get('settings/status').json();
-            if (data.success) setIsSubmissionsOpen(data.isOpen);
+            // Older backends send only the admin toggle
+            if (data.success) setSubmission(data.submission || { state: data.isOpen ? 'open' : 'closed_by_admin', canSubmit: data.isOpen, semester: null });
         } catch (err) {
             console.error('Error fetching system status', err);
         }
@@ -283,7 +292,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const saveDraft = useCallback(() => {
         clearTimeout(draftTimer.current);
         draftQueue.current = draftQueue.current.then(async () => {
-            if (!draftReady.current) return;
+            if (!draftReady.current || !autosaveAllowed.current) return;
             const draft = currentDraftRef.current;
             const json = JSON.stringify(draft);
             if (json === lastSavedDraft.current) return;
@@ -301,18 +310,24 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     setDraftStatus({ kind: 'saved', at: data.updated_at });
                 }
             } catch (err) {
+                // Submitting became impossible meanwhile (e.g. the admin closed it): show why and stop autosaving
+                if (CLOSED_CODES.includes(getErrorCode(err))) {
+                    setDraftStatus(null);
+                    fetchSystemStatus();
+                    return;
+                }
                 // Tried again at the next change, on leaving the page and before an idle logout
                 setDraftStatus({ kind: 'error', code: getErrorCode(err) });
             }
         });
         return draftQueue.current;
-    }, []);
+    }, [fetchSystemStatus]);
 
     // Leaving the page (closing the tab, reloading, Log Out): a normal request could be cut off,
     // so the last changes go with keepalive, which the browser finishes after the page is gone
     const saveDraftOnLeave = useCallback(() => {
         clearTimeout(draftTimer.current);
-        if (!draftReady.current) return;
+        if (!draftReady.current || !autosaveAllowed.current) return;
         const draft = currentDraftRef.current;
         const json = JSON.stringify(draft);
         if (json === lastSavedDraft.current) return;
@@ -373,13 +388,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Autosave: DRAFT_SAVE_DELAY_MS after the last change
     useEffect(() => {
-        if (draftPhase !== 'ready') return undefined;
+        if (draftPhase !== 'ready' || !isSubmissionsOpen) return undefined;
         draftToken.current = getToken() || draftToken.current;
         if (currentDraftJson === lastSavedDraft.current) return undefined;
         clearTimeout(draftTimer.current);
         draftTimer.current = setTimeout(saveDraft, DRAFT_SAVE_DELAY_MS);
         return undefined;
-    }, [currentDraftJson, draftPhase, saveDraft]);
+    }, [currentDraftJson, draftPhase, isSubmissionsOpen, saveDraft]);
 
     // Also saved when the tab is hidden, when the page is left, and shortly before an idle logout
     useEffect(() => {
@@ -395,6 +410,16 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             saveDraftOnLeave(); // the dashboard closes (e.g. Log Out)
         };
     }, [draftsEnabled, saveDraft, saveDraftOnLeave]);
+
+    // My Status (Group 3): the current semester's applications, and earlier ones grouped by semester
+    // (newest first; applications from before semesters under their own heading)
+    const currentApplications = myApplications.filter((app) => app.current_semester);
+    const previousApplications = myApplications.filter((app) => !app.current_semester);
+    const previousBySemester = [...previousApplications.reduce((groups, app) => {
+        const key = app.semester_name || '';
+        groups.set(key, [...(groups.get(key) || []), app]);
+        return groups;
+    }, new Map())];
 
     // Status as the student sees it: a translated label and badge colour, never the raw code
     const statusLabel = (status) => t(`student_status_${statusKey(status)}`);
@@ -567,7 +592,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // Evidence files need the login token, so they are opened through openSecureFile
     const handleOpenFile = (e, fileName) => {
         e.preventDefault();
-        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
+        openSecureFile(fileName).catch((err) => setUploadStatus(getErrorMessage(err, t, 'file_open_failed')));
     };
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
@@ -681,7 +706,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // Step 1: the browser runs the server's rules; if all is well, the summary opens (nothing is sent yet)
     const handleSubmitApplication = () => {
-        if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
+        if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed'));
         if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
         setSubmitSuccess('');
 
@@ -710,7 +735,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     }, [submitSuccess, studentTab]);
 
     // Detail view: focus goes back to the "Details" button that opened it
-    const openDetail = (id, event) => { detailOpener.current = event.currentTarget; setDetailId(id); };
+    const openDetail = (id, event, readOnly = false) => { detailOpener.current = event.currentTarget; setDetailReadOnly(readOnly); setDetailId(id); };
     const closeDetail = useCallback(() => {
         setDetailId(null);
         setTimeout(() => detailOpener.current?.focus(), 0);
@@ -765,6 +790,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             // The server still refused: back to the form, where the errors appear under their fields
             closeSummary();
             const message = getErrorMessage(err, t, 'student_submission_failed');
+            if (CLOSED_CODES.includes(getErrorCode(err))) fetchSystemStatus();
 
             if (getErrorCode(err) === 'COURSE_NOT_IN_PROGRAMME') {
                 // The course list changed since the page loaded (e.g. a new import): reload it,
@@ -792,7 +818,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     const submitResubmission = async () => {
         // Replies are allowed while new submissions are closed (the deadline keeps running)
-        if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
+        // Nothing to send: said under the note instead of a pop-up
+        if (resubmitFiles.length === 0 && resubmitNote.trim() === '') { setResubmitNoteError(t('student_resubmit_missing_info_alert')); return undefined; }
         // Same note rule as the server: shown under the note, nothing sent
         const noteProblem = checkNote(resubmitNote);
         if (noteProblem) { setResubmitNoteError(t(`errors.${noteProblem.code}`, noteProblem.params || {})); return undefined; }
@@ -804,9 +831,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 new_files: resubmitFiles.join(',') 
             } }).json();
             if (data.success) {
-                alert(t('student_resubmission_success'));
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
+                setSubmitSuccess('student_resubmission_success'); // at the top of My Status, like a submit
             }
         } catch (err) {
             // A note error from the server goes under the note, anything else into the status line
@@ -814,6 +841,65 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             else setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed'));
         }
     };
+
+    // One row per application (= one PTE course). On a phone each row becomes a card (index.css).
+    // Read-only (earlier semesters): no reply button and no deadline; the detail view can't change anything.
+    const renderApplicationTable = (apps, { readOnly = false } = {}) => (
+                <table className="status-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', tableLayout: 'fixed' }}>
+                    <thead>
+                        <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
+                            <th style={{ padding: '12px', textAlign: 'left', width: '28%' }}>{t('student_column_course')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left', width: '18%' }}>{t('student_column_status')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left', width: '15%' }}>{t('student_column_submitted')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left' }}>{t('student_column_next')}</th>
+                            <th style={{ padding: '12px', textAlign: 'center', width: '12%' }}>{t('student_column_details')}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {apps.map(app => {
+                            const target = app.target_courses?.[0];
+                            const course = target
+                                ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits })
+                                : app.pte_course_names || '';
+                            // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters
+                            const note = ['needs_info', 'rejected'].includes(app.status)
+                                ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
+                                : '';
+                            return (
+                            <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
+                                <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
+                                <td data-label={t('student_column_status')} style={{ padding: '12px', verticalAlign: 'top' }}>
+                                    <span style={{ display: 'inline-block', fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(app.status) }}>
+                                        {statusLabel(app.status)}
+                                    </span>
+                                    {app.resubmit_count > 0 && (
+                                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                                            {t('student_resubmitted', { count: app.resubmit_count, date: formatDate(app.last_resubmitted_at, language) })}
+                                        </div>
+                                    )}
+                                </td>
+                                <td data-label={t('student_column_submitted')} style={{ padding: '12px', verticalAlign: 'top' }}>{formatDate(app.submitted_at, language)}</td>
+                                <td data-label={t('student_column_next')} style={{ padding: '12px', verticalAlign: 'top' }}>
+                                    {note && (
+                                        <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                            <strong>{t('student_reviewer_note')}</strong> {note}
+                                        </p>
+                                    )}
+                                    {app.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={app.info_deadline} />}
+                                    {app.status === 'needs_info' && !readOnly && !isImpersonating && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
+                                        <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
+                                    ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
+                                </td>
+                                <td data-label={t('student_column_details')} style={{ padding: '12px', verticalAlign: 'top', textAlign: 'center' }}>
+                                    <button type="button" onClick={(e) => openDetail(app.id, e, readOnly)} aria-label={t('student_view_details_label', { course })} style={{ padding: '6px 12px', backgroundColor: 'var(--surface-accent)', color: 'var(--link)', border: '1px solid var(--link)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                        {t('student_view_details')}
+                                    </button>
+                                </td>
+                            </tr>
+                        )})}
+                    </tbody>
+                </table>
+    );
 
     return (
         <div style={{ marginTop: '10px' }}>
@@ -834,72 +920,32 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     )}
                     <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
-                    {myApplications.length === 0 ? (
+                    {currentApplications.length === 0 ? (
                         // Empty state, with the way to start
                         <div style={{ backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
-                            <p style={{ marginTop: 0 }}>{t('student_no_applications')}</p>
+                            <p style={{ marginTop: 0 }}>{t(previousApplications.length > 0 ? 'student_no_applications_this_semester' : 'student_no_applications')}</p>
                             {!isImpersonating && (
                                 <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                                     {t('student_start_request')}
                                 </button>
                             )}
                         </div>
-                    ) : (
-                    // One row per application (= one PTE course). On a phone each row becomes a card (index.css).
-                    <table className="status-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', tableLayout: 'fixed' }}>
-                        <thead>
-                            <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
-                                <th style={{ padding: '12px', textAlign: 'left', width: '28%' }}>{t('student_column_course')}</th>
-                                <th style={{ padding: '12px', textAlign: 'left', width: '18%' }}>{t('student_column_status')}</th>
-                                <th style={{ padding: '12px', textAlign: 'left', width: '15%' }}>{t('student_column_submitted')}</th>
-                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('student_column_next')}</th>
-                                <th style={{ padding: '12px', textAlign: 'center', width: '12%' }}>{t('student_column_details')}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {myApplications.map(app => {
-                                const target = app.target_courses?.[0];
-                                const course = target
-                                    ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits })
-                                    : app.pte_course_names || '';
-                                // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters
-                                const note = ['needs_info', 'rejected'].includes(app.status)
-                                    ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
-                                    : '';
-                                return (
-                                <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                                    <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
-                                    <td data-label={t('student_column_status')} style={{ padding: '12px', verticalAlign: 'top' }}>
-                                        <span style={{ display: 'inline-block', fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(app.status) }}>
-                                            {statusLabel(app.status)}
-                                        </span>
-                                        {app.resubmit_count > 0 && (
-                                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-                                                {t('student_resubmitted', { count: app.resubmit_count, date: formatDate(app.last_resubmitted_at, language) })}
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td data-label={t('student_column_submitted')} style={{ padding: '12px', verticalAlign: 'top' }}>{formatDate(app.submitted_at, language)}</td>
-                                    <td data-label={t('student_column_next')} style={{ padding: '12px', verticalAlign: 'top' }}>
-                                        {note && (
-                                            <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                                <strong>{t('student_reviewer_note')}</strong> {note}
-                                            </p>
-                                        )}
-                                        {app.status === 'needs_info' && <ReplyDeadline deadline={app.info_deadline} />}
-                                        {app.status === 'needs_info' && !isImpersonating && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
-                                            <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
-                                        ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
-                                    </td>
-                                    <td data-label={t('student_column_details')} style={{ padding: '12px', verticalAlign: 'top', textAlign: 'center' }}>
-                                        <button type="button" onClick={(e) => openDetail(app.id, e)} aria-label={t('student_view_details_label', { course })} style={{ padding: '6px 12px', backgroundColor: 'var(--surface-accent)', color: 'var(--link)', border: '1px solid var(--link)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                            {t('student_view_details')}
-                                        </button>
-                                    </td>
-                                </tr>
-                            )})}
-                        </tbody>
-                    </table>
+                    ) : renderApplicationTable(currentApplications)}
+
+                    {/* Earlier semesters: kept, read-only, grouped by semester (Group 3) */}
+                    {previousBySemester.length > 0 && (
+                        <details style={{ marginTop: '20px' }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 'bold', fontSize: '18px', color: 'var(--success-text)' }}>
+                                {t('student_previous_semesters', { count: previousApplications.length })}
+                            </summary>
+                            <p style={{ color: 'var(--text-muted)', margin: '8px 0' }}>{t('student_previous_read_only')}</p>
+                            {previousBySemester.map(([name, apps]) => (
+                                <section key={name || 'none'} style={{ marginBottom: '16px' }}>
+                                    <h3 style={{ fontSize: '16px', margin: '12px 0 6px 0', color: 'var(--success-text)' }}>{name || t('student_before_semesters')}</h3>
+                                    {renderApplicationTable(apps, { readOnly: true })}
+                                </section>
+                            ))}
+                        </details>
                     )}
                     {detailId !== null && (
                         <ApplicationDetail
@@ -910,6 +956,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             statusLabel={statusLabel}
                             statusColor={statusColor}
                             onClose={closeDetail}
+                            readOnly={detailReadOnly}
                             onReply={replyFromDetail}
                             onWithdrawn={handleWithdrawn}
                         />
@@ -936,7 +983,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             </p>
                         </div>
 
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Your Reply to Reviewer:</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>{t('student_reply_label')}</label>
                         <textarea 
                             value={resubmitNote}
                             onChange={(e) => { setResubmitNote(e.target.value); setResubmitNoteError(''); }}
@@ -944,13 +991,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             aria-invalid={resubmitNoteError ? true : undefined}
                             aria-describedby={resubmitNoteError ? 'resubmit-note-counter resubmit-note-error' : 'resubmit-note-counter'}
                             style={{ width: '100%', padding: '10px', borderRadius: '5px', border: resubmitNoteError ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
-                            placeholder="Explain what you have updated or attach new highlighted files below..."
+                            placeholder={t('student_reply_placeholder')}
                         />
                         <NoteCounter id="resubmit-note-counter" text={resubmitNote} t={t} />
                         {resubmitNoteError && <p id="resubmit-note-error" style={{ color: 'var(--error-text)', fontSize: '12px', fontWeight: 'bold', margin: '4px 0 0 0' }}>{resubmitNoteError}</p>}
                         <div style={{ marginBottom: '15px' }} />
 
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>{t('student_reply_upload_label')}</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
                             <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '4px' }}/>
                             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 10px 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
@@ -964,7 +1011,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                             {resubmitFiles.length > 0 && (
                                 <div style={{ marginTop: '15px' }}>
-                                    <strong style={{ color: 'var(--success-accent)' }}>Attached New Files:</strong>
+                                    <strong style={{ color: 'var(--success-accent)' }}>{t('student_reply_attached_files')}</strong>
                                     {/* Same thumbnail + Open file + Remove layout as the first upload */}
                                     {resubmitFiles.map((file, idx) => (
                                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
@@ -1001,6 +1048,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {studentTab === 'submit' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
+                    {/* The application period: not started, closed, over, or its last days (Group 3) */}
+                    <SubmissionBanner submission={submission} />
 
                     {/* Draft: what was restored or removed, or why autosave is paused */}
                     <div role="status" aria-live="polite">
@@ -1199,9 +1248,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                     <div style={{ marginBottom: '20px' }}>
                         <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_select_pte_courses_label')}</label>
-                        {noCourses ? (
+                        {/* No courses while applications are closed: the banner at the top already says why */}
+                        {noCourses ? (isSubmissionsOpen && (
                             <p role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', padding: '10px', borderRadius: '5px', margin: '5px 0 0' }}>{t('student_no_courses_for_programme')}</p>
-                        ) : (
+                        )) : (
                         <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course) { setSelectedCourses([course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
                             {courses.map(c => <option key={c.id} value={c.id} disabled={Boolean(blockedCodes[normalizeCourseCode(c.course_code)])}>{courseOptionLabel(c)}</option>)}
@@ -1287,18 +1337,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         {renderFieldError('student_note')}
                     </div>
 
-                    {!isSubmissionsOpen && (
-                        <div style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
-                            {t('student_submissions_closed', 'Submissions are currently closed. Please check back later.')}
-                        </div>
-                    )}
-
                     {/* Autosave state. Only a failed save is announced: "saved" every few seconds would be noise. */}
                     {draftPhase === 'ready' && draftStatus?.kind !== 'error' && (
                         <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--text-muted)' }}>
                             {draftStatus?.kind === 'saving' && t('student_draft_saving')}
                             {draftStatus?.kind === 'saved' && t('student_draft_saved', { time: clockTime(draftStatus.at) })}
-                            {!draftStatus && t('student_draft_hint')}
+                            {!draftStatus && t(isSubmissionsOpen ? 'student_draft_hint' : 'student_draft_paused_closed')}
                         </p>
                     )}
                     <div role="alert">

@@ -21,7 +21,8 @@ const noteText = { margin: '6px 0 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'a
 // Statuses from which the student may withdraw (same rule as the server)
 const WITHDRAWABLE = ['pending', 'needs_info'];
 
-const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
+// readOnly: opened from an earlier semester (Group 3), so nothing can be changed from here
+const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
     const { t } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const dialogRef = useRef(null);
@@ -69,7 +70,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
             setWithdrawing(false);
         }
     };
-    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !isImpersonating;
+    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !isImpersonating && !readOnly;
 
     useEffect(() => {
         let current = true;
@@ -126,7 +127,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
                             {t('student_detail_last_change', { who: t(`student_actor_${application.decided_by}`), date: formatDateTime(application.decided_at, language) })}
                         </p>
                     )}
-                    {application.status === 'needs_info' && <ReplyDeadline deadline={application.info_deadline} style={{ marginTop: '8px' }} />}
+                    {application.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={application.info_deadline} style={{ marginTop: '8px' }} />}
                     {fileError && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold' }}>{fileError}</p>}
 
                     <h3 style={sectionTitle}>{t('student_summary_institutions')}</h3>
@@ -204,7 +205,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
                         {t('student_withdraw')}
                     </button>
                 )}
-                {application?.status === 'needs_info' && !isImpersonating && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
+                {application?.status === 'needs_info' && !isImpersonating && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
                     <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                         {t('student_add_missing_info')}
                     </button>

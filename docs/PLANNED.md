@@ -22,7 +22,10 @@ Things deliberately left for later while building the student side, with the rea
 - **Clean up uploads from forms that are never submitted (after semester end).** Evidence and grading documents are uploaded as soon as they are chosen; if the student never submits, those files belong to no application. Removing a course row, a document or an institution in the form deletes its file. The rest needs a cleanup job after semester end: delete files that no application **and no draft** refers to (a draft keeps its files until it is submitted or cleared).
 - **Role change to "student"** needs a Neptun code and programme picker. Until then it is refused with `STUDENT_PROFILE_REQUIRED`.
 - **Correcting a student's programme** (students can't change it themselves).
-- **Course import from Neptun CSV** per programme at semester start. Courses are seeded until then.
+- **Course import from Neptun CSV** per programme at semester start, into that semester (`courses.semester_id`, Group 3). Courses are seeded until then; a new semester has no courses until they are imported.
+- **Semesters on the admin screen.** Today they are created with `npm run semester:create` (Group 3): an admin screen to create, view and correct semesters (application period, end), with the same checks (real days, in order, no overlaps).
+- **Term book per semester.** The term book is built for a date range; with semesters it can be built for a semester, including the applications closed at its end ("Not reviewed before semester close").
+- **Translate the reviewer and admin screens.** Their pop-ups and some texts are still English; `npm run check:translations` (Group 10) checks hard-coded English only in the student's screens; add the reviewer and admin files to its list once they are translated.
 - **Move the admin dashboard and term archive to the shared ky client.**
 - Settings toggle accepts any value for "open"; should refuse anything but true/false (`INVALID_SETTING`).
 - Role-management confirmation texts are still English.
@@ -32,13 +35,16 @@ Things deliberately left for later while building the student side, with the rea
 - **Drop `applications.pte_course_names`.** It is a text copy of `target_courses`, kept only because the reviewer screen, admin screen and term book still read it.
 - **Read notes from the history only.** `reviewer_note`, `student_resubmit_note` and `supplemental_files` duplicate what `application_events` records (Group 8), keeping only the latest of each. Once the reviewer screen, admin screen and term book read the history, they can be dropped.
 
-## Group 3 (postponed)
+## Group 3 (done)
 
-- **Semesters and the application window.** Needs a semester model that doesn't exist yet, and one open decision.
-- **Clear drafts at semester end.** Drafts (`application_drafts`, Group 7) are kept until the student submits or the account is deleted. When a semester closes, unsent drafts should be deleted (or the students reminded first), so a new semester never starts from an old form.
-- **Previous semesters in My Status (Group 8, item 33).** My Status lists every application of the student; with semesters it should group them, or show earlier semesters separately.
-- **Semester-end automatic rejection.** The background job of Group 9 (`backend/jobs/applicationJobs.js`) is built for it: `rejectAutomatically()` with the semester-end condition and a new reason code, added to `STEPS`.
-- **History across semesters for the duplicate rule.** "One active application per PTE course" (Group 6) reads only the `applications` table. Once semesters exist and old applications are archived, the rule needs a history source across semesters (e.g. approved courses from earlier semesters), so a course approved in an earlier semester still can't be applied for again.
+- ~~Semesters and the application window~~ **(done):** migration 008, `npm run semester:create`, one submission state for submit, drafts and the form banner.
+- ~~Clear drafts at semester end~~ **(done):** the semester-end job step deletes drafts last saved before the end.
+- ~~Previous semesters in My Status (item 33)~~ **(done):** a read-only "Previous semesters" section grouped by semester.
+- ~~Semester-end automatic rejection~~ **(done):** `SEMESTER_ENDED`, by System, with the status email.
+- ~~History across semesters for the duplicate rule~~ **(done):** applications are never deleted, so the existing rule (and migration 005's index) already covers every semester: an approved course blocks, a rejected one doesn't.
+- **How long to keep earlier semesters' files.** Applications and their files are kept read-only with their semester for now. A retention period (and what happens after it: deleting the files, keeping the term book) is to be confirmed with the institution.
+- **Reminding students before the semester end.** Unreviewed applications are closed at the semester end; the form warns during the last 7 days of the application period, but no email reminds students (or reviewers) before the end.
+- **Applications from before semesters.** Rows without a semester are never closed automatically; once all of them are decided, `applications.semester_id` and `courses.semester_id` can be made NOT NULL.
 
 ## Group 5
 
@@ -53,11 +59,12 @@ Things deliberately left for later while building the student side, with the rea
 
 ## Other
 
-- **"Add missing info" window texts:** a few labels there ("Upload …", "Attached New Files") are still English; its PDFs share the 30-page syllabus limit.
+- ~~"Add missing info" window texts are still English~~ **(fixed in Group 10):** the labels and the placeholder come from the locale files. Its PDFs share the 30-page syllabus limit.
 
 - ~~"Evidence required" note is written by the browser~~ **(fixed in Group 5):** the server works out when a syllabus is required, writes `system_note` itself and ignores what the browser sends.
 - **Register reveals registered addresses and Neptun codes** (`EMAIL_TAKEN`, `NEPTUN_TAKEN`). Fix: always answer "check your inbox" and email the existing account owner.
-- Success messages of forgot / reset password are still English.
-- The PDF highlighter shows an untranslated browser alert.
+- ~~Success messages of forgot / reset password are still English~~ **(fixed in Group 10):** the pages show their own translated texts; the verification and reset emails exist in HU, EN and DE.
+- ~~The PDF highlighter shows an untranslated browser alert~~ **(gone by Group 10):** no `alert()` is left in the highlighter; messages are shown on the page (browser checklist B112).
+- **German term for the reviewer.** "Gutachter" is used everywhere since Group 10 (it was mixed with "Prüfer"). If "Prüfer" is preferred, see the terms in [TRANSLATION_REVIEW.md](TRANSLATION_REVIEW.md).
 - ~~Student "My Status" does not show the reviewer's note or the resubmit information~~ **(fixed in Group 8):** the table shows the reviewer's note and a "Resubmitted" marker; the detail view shows the whole history.
 - ~~`db.js` keeps its startup test connection open~~ **(fixed in Group 9):** the connection is given back after the test, so `npm test` ends on its own.

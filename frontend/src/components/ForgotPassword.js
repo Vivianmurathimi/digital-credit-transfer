@@ -18,9 +18,8 @@ const ForgotPassword = () => {
         setError('');
 
         try {
-            // Adjust the URL if your backend uses a different prefix!
-            const data = await http.post('forgot-password', { json: { email } }).json();
-            setMessage(data.message || t('forgot_message_default'));
+            await http.post('forgot-password', { json: { email } }).json();
+            setMessage(t('forgot_message_default')); // the server's text is English only; the page uses its own
         } catch (err) {
             setError(getErrorMessage(err, t, 'forgot_error_default'));
         } finally {

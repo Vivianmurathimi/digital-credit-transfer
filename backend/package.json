@@ -9,6 +9,7 @@
     "migrate": "node scripts/migrate.js",
     "reset:dev": "node scripts/resetDevData.js",
     "seed:dev": "node scripts/seedDev.js",
+    "semester:create": "node scripts/createSemester.js",
     "make-superadmin": "node admin.js"
   },
   "keywords": [],

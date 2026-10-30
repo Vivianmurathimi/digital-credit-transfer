@@ -7,6 +7,7 @@ const sendError = require('../utils/sendError');
 const { sendValidationErrors } = sendError;
 const { getFileOwner } = require('../utils/fileOwner');
 const { checkDraft, draftFileNames, keepOnlyFiles } = require('../utils/drafts');
+const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
 
 // The logged-in student's draft of the application form (Group 7). Like /applications/mine,
 // there is no id in the address: the student comes from the token, so nobody can reach
@@ -39,7 +40,9 @@ router.get('/mine', verifyToken, requireRole('student'), async (req, res) => {
     }
 });
 
-// Save the draft: replaces the previous one ("last save wins", also across tabs)
+// Save the draft: replaces the previous one ("last save wins", also across tabs).
+// Only while submitting is possible (Group 3): a saved draft could never be sent otherwise.
+// Reading and deleting stay possible, so the form can still be seen and emptied.
 router.put('/mine', verifyToken, requireRole('student'), async (req, res) => {
     const { version, data } = req.body || {};
     const problem = checkDraft(version, data);
@@ -48,6 +51,7 @@ router.put('/mine', verifyToken, requireRole('student'), async (req, res) => {
         return sendValidationErrors(res, [error], status);
     }
     try {
+        if (refuseUnlessSubmitting(res, await getSubmissionState())) return undefined;
         const result = await pool.query(
             `INSERT INTO application_drafts (student_id, version, data, updated_at) VALUES ($1, $2, $3, now())
              ON CONFLICT (student_id) DO UPDATE SET version = EXCLUDED.version, data = EXCLUDED.data, updated_at = now()

@@ -35,12 +35,16 @@ const addEvent = (db, { applicationId, kind, actorRole, actorId = null, status, 
 // created_at is stored as UTC without a time zone, so it is read "AT TIME ZONE 'UTC'".
 // decided_*: the latest step that set the status (request for information, decision,
 // withdrawal or automatic rejection): who ("reviewer", "admin", "system", "student") and when.
+// semester_name / current_semester (Group 3): the application's semester, and whether that is the
+// semester running now; My Status lists the others under "Previous semesters".
 const STUDENT_APPLICATION_QUERY = `
     SELECT a.id, a.status, a.target_courses, a.target_course_code, a.pte_course_names, a.fulfilled_courses_json,
            a.reviewer_note, a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
            r.resubmit_count, r.last_resubmitted_at,
-           d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason
+           d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
+           sb.name AS semester_name, COALESCE(sb.opens_at <= now() AND sb.ends_at > now(), false) AS current_semester
     FROM applications a
+    LEFT JOIN semester_bounds sb ON sb.id = a.semester_id
     LEFT JOIN LATERAL (
         SELECT count(*)::int AS resubmit_count, max(e.created_at) AS last_resubmitted_at
         FROM application_events e WHERE e.application_id = a.id AND e.kind = 'replied'

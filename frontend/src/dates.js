@@ -14,3 +14,10 @@ export const formatDate = (at, language) => format(at, language, { year: 'numeri
 export const formatDateTime = (at, language) => format(at, language, {
     year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
+
+// A calendar day sent as 'YYYY-MM-DD' (e.g. the last day of the application period), written out:
+// "15 November 2026". It is already a Budapest day, so it is formatted as is, never shifted.
+export const formatDay = (day, language) => (day
+    ? new Intl.DateTimeFormat(LOCALES[language] || LOCALES.en, { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' })
+        .format(new Date(`${day}T00:00:00Z`))
+    : '');

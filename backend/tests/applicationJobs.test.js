@@ -6,7 +6,7 @@
  * Uses the database from backend/.env (run "npm run migrate" first). It adds its own test
  * applications and deletes them afterwards, together with their history; no email is sent
  * (a fake notify function records them). Every run is limited to the test's own applications
- * (`only`), so real applications are never touched; and the fake clock is 60 days in the future,
+ * (`only`, and `onlyDraftsOf` for drafts), so real applications and drafts are never touched; and the fake clock is 60 days in the future,
  * so a backend running its real jobs at the same time never touches the test applications.
  */
 process.env.DOTENV_CONFIG_QUIET = 'true';
@@ -130,7 +130,7 @@ test('nothing happens after the student replied', async () => {
     // A reply sets the status back to pending and clears the deadline
     const id = await waitingApplication({ status: 'pending' });
     const { sent, notify } = recorder();
-    await runApplicationJobs({ now: at(10 * 24 * HOUR), notify, only: [id] });
+    await runApplicationJobs({ now: at(10 * 24 * HOUR), notify, only: [id], onlyDraftsOf: [] });
     assert.equal((await read(id)).status, 'pending');
     assert.equal((await eventsOf(id)).length, 0);
     assert.equal(sent.length, 0);
@@ -170,8 +170,8 @@ test('a full run does the reminder and the rejection steps together', async () =
     const soon = await waitingApplication({ deadline: at(80 * HOUR) });
     const overdue = await waitingApplication({ deadline: at(50 * HOUR) });
     const { notify } = recorder();
-    const results = await runApplicationJobs({ now: at(60 * HOUR), notify, only: [soon, overdue] });
-    assert.deepEqual(results, { 'deadline reminders': 1, 'overdue information requests': 1 });
+    const results = await runApplicationJobs({ now: at(60 * HOUR), notify, only: [soon, overdue], onlyDraftsOf: [] });
+    assert.deepEqual(results, { 'semester end': 0, 'deadline reminders': 1, 'overdue information requests': 1 });
     assert.ok((await read(soon)).info_reminder_sent_at);
     assert.equal((await read(overdue)).status, 'rejected');
 });
