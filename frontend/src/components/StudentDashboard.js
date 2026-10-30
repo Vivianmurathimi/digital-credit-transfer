@@ -97,7 +97,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // Confirmation summary before the final submit, and the success message afterwards
     const [summaryOpen, setSummaryOpen] = useState(false);
     const [summaryBusy, setSummaryBusy] = useState(false);
-    const [submitSuccess, setSubmitSuccess] = useState(false);
+    // The confirmation at the top of My Status after a submit or a withdrawal (locale key, '' = none)
+    const [submitSuccess, setSubmitSuccess] = useState('');
     const submitButtonRef = useRef(null);
     const successRef = useRef(null);
     // The application open in the detail view (null = closed), and the button that opened it
@@ -681,7 +682,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const handleSubmitApplication = () => {
         if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
         if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
-        setSubmitSuccess(false);
+        setSubmitSuccess('');
 
         // Institution keys -> positions, credits -> numbers (see applicationForm.js).
         // With any problem nothing is sent.
@@ -707,7 +708,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         if (submitSuccess && studentTab === 'dashboard') successRef.current?.focus();
     }, [submitSuccess, studentTab]);
 
-    // Closing the summary puts keyboard focus back on the Submit button
     // Detail view: focus goes back to the "Details" button that opened it
     const openDetail = (id, event) => { detailOpener.current = event.currentTarget; setDetailId(id); };
     const closeDetail = useCallback(() => {
@@ -716,7 +716,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     }, []);
     // "Add missing info" inside the detail view: close it first (a modal dialog would cover the reply window)
     const replyFromDetail = (app) => { setDetailId(null); setResubmitModal({ isOpen: true, app }); };
+    // Withdrawn: close the detail, reload the list and confirm at the top of My Status (focus goes there)
+    const handleWithdrawn = () => {
+        setDetailId(null);
+        fetchMyApplications();
+        setSubmitSuccess('student_withdraw_success');
+    };
 
+    // Closing the summary puts keyboard focus back on the Submit button
     const closeSummary = () => {
         setSummaryOpen(false);
         setTimeout(() => submitButtonRef.current?.focus(), 0);
@@ -747,7 +754,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
-                setSubmitSuccess(true); // shown at the top of "My Status" instead of a pop-up
+                setSubmitSuccess('student_submission_success'); // shown at the top of "My Status" instead of a pop-up
                 // The server has deleted the draft; the emptied form must not be saved again
                 lastSavedDraft.current = NOTHING_SAVED;
                 setDraftStatus(null);
@@ -821,8 +828,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         It gets keyboard focus (so screen readers read it), and can be closed. */}
                     {submitSuccess && (
                         <div role="status" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', backgroundColor: 'var(--surface)', borderLeft: '5px solid var(--success-accent)', padding: '10px 15px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
-                            <span ref={successRef} tabIndex={-1}>✓ {t('student_submission_success')}</span>
-                            <button type="button" onClick={() => setSubmitSuccess(false)} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
+                            <span ref={successRef} tabIndex={-1}>✓ {t(submitSuccess)}</span>
+                            <button type="button" onClick={() => setSubmitSuccess('')} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
                         </div>
                     )}
                     <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
@@ -902,6 +909,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             statusColor={statusColor}
                             onClose={closeDetail}
                             onReply={replyFromDetail}
+                            onWithdrawn={handleWithdrawn}
                         />
                     )}
                 </div>

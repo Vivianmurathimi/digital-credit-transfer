@@ -10,7 +10,7 @@ const { createEmailLink } = require('./emailLink');
  * and can never make the user's action fail.
  *
  * @param {number} studentId
- * @param {'submitted'|'resubmitted'|'needsInfo'|'statusUpdate'} type
+ * @param {'submitted'|'resubmitted'|'needsInfo'|'withdrawn'|'statusUpdate'} type
  * @param {{ status?: string, note?: string }} data
  */
 const notifyStudent = async (studentId, type, data = {}) => {

@@ -54,6 +54,11 @@ const templates = {
             body: () => `<p>A bírálónak további információra van szüksége, mielőtt döntést hozna kreditátviteli kérelméről.</p>`,
             after: () => `<p>Kérjük, jelentkezzen be, nyissa meg az <strong>Állapotom</strong> fület, és kattintson a <strong>Hiányzó információ hozzáadása</strong> gombra a válaszadáshoz és a dokumentumok feltöltéséhez.</p>`,
         },
+        withdrawn: {
+            subject: 'Kreditátviteli kérelmét visszavonta',
+            body: () => `<p>Kreditátviteli kérelmét visszavonta. A bíráló már nem foglalkozik vele.</p>
+                <p>Ugyanarra a PTE tárgyra bármikor beadhat új kérelmet. Ha nem Ön vonta vissza, kérjük, forduljon a Tanulmányi Osztályhoz.</p>`,
+        },
         statusUpdate: {
             subject: 'Kreditátviteli kérelmének állapota megváltozott',
             body: ({ label }) => `<p>Kreditátviteli kérelmének állapota a következőre változott: <strong>${label}</strong>.</p>`,
@@ -75,6 +80,11 @@ const templates = {
             subject: 'Action required: more information needed for your application',
             body: () => `<p>The reviewer needs more information before they can decide on your credit transfer application.</p>`,
             after: () => `<p>Please log in, open the <strong>My Status</strong> tab and click <strong>Add Missing Info</strong> to reply and upload documents.</p>`,
+        },
+        withdrawn: {
+            subject: 'You withdrew your credit transfer application',
+            body: () => `<p>You withdrew your credit transfer application. The reviewer will no longer work on it.</p>
+                <p>You can submit a new request for the same PTE course at any time. If you did not withdraw it, please contact the Student Office.</p>`,
         },
         statusUpdate: {
             subject: 'Update on your credit transfer application',
@@ -98,6 +108,11 @@ const templates = {
             body: () => `<p>Der Prüfer benötigt weitere Informationen, bevor über Ihren Antrag auf Kreditübertragung entschieden werden kann.</p>`,
             after: () => `<p>Bitte melden Sie sich an, öffnen Sie den Reiter <strong>Mein Status</strong> und klicken Sie auf <strong>Fehlende Informationen hinzufügen</strong>, um zu antworten und Dokumente hochzuladen.</p>`,
         },
+        withdrawn: {
+            subject: 'Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen',
+            body: () => `<p>Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen. Der Prüfer bearbeitet ihn nicht mehr.</p>
+                <p>Für denselben PTE-Kurs können Sie jederzeit einen neuen Antrag stellen. Falls Sie ihn nicht zurückgezogen haben, wenden Sie sich bitte an das Studierendensekretariat.</p>`,
+        },
         statusUpdate: {
             subject: 'Neuigkeiten zu Ihrem Antrag auf Kreditübertragung',
             body: ({ label }) => `<p>Der Status Ihres Antrags auf Kreditübertragung wurde geändert auf: <strong>${label}</strong>.</p>`,
@@ -114,7 +129,7 @@ const noteBlock = (title, note) => `
 
 /**
  * Builds a notification email.
- * @param {'submitted'|'resubmitted'|'needsInfo'|'statusUpdate'} type
+ * @param {'submitted'|'resubmitted'|'needsInfo'|'withdrawn'|'statusUpdate'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
  * @param {{ name: string, status?: string, note?: string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send

@@ -19,8 +19,12 @@ const isDuplicateApplication = (err) => err.code === '23505' && err.constraint =
 const alreadyApplied = (res) => sendError(res, 409, 'ALREADY_APPLIED', 'There is already an active or approved application for this PTE course', { field: 'target_course_ids' });
 
 
-// The only statuses the app understands (badges, reviewer tabs, emails, term book)
+// The statuses a reviewer or the superadmin may set. "withdrawn" is set only by the student
+// (the withdraw route below), and a withdrawn application can't be changed by anyone.
 const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
+
+// A student may withdraw an application while it is waiting: under review or waiting for their reply
+const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
 
 const checkSubmissionsOpen = async () => {
     const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
@@ -212,6 +216,8 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                 const current = await client.query('SELECT status, reviewer_note FROM applications WHERE id=$1 FOR UPDATE', [id]);
                 if (current.rows.length === 0) return null;
                 const previous = current.rows[0];
+                // The student withdrew it: it is closed for good
+                if (previous.status === 'withdrawn') return { withdrawn: true };
 
                 // Record who made the decision and when (the logged-in reviewer or superadmin).
                 // Reply deadline (Group 9): set when the application is newly sent back for information,
@@ -240,6 +246,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
             throw err;
         }
         if (!updated) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (updated.withdrawn) return sendError(res, 409, 'APPLICATION_WITHDRAWN', 'The student has withdrawn this application');
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)
@@ -251,6 +258,42 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     } catch (err) {
        console.error("❌ Status update error:", err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Update failed');
+    }
+});
+
+// The student withdraws their own application (Group 8). Allowed while it is pending or waiting
+// for their reply, also while submissions are closed. The reply deadline is cleared, the step is
+// added to the history, and a withdrawn application no longer blocks a new one for the same course.
+// Another student's application and an id that doesn't exist get the same 404.
+router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+
+    try {
+        // The status is checked in the update itself, so a decision or an automatic rejection
+        // made a moment earlier can't be overwritten
+        const result = await inTransaction(async (client) => {
+            const { rowCount } = await client.query(
+                `UPDATE applications SET status = 'withdrawn', info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
+                 WHERE id = $1 AND student_id = $2 AND status = ANY($3)`,
+                [id, req.user.id, WITHDRAWABLE_STATUSES]
+            );
+            if (rowCount === 0) {
+                const own = await client.query('SELECT 1 FROM applications WHERE id = $1 AND student_id = $2', [id, req.user.id]);
+                return own.rows.length === 0 ? 'not_found' : 'not_allowed';
+            }
+            await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: 'student', actorId: req.user.id, status: 'withdrawn' });
+            return 'withdrawn';
+        });
+        if (result === 'not_found') return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (result === 'not_allowed') return sendError(res, 409, 'CANNOT_WITHDRAW', 'Only an application under review or waiting for your reply can be withdrawn');
+        res.json({ success: true });
+
+        // Respond first, then email in the background (never blocks or fails the request)
+        notifyStudent(req.user.id, 'withdrawn');
+    } catch (err) {
+        console.error('❌ Withdraw error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Withdraw failed');
     }
 });
 

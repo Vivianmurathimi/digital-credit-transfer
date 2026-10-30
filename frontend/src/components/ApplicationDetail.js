@@ -17,7 +17,10 @@ const noteText = { margin: '6px 0 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'a
  * Uses the browser's <dialog> (focus stays inside, Esc closes); focus starts on the heading and
  * the caller puts it back on the button that opened it.
  */
-const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName, statusLabel, statusColor, onClose, onReply }) => {
+// Statuses from which the student may withdraw (same rule as the server)
+const WITHDRAWABLE = ['pending', 'needs_info'];
+
+const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
     const { t } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const dialogRef = useRef(null);
@@ -25,6 +28,12 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
     const [application, setApplication] = useState(null);
     const [error, setError] = useState('');
     const [fileError, setFileError] = useState('');
+    // Withdraw: asked first inside this window ("Keep application" / "Withdraw")
+    const [confirming, setConfirming] = useState(false);
+    const [withdrawing, setWithdrawing] = useState(false);
+    const [withdrawError, setWithdrawError] = useState('');
+    const confirmRef = useRef(null);
+    const withdrawButtonRef = useRef(null);
 
     // Opened once: as a modal, with focus on the heading
     useEffect(() => {
@@ -35,10 +44,31 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
 
     useEffect(() => {
         const dialog = dialogRef.current;
-        const handleCancel = (event) => { event.preventDefault(); onClose(); };
+        // Esc closes the window, but never in the middle of withdrawing
+        const handleCancel = (event) => { event.preventDefault(); if (!withdrawing) onClose(); };
         dialog?.addEventListener('cancel', handleCancel);
         return () => dialog?.removeEventListener('cancel', handleCancel);
-    }, [onClose]);
+    }, [onClose, withdrawing]);
+
+    // The question gets focus when it appears, so a screen reader reads it
+    useEffect(() => { if (confirming) confirmRef.current?.focus(); }, [confirming]);
+
+    const keepApplication = () => {
+        setConfirming(false);
+        setTimeout(() => withdrawButtonRef.current?.focus(), 0);
+    };
+    const withdraw = async () => {
+        setWithdrawing(true);
+        setWithdrawError('');
+        try {
+            await http.put(`applications/${applicationId}/withdraw`).json();
+            onWithdrawn();
+        } catch (err) {
+            setWithdrawError(getErrorMessage(err, t, 'student_withdraw_failed'));
+            setWithdrawing(false);
+        }
+    };
+    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !isImpersonating;
 
     useEffect(() => {
         let current = true;
@@ -151,7 +181,27 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
                 </>
             )}
 
+            {confirming ? (
+                <div style={{ marginTop: '20px', padding: '14px', borderRadius: '6px', border: '2px solid var(--red)', backgroundColor: 'var(--surface-accent)' }}>
+                    <h3 ref={confirmRef} tabIndex={-1} style={{ margin: '0 0 6px 0', fontSize: '16px' }}>{t('student_withdraw_confirm_title')}</h3>
+                    <p style={{ margin: '0 0 12px 0' }}>{t('student_withdraw_confirm_text')}</p>
+                    {withdrawError && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold' }}>{withdrawError}</p>}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' }}>
+                        <button type="button" onClick={keepApplication} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                            {t('student_withdraw_keep')}
+                        </button>
+                        <button type="button" onClick={withdraw} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: withdrawing ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
+                            {withdrawing ? t('student_withdraw_working') : t('student_withdraw_confirm')}
+                        </button>
+                    </div>
+                </div>
+            ) : (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap', marginTop: '20px' }}>
+                {canWithdraw && (
+                    <button type="button" ref={withdrawButtonRef} onClick={() => { setWithdrawError(''); setConfirming(true); }} style={{ padding: '10px 15px', backgroundColor: 'var(--surface)', color: 'var(--red)', border: '2px solid var(--red)', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', marginRight: 'auto' }}>
+                        {t('student_withdraw')}
+                    </button>
+                )}
                 {application?.status === 'needs_info' && !isImpersonating && (
                     <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                         {t('student_add_missing_info')}
@@ -161,6 +211,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, countryName
                     {t('student_detail_close')}
                 </button>
             </div>
+            )}
         </dialog>
     );
 };
