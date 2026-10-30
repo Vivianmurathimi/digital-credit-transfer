@@ -284,7 +284,6 @@
   "superadmin_mapped_package_column": "Térképezett csomag",
   "superadmin_status_column": "Állapot",
   "superadmin_action_column": "Művelet",
-  "superadmin_system_override_note": "Rendszer felülírása Super Admin által",
   "superadmin_update_success": "Az állapot sikeresen {{status}} értékre változott!",
   "superadmin_update_failed": "A frissítés sikertelen.",
   "superadmin_confirm_close": "Biztos benne, hogy LEZÁRJA a kreditátviteli ablakot? A hallgatók ki lesznek zárva.",

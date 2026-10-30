@@ -76,7 +76,8 @@ const SuperAdminDashboard = () => {
 
     const handleUpdateStatus = async (appId, newStatus) => {
         try {
-            const res = await api.put(`/api/applications/${appId}/status`, { status: newStatus, note: t('superadmin_system_override_note') });
+            // No note: the reviewer's note stays, and the student sees the decision as made by "Admin"
+            const res = await api.put(`/api/applications/${appId}/status`, { status: newStatus });
             if (res.data.success) { 
                 alert(t('superadmin_update_success', { status: t(`status_${newStatus}`) })); 
                 fetchApplications(); 

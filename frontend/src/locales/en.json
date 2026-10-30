@@ -284,7 +284,6 @@
   "superadmin_mapped_package_column": "Mapped Package",
   "superadmin_status_column": "Status",
   "superadmin_action_column": "Action",
-  "superadmin_system_override_note": "System Override by Super Admin",
   "superadmin_update_success": "Status successfully forced to {{status}}!",
   "superadmin_update_failed": "Update failed.",
   "superadmin_confirm_close": "Are you sure you want to CLOSE the credit transfer window? Students will be locked out.",

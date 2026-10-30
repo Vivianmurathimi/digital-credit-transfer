@@ -284,7 +284,6 @@
   "superadmin_mapped_package_column": "Zuordnungspaket",
   "superadmin_status_column": "Status",
   "superadmin_action_column": "Aktion",
-  "superadmin_system_override_note": "Systemüberschreibung durch Super Admin",
   "superadmin_update_success": "Status erfolgreich auf {{status}} gesetzt!",
   "superadmin_update_failed": "Aktualisierung fehlgeschlagen.",
   "superadmin_confirm_close": "Sind Sie sicher, dass Sie das Kreditübertragungsfenster SCHLIESSEN möchten? Studierende werden ausgeschlossen.",

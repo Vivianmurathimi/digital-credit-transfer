@@ -23,6 +23,7 @@ const pool = require('../db');
 const minioClient = require('../minio');
 const { listPendingMigrations } = require('../utils/migrations');
 const { normalizeCourseCode } = require('../utils/applicationForm');
+const { addEvent } = require('../utils/applicationEvents');
 
 // One password for every test account (development only)
 const DEV_PASSWORD = 'Test1234!';
@@ -137,10 +138,10 @@ const seed = async () => {
                 [programmeIds[account.programme], target]
             )).rows[0];
             const targetCourses = [{ course_id: course.id, course_code: course.course_code, course_name: course.course_name, credits: course.credits }];
-            await pool.query(
+            const application = await pool.query(
                 `INSERT INTO applications
                     (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, student_note, status)
-                 VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending')`,
+                 VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending') RETURNING id, student_note`,
                 [
                     student.id,
                     programmeIds[account.programme],
@@ -151,6 +152,9 @@ const seed = async () => {
                     'Test application created by seed:dev.',
                 ]
             );
+            // Its history starts like a real submit
+            const { id, student_note } = application.rows[0];
+            await addEvent(pool, { applicationId: id, kind: 'submitted', actorRole: 'student', actorId: student.id, status: 'pending', note: student_note });
         }
     }
 
