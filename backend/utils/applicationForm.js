@@ -16,6 +16,21 @@ const LIMITS = {
     creditSystemOther: 50,
 };
 
+// --- Notes to the reviewer (application note and "add missing info" note) ---
+// Counted the same way in the browser (frontend/src/applicationForm.js): after normalising
+// (an "á" typed as "a" + accent is one character), in Unicode characters (an emoji is one,
+// not two as JavaScript's .length would count). check:form-rules compares both.
+const NOTE_MAX = 2000;
+const normalizeNote = (text) => (typeof text === 'string' ? text.normalize('NFC') : '');
+const noteLength = (text) => [...normalizeNote(text)].length;
+// null = fine; otherwise { code, message, params }
+const checkNote = (value) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string') return { code: 'INVALID_NOTE', message: 'The note must be text' };
+    if (noteLength(value) > NOTE_MAX) return { code: 'NOTE_TOO_LONG', message: `The note can be at most ${NOTE_MAX} characters`, params: { max: NOTE_MAX } };
+    return null;
+};
+
 // Credit systems and the most credits one course may have in each (no conversion: the reviewer judges)
 const CREDIT_MAX = { ECTS: 60, US_CREDIT_HOURS: 30, UK_CATS: 120, OTHER: 120 };
 const MOST_GENEROUS_MAX = Math.max(...Object.values(CREDIT_MAX));
@@ -140,6 +155,10 @@ const validateApplicationForm = (body) => {
         }
     });
 
+    // --- Note to the reviewer (optional) ---
+    const noteProblem = checkNote(body.student_note);
+    if (noteProblem) add('student_note', noteProblem.code, noteProblem.message, noteProblem.params);
+
     // --- Target courses (their programme is checked against the database afterwards) ---
     const rawTargets = body.target_course_ids;
     let targetCourseIds = null;
@@ -151,8 +170,8 @@ const validateApplicationForm = (body) => {
         add('target_course_ids', 'INVALID_TARGET_COURSES', 'Choose one PTE course');
     }
 
-    // Keep errors in form order: institutions, then course rows, then target courses
-    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : 2);
+    // Keep errors in form order: institutions, course rows, target course, note
+    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : field === 'target_course_ids' ? 2 : 3);
     errors.sort((a, b) => order(a.field) - order(b.field));
 
     return { errors, institutions, fulfilledCourses, targetCourseIds };
@@ -200,4 +219,16 @@ const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [
     field: `fulfilled_courses[${r}].syllabus_file`, code: 'SYLLABUS_REQUIRED', message: 'Upload the syllabus for this course',
 }]));
 
-module.exports = { validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, CREDIT_MAX, LIMITS };
+// --- One active application per PTE course (Group 6) ---
+// While an application has one of these statuses, the student can't apply for the same PTE course
+// again. Every other status (rejected, and a future "withdrawn") allows a new application.
+// The database enforces the same rule (migration 005, applications_one_active_per_course).
+const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
+
+// Course codes are compared ignoring case and spaces ("cs 202" = "CS202"), like the database index
+const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUpperCase();
+
+module.exports = {
+    validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi,
+    BLOCKING_STATUSES, normalizeCourseCode, NOTE_MAX, normalizeNote, noteLength, checkNote, CREDIT_MAX, LIMITS,
+};

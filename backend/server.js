@@ -6,6 +6,7 @@ const { CORS_ORIGINS } = require('./config/urls');
 // Checks the RATE_LIMIT_* settings
 require('./utils/rateLimit');
 const express = require('express');
+const sendError = require('./utils/sendError');
 const cors = require('cors');
 
 // Import your configuration files
@@ -19,6 +20,7 @@ const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
 const archiveRoutes = require('./routes/archive');
+const draftRoutes = require('./routes/drafts');
 
 const app = express();
 
@@ -34,7 +36,11 @@ if (!Number.isInteger(proxyHops) || proxyHops < 0) {
 if (proxyHops > 0) app.set('trust proxy', proxyHops);
 
 // Middleware
-app.use(express.json());
+// JSON bodies up to Express's usual 100 KB; only a draft of the application form may be larger
+// (its own limit of 200 KB is checked in the route, with a clear DRAFT_TOO_LARGE answer)
+const readJson = express.json();
+const readDraftJson = express.json({ limit: '256kb' });
+app.use((req, res, next) => (req.path === '/api/drafts/mine' ? readDraftJson : readJson)(req, res, next));
 // Only the frontend's own address may call the API from a browser.
 // A refused origin simply gets no CORS headers (the browser blocks it), not an error.
 // Requests without an Origin (curl, server-to-server) are not affected by CORS at all.
@@ -65,6 +71,17 @@ app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/archive', archiveRoutes);
+app.use('/api/drafts', draftRoutes);
+
+// Errors that reach here (e.g. a request body that is too large or isn't valid JSON) are answered
+// in the usual { error, code } format instead of Express's HTML error page
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err.type === 'entity.too.large') return sendError(res, 413, 'REQUEST_TOO_LARGE', 'The request is too large');
+    if (err.type === 'entity.parse.failed') return sendError(res, 400, 'INVALID_JSON', 'The request could not be read');
+    console.error('❌ Unhandled error:', err.message);
+    return sendError(res, 500, 'SERVER_ERROR', 'Something went wrong');
+});
 
 // Start Server
 const PORT = process.env.PORT || 5050;

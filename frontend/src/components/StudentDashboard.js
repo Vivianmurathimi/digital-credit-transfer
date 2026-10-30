@@ -1,15 +1,40 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense, lazy } from 'react';
-import http from '../http';
+import http, { API_PREFIX } from '../http';
+import { getToken } from '../session';
+import { onSessionEnding } from '../sessionKeeper';
 import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
+import SubmitSummary from './SubmitSummary';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi } from '../applicationForm';
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode,
+    NOTE_MAX, noteLength, checkNote, DRAFT_VERSION, DRAFT_SAVE_DELAY_MS, draftFromForm, isEmptyDraft, formFromDraft, DRAFT_MAX_KB } from '../applicationForm';
 
+
+// What the form's draft remembers when the server holds no draft (see the draft section below)
+const NOTHING_SAVED = '';
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
 const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
+
+// Live character counter for a note. Screen readers only hear it at a few points near the limit
+// (200, 100 and 50 left, at the limit, over it), not on every keystroke.
+const visuallyHidden = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
+const NoteCounter = ({ id, text, t }) => {
+    const used = noteLength(text);
+    const left = NOTE_MAX - used;
+    const stage = left < 0 ? 'over' : left === 0 ? 0 : left <= 50 ? 50 : left <= 100 ? 100 : left <= 200 ? 200 : null;
+    let announcement = '';
+    if (stage === 'over') announcement = t('student_note_over', { over: -left });
+    else if (stage !== null) announcement = t('student_note_left', { left: stage === 0 ? 0 : stage });
+    return (
+        <div id={id} style={{ fontSize: '12px', textAlign: 'right', marginTop: '4px', color: left < 0 ? 'var(--error-text)' : 'var(--text-muted)', fontWeight: left < 0 ? 'bold' : 'normal' }}>
+            {t('student_note_counter', { used, max: NOTE_MAX })}
+            <span aria-live="polite" style={visuallyHidden}>{announcement}</span>
+        </div>
+    );
+};
 
 const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
 const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
@@ -60,6 +85,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const [resubmitModal, setResubmitModal] = useState({ isOpen: false, app: null });
     const [resubmitFiles, setResubmitFiles] = useState([]);
     const [resubmitNote, setResubmitNote] = useState(''); 
+    const [resubmitNoteError, setResubmitNoteError] = useState('');
+    // Confirmation summary before the final submit, and the success message afterwards
+    const [summaryOpen, setSummaryOpen] = useState(false);
+    const [summaryBusy, setSummaryBusy] = useState(false);
+    const [submitSuccess, setSubmitSuccess] = useState(false);
+    const submitButtonRef = useRef(null);
+    const successRef = useRef(null);
     const [resubmitHighlightFile, setResubmitHighlightFile] = useState(null);
     const [isNoteExpanded, setIsNoteExpanded] = useState(false);
     
@@ -147,7 +179,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         const [kind, id, field] = key.split(':');
         if (kind === 'row') return `${ROW_DOM[field]}-${id}`;
         if (kind === 'inst') return `${INST_DOM[field]}-${id}`;
-        return { target_course_ids: 'target-course-select', institutions: 'institutions-title', fulfilled_courses: 'fulfilled-courses-start' }[key];
+        return { target_course_ids: 'target-course-select', student_note: 'student-note', institutions: 'institutions-title', fulfilled_courses: 'fulfilled-courses-start' }[key];
     };
     const fieldProps = (key) => {
         const id = domIdFor(key);
@@ -163,7 +195,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // The body that would be sent now, and the maps from its positions back to the form's keys
     const currentSubmission = () => {
         const { institutionKeyAt, rowIdAt, ...form } = buildSubmission(institutions, fulfilledCourses);
-        return { body: { ...form, target_course_ids: selectedCourses.map((c) => c.id) }, map: { institutionKeyAt, rowIdAt } };
+        return { body: { ...form, target_course_ids: selectedCourses.map((c) => c.id), student_note: studentNote }, map: { institutionKeyAt, rowIdAt } };
     };
 
     // On leaving a field: check just that field, and only if something was entered
@@ -211,6 +243,155 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const creditsMatch = syllabusNeededFor !== null && allEcts(fulfilledCourses) && !syllabusNeededFor.includes('CREDIT_GAP');
     const syllabusNeeded = Boolean(syllabusNeededFor && syllabusNeededFor.length > 0);
     const allSyllabiAttached = fulfilledCourses.every((c) => c.syllabus_file);
+
+    // --- Draft (Group 7): the unsent form is saved on the server while the student types ---
+    // Restored when the form is opened again (also in another browser). One draft per student;
+    // with two tabs open, the last save wins. Off while the superadmin views a student's dashboard.
+    const draftsEnabled = !isImpersonating;
+    // 'loading' -> 'ready' (autosave on) | 'failed' (autosave paused, so the stored draft is never overwritten)
+    const [draftPhase, setDraftPhase] = useState(draftsEnabled ? 'loading' : 'off');
+    const draftReady = useRef(false);
+    // { kind: 'saving' } | { kind: 'saved', at } | { kind: 'error', code } | null
+    const [draftStatus, setDraftStatus] = useState(null);
+    const [draftNotices, setDraftNotices] = useState([]);
+    // JSON of what the server holds now (NOTHING_SAVED = no draft there)
+    const lastSavedDraft = useRef(NOTHING_SAVED);
+    const draftTimer = useRef(null);
+    const draftQueue = useRef(Promise.resolve()); // saves run one after another, never out of order
+    // The token at the last change: when the page is left after Log Out, the stored one is already gone
+    const draftToken = useRef(null);
+
+    const currentDraft = draftFromForm({ institutions, rows: fulfilledCourses, targetCourseId: targetCourse ? targetCourse.id : null, note: studentNote });
+    const currentDraftJson = JSON.stringify(currentDraft);
+    const currentDraftRef = useRef(currentDraft);
+    currentDraftRef.current = currentDraft;
+
+    // Saves the form now if it changed since the last save (an emptied form deletes the draft)
+    const saveDraft = useCallback(() => {
+        clearTimeout(draftTimer.current);
+        draftQueue.current = draftQueue.current.then(async () => {
+            if (!draftReady.current) return;
+            const draft = currentDraftRef.current;
+            const json = JSON.stringify(draft);
+            if (json === lastSavedDraft.current) return;
+            const empty = isEmptyDraft(draft);
+            if (empty && lastSavedDraft.current === NOTHING_SAVED) return;
+            setDraftStatus({ kind: 'saving' });
+            try {
+                if (empty) {
+                    await http.delete('drafts/mine');
+                    lastSavedDraft.current = NOTHING_SAVED;
+                    setDraftStatus(null);
+                } else {
+                    const data = await http.put('drafts/mine', { json: { version: DRAFT_VERSION, data: draft } }).json();
+                    lastSavedDraft.current = json;
+                    setDraftStatus({ kind: 'saved', at: data.updated_at });
+                }
+            } catch (err) {
+                // Tried again at the next change, on leaving the page and before an idle logout
+                setDraftStatus({ kind: 'error', code: getErrorCode(err) });
+            }
+        });
+        return draftQueue.current;
+    }, []);
+
+    // Leaving the page (closing the tab, reloading, Log Out): a normal request could be cut off,
+    // so the last changes go with keepalive, which the browser finishes after the page is gone
+    const saveDraftOnLeave = useCallback(() => {
+        clearTimeout(draftTimer.current);
+        if (!draftReady.current) return;
+        const draft = currentDraftRef.current;
+        const json = JSON.stringify(draft);
+        if (json === lastSavedDraft.current) return;
+        const empty = isEmptyDraft(draft);
+        if (empty && lastSavedDraft.current === NOTHING_SAVED) return;
+        const token = getToken() || draftToken.current;
+        if (!token) return;
+        const body = empty ? undefined : JSON.stringify({ version: DRAFT_VERSION, data: draft });
+        try {
+            fetch(`${API_PREFIX}/drafts/mine`, {
+                method: empty ? 'DELETE' : 'PUT',
+                headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+                body,
+                // Browsers allow keepalive only up to 64 KB; a larger draft (rare) is sent normally
+                keepalive: !body || new Blob([body]).size < 60 * 1024,
+            }).catch(() => {});
+            lastSavedDraft.current = json;
+        } catch { /* nothing more can be done while the page closes */ }
+    }, []);
+
+    // Restore the draft once the course list is there (the target course is kept by its id)
+    const draftLoadStarted = useRef(false);
+    useEffect(() => {
+        if (!draftsEnabled || !coursesLoaded || draftLoadStarted.current) return;
+        draftLoadStarted.current = true;
+        (async () => {
+            try {
+                const { draft } = await http.get('drafts/mine').json();
+                const notices = [];
+                if (draft && draft.version !== DRAFT_VERSION) {
+                    // Made with an older form: not restored, so nothing is filled in wrongly
+                    await http.delete('drafts/mine');
+                    notices.push({ key: 'student_draft_outdated' });
+                } else if (draft) {
+                    const form = formFromDraft(draft.data);
+                    const target = courses.find((c) => c.id === form.targetCourseId) || null;
+                    setInstitutions(form.institutions);
+                    setFulfilledCourses(form.rows);
+                    setSelectedCourses(target ? [target] : []);
+                    setStudentNote(form.note);
+                    setFileNames((prev) => ({ ...prev, ...(draft.file_names || {}) }));
+                    notices.push({ key: 'student_draft_restored', params: { time: draft.updated_at } });
+                    if (draft.dropped_files > 0) notices.push({ key: 'student_draft_files_dropped', params: { count: draft.dropped_files } });
+                    const courseDropped = form.targetCourseId !== null && !target;
+                    if (courseDropped) notices.push({ key: 'student_draft_course_dropped' });
+                    // With something removed, the cleaned form is saved at once; otherwise it matches the server
+                    const restored = JSON.stringify(draftFromForm({ ...form, targetCourseId: target ? target.id : null }));
+                    lastSavedDraft.current = draft.dropped_files > 0 || courseDropped ? null : restored;
+                }
+                setDraftNotices(notices);
+                draftReady.current = true;
+                setDraftPhase('ready');
+            } catch (err) {
+                setDraftPhase('failed');
+            }
+        })();
+    }, [draftsEnabled, coursesLoaded, courses]);
+
+    // Autosave: DRAFT_SAVE_DELAY_MS after the last change
+    useEffect(() => {
+        if (draftPhase !== 'ready') return undefined;
+        draftToken.current = getToken() || draftToken.current;
+        if (currentDraftJson === lastSavedDraft.current) return undefined;
+        clearTimeout(draftTimer.current);
+        draftTimer.current = setTimeout(saveDraft, DRAFT_SAVE_DELAY_MS);
+        return undefined;
+    }, [currentDraftJson, draftPhase, saveDraft]);
+
+    // Also saved when the tab is hidden, when the page is left, and shortly before an idle logout
+    useEffect(() => {
+        if (!draftsEnabled) return undefined;
+        const onHidden = () => { if (document.visibilityState === 'hidden') saveDraft(); };
+        document.addEventListener('visibilitychange', onHidden);
+        window.addEventListener('pagehide', saveDraftOnLeave);
+        const stopListening = onSessionEnding(saveDraft);
+        return () => {
+            document.removeEventListener('visibilitychange', onHidden);
+            window.removeEventListener('pagehide', saveDraftOnLeave);
+            stopListening();
+            saveDraftOnLeave(); // the dashboard closes (e.g. Log Out)
+        };
+    }, [draftsEnabled, saveDraft, saveDraftOnLeave]);
+
+    const clockTime = (at) => new Date(at).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
+    // PTE courses with an open or approved application can't be chosen again (shown with the reason)
+    const blockedCodes = useMemo(() => blockedCourseCodes(myApplications), [myApplications]);
+    const courseOptionLabel = (c) => {
+        const label = t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits });
+        const status = blockedCodes[normalizeCourseCode(c.course_code)];
+        if (!status) return label;
+        return t(status === 'approved' ? 'student_course_already_approved' : 'student_course_already_applied', { course: label });
+    };
 
     const parseCourses = (jsonStringOrArray) => {
         if (!jsonStringOrArray) return [];
@@ -487,12 +668,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const noCourses = coursesLoaded && courses.length === 0;
     const canSubmit = isSubmissionsOpen && !noCourses;
 
-    const handleSubmitApplication = async () => {
+    // Step 1: the browser runs the server's rules; if all is well, the summary opens (nothing is sent yet)
+    const handleSubmitApplication = () => {
         if (!isSubmissionsOpen) return setSubmitStatus(t('student_submissions_closed', 'Submissions are currently closed.'));
         if (noCourses) return setSubmitStatus(t('student_no_courses_for_programme'));
+        setSubmitSuccess(false);
 
         // Institution keys -> positions, credits -> numbers (see applicationForm.js).
-        // The browser runs the server's rules first: with any problem nothing is sent.
+        // With any problem nothing is sent.
         const { body, map } = currentSubmission();
         const problems = validateSubmission(body, isCountryCode);
         if (problems.length > 0) return showErrors(problems.map((e) => [e.field, translateError(e)]), map);
@@ -505,17 +688,38 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
         lastSubmitMap.current = map;
         setFieldErrors({});
         setShowErrorSummary(false);
+        setSubmitStatus('');
+        setSummaryOpen(true);
+        return undefined;
+    };
+
+    // The success message takes focus when it appears
+    useEffect(() => {
+        if (submitSuccess && studentTab === 'dashboard') successRef.current?.focus();
+    }, [submitSuccess, studentTab]);
+
+    // Closing the summary puts keyboard focus back on the Submit button
+    const closeSummary = () => {
+        setSummaryOpen(false);
+        setTimeout(() => submitButtonRef.current?.focus(), 0);
+    };
+
+    // Step 2: "Confirm and submit" in the summary sends the application
+    const confirmSubmit = async () => {
+        // The form can't change while the summary is open, so this is exactly what was shown
+        const { body } = currentSubmission();
+        setSummaryBusy(true);
+        // Pending draft changes are saved first, so no autosave can arrive after the submit
+        // (the server deletes the draft when it stores the application)
+        await saveDraft();
         try {
             setSubmitStatus(t('student_submit_saving'));
             // Only the course ids: the server checks them against the student's programme
             // and stores their code, name and credits itself
-            const data = await http.post('applications', { json: {
-                ...body,
-                student_note: studentNote 
-            } }).json();
+            const data = await http.post('applications', { json: body }).json();
             
             if (data.success) {
-                alert(t('student_submission_success'));
+                setSummaryOpen(false);
                 setInstitutions([newInstitution()]);
                 setFulfilledCourses([newCourseRow()]);
                 setGradingStatus({});
@@ -525,8 +729,15 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setSelectedCourses([]); setActiveUploadId(null); setHighlightFile(null); setSubmitStatus(''); setStudentNote('');
                 fetchMyApplications(); 
                 setStudentTab('dashboard');
+                setSubmitSuccess(true); // shown at the top of "My Status" instead of a pop-up
+                // The server has deleted the draft; the emptied form must not be saved again
+                lastSavedDraft.current = NOTHING_SAVED;
+                setDraftStatus(null);
+                setDraftNotices([]);
             }
         } catch (err) {
+            // The server still refused: back to the form, where the errors appear under their fields
+            closeSummary();
             const message = getErrorMessage(err, t, 'student_submission_failed');
 
             if (getErrorCode(err) === 'COURSE_NOT_IN_PROGRAMME') {
@@ -543,15 +754,23 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             }
 
             // Field-level server errors go under their fields; anything else under Submit
+            // Applied for this course meanwhile (e.g. in another tab): refresh, so the picker shows it
+            if (getErrorCode(err) === 'ALREADY_APPLIED') fetchMyApplications();
             const byField = Object.entries(getFieldErrors(err, t));
             if (byField.length > 0) return showErrors(byField, lastSubmitMap.current);
             setSubmitStatus(message);
+        } finally {
+            setSummaryBusy(false);
         }
     };
 
     const submitResubmission = async () => {
         if (!isSubmissionsOpen) return alert(t('student_submissions_closed', 'Submissions are currently closed.'));
         if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
+        // Same note rule as the server: shown under the note, nothing sent
+        const noteProblem = checkNote(resubmitNote);
+        if (noteProblem) { setResubmitNoteError(t(`errors.${noteProblem.code}`, noteProblem.params || {})); return undefined; }
+        setResubmitNoteError('');
         try {
             setUploadStatus(t('student_resubmission_sending'));
             const data = await http.put(`applications/${resubmitModal.app.id}/resubmit`, { json: { 
@@ -563,7 +782,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
             }
-        } catch (err) { setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed')); }
+        } catch (err) {
+            // A note error from the server goes under the note, anything else into the status line
+            if (getFieldErrors(err, t).student_resubmit_note) setResubmitNoteError(getFieldErrors(err, t).student_resubmit_note);
+            else setUploadStatus(getErrorMessage(err, t, 'student_resubmission_failed'));
+        }
     };
 
     return (
@@ -576,6 +799,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {/* STATUS TAB */}
             {studentTab === 'dashboard' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
+                    {/* After a successful submit: a message here instead of a browser pop-up.
+                        It gets keyboard focus (so screen readers read it), and can be closed. */}
+                    {submitSuccess && (
+                        <div role="status" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', backgroundColor: 'var(--surface)', borderLeft: '5px solid var(--success-accent)', padding: '10px 15px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
+                            <span ref={successRef} tabIndex={-1}>✓ {t('student_submission_success')}</span>
+                            <button type="button" onClick={() => setSubmitSuccess(false)} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
+                        </div>
+                    )}
                     <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('student_my_applications')}</h2>
                     <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
                         <thead>
@@ -643,11 +874,16 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Your Reply to Reviewer:</label>
                         <textarea 
                             value={resubmitNote}
-                            onChange={(e) => setResubmitNote(e.target.value)}
+                            onChange={(e) => { setResubmitNote(e.target.value); setResubmitNoteError(''); }}
                             rows="3"
-                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid var(--border-strong)', boxSizing: 'border-box', marginBottom: '15px' }}
+                            aria-invalid={resubmitNoteError ? true : undefined}
+                            aria-describedby={resubmitNoteError ? 'resubmit-note-counter resubmit-note-error' : 'resubmit-note-counter'}
+                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: resubmitNoteError ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
                             placeholder="Explain what you have updated or attach new highlighted files below..."
                         />
+                        <NoteCounter id="resubmit-note-counter" text={resubmitNote} t={t} />
+                        {resubmitNoteError && <p id="resubmit-note-error" style={{ color: 'var(--error-text)', fontSize: '12px', fontWeight: 'bold', margin: '4px 0 0 0' }}>{resubmitNoteError}</p>}
+                        <div style={{ marginBottom: '15px' }} />
 
                         <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
@@ -700,6 +936,23 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             {studentTab === 'submit' && (
                 <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
                     <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('student_new_application_title')}</h2>
+
+                    {/* Draft: what was restored or removed, or why autosave is paused */}
+                    <div role="status" aria-live="polite">
+                        {(draftNotices.length > 0 || draftPhase === 'failed') && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', backgroundColor: 'var(--info-surface)', border: '1px solid var(--info-border)', color: 'var(--info-text)', padding: '10px 15px', borderRadius: '5px', marginBottom: '15px' }}>
+                                <ul style={{ margin: 0, paddingLeft: '18px' }}>
+                                    {draftPhase === 'failed' && <li>{t('student_draft_load_failed')}</li>}
+                                    {draftNotices.map(({ key, params }) => (
+                                        <li key={key}>{t(key, key === 'student_draft_restored' ? { time: clockTime(params.time) } : params)}</li>
+                                    ))}
+                                </ul>
+                                {draftNotices.length > 0 && (
+                                    <button type="button" onClick={() => setDraftNotices([])} aria-label={t('notice_close')} title={t('notice_close')} style={{ background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', lineHeight: 1, color: 'inherit' }}>×</button>
+                                )}
+                            </div>
+                        )}
+                    </div>
 
                     {/* Previous institutions: entered once, then chosen on each course row */}
                     <section aria-labelledby="institutions-title" style={{ backgroundColor: 'var(--surface)', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
@@ -886,7 +1139,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         ) : (
                         <select {...fieldProps('target_course_ids')} value="" onChange={(e) => { const course = courses.find(c => c.id === parseInt(e.target.value)); if (course) { setSelectedCourses([course]); setFieldError('target_course_ids', ''); } }} style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>
                             <option value="">{t('student_select_pte_courses_placeholder')}</option>
-                            {courses.map(c => <option key={c.id} value={c.id}>{t('student_target_course_chip', { code: c.course_code, name: c.course_name, credits: c.credits })}</option>)}
+                            {courses.map(c => <option key={c.id} value={c.id} disabled={Boolean(blockedCodes[normalizeCourseCode(c.course_code)])}>{courseOptionLabel(c)}</option>)}
                         </select>
                         )}
                         {renderFieldError('target_course_ids')}
@@ -953,15 +1206,20 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     )}
 
                     <div style={{ marginBottom: '20px' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
+                        <label htmlFor="student-note" style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
                         <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '5px 0' }}>{t('student_notes_help')}</p>
                         <textarea 
+                            {...fieldProps('student_note')}
                             value={studentNote}
-                            onChange={(e) => setStudentNote(e.target.value)}
+                            onChange={(e) => { setStudentNote(e.target.value); setFieldError('student_note', ''); }}
+                            onBlur={(e) => checkField('student_note', e.target.value)}
                             rows="4"
-                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: '1px solid var(--border-strong)', boxSizing: 'border-box' }}
+                            aria-describedby={fieldErrors.student_note ? 'student-note-counter student-note-error' : 'student-note-counter'}
+                            style={{ width: '100%', padding: '10px', borderRadius: '5px', border: fieldErrors.student_note ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
                             placeholder={t('student_notes_placeholder')}
                         />
+                        <NoteCounter id="student-note-counter" text={studentNote} t={t} />
+                        {renderFieldError('student_note')}
                     </div>
 
                     {!isSubmissionsOpen && (
@@ -970,7 +1228,23 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         </div>
                     )}
 
+                    {/* Autosave state. Only a failed save is announced: "saved" every few seconds would be noise. */}
+                    {draftPhase === 'ready' && draftStatus?.kind !== 'error' && (
+                        <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--text-muted)' }}>
+                            {draftStatus?.kind === 'saving' && t('student_draft_saving')}
+                            {draftStatus?.kind === 'saved' && t('student_draft_saved', { time: clockTime(draftStatus.at) })}
+                            {!draftStatus && t('student_draft_hint')}
+                        </p>
+                    )}
+                    <div role="alert">
+                        {draftStatus?.kind === 'error' && (
+                            <p style={{ fontSize: '12px', textAlign: 'right', margin: '0 0 6px 0', color: 'var(--error-text)', fontWeight: 'bold' }}>
+                                {draftStatus.code === 'DRAFT_TOO_LARGE' ? t('errors.DRAFT_TOO_LARGE', { max: DRAFT_MAX_KB }) : t('student_draft_save_failed')}
+                            </p>
+                        )}
+                    </div>
                     <button
+                        ref={submitButtonRef}
                         onClick={handleSubmitApplication}
                         disabled={!canSubmit}
                         style={{
@@ -986,6 +1260,22 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     >
                         {t('student_submit_package')}
                     </button>
+                    {summaryOpen && targetCourse && (
+                        <SubmitSummary
+                            institutions={institutions}
+                            rows={fulfilledCourses}
+                            targetCourse={targetCourse}
+                            syllabusReasons={syllabusNeededFor || []}
+                            note={studentNote}
+                            countryName={countryName}
+                            institutionLabel={institutionLabel}
+                            fileName={displayName}
+                            busy={summaryBusy}
+                            onBack={closeSummary}
+                            onConfirm={confirmSubmit}
+                        />
+                    )}
+
                     {/* Announced by screen readers when it changes */}
                     <div role="status" aria-live="polite">
                         {showErrorSummary && errorCount > 0 && <p style={{ color: 'var(--error-text)', textAlign: 'center', fontWeight: 'bold', marginTop: '10px' }}>{t('student_form_has_errors', { count: errorCount })}</p>}

@@ -1,4 +1,4 @@
-# Security tests: student side (Groups 1, 2, 4 and 5)
+# Security tests: student side (Groups 1, 2, 4, 5, 6 and 7)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
@@ -7,10 +7,12 @@ This document describes how the access rules of the PTE digital credit transfer 
 - that a student only sees and applies for their own study programme's courses (Group 2)
 - that every field of the application form is checked on the server, and errors name their field (Group 4)
 - that uploads follow the file rules (type by real content, size, generated names) and that a syllabus is required when the rules say so (Group 5)
+- that a student has only one active application per PTE course (Group 6)
+- that the note to the reviewer is limited to 2000 characters, counted the same in browser and server, and that a saved draft of the form is only ever the student's own (Group 7)
 
 There are three parts:
 
-1. **Automated API check** (`npm run security-check`): 144 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 177 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
 
@@ -31,7 +33,8 @@ npm run seed:dev     # one student per programme, with a file and an application
 Then:
 
 ```bash
-# 1. Start the backend as usual (it listens on PORT from backend/.env, normally 5050)
+# 1. Start (or RESTART) the backend, so it runs the current code
+#    (it listens on PORT from backend/.env, normally 5050)
 cd backend
 node server.js
 
@@ -51,6 +54,9 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
   - forgot password uses an address that does not exist
   - the only login attempts use wrong passwords
 - **Destructive checks are guarded.** "Student A deletes B's file" and the submit checks would really delete or save something if a check were broken. They only run after the read-only check "A opens B's file" has passed; otherwise they are skipped. In addition, every submit check attaches B's file, so even a broken course check would still be stopped by the file check and nothing could be saved.
+- **Compatibility probe before any submit test.** Every submit test relies on the server reading the same fields as the script. On 2026-10-28 the check was run against a backend that had not been restarted after a code change: the old code did not understand the new request shape, saw no files, and **saved 32 empty applications** (cleaned up with a dev-data reset). Since then a probe runs first: it is refused by every version (empty target course list), but only the current code reports both of its mistakes with their field paths. Otherwise all submit tests are skipped with "restart the backend". Tested against a real older version of the backend: nothing was saved.
+- **Every file the server stores during the check is deleted at the end**, including files an outdated server accepted although it should have refused them.
+- **Drafts of students A and B are put back.** The drafts checks (section 4c) save and delete drafts of A and B. Their real drafts are copied first and restored afterwards, also after a crash; the script prints how many it put back. Without migration 006, or against a backend that doesn't know the drafts routes yet, the drafts checks are skipped and the reason is printed.
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
@@ -119,6 +125,12 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Two courses, only one with a syllabus | only the missing one is reported |
 | | | Enough ECTS from one course, no syllabus | accepted (no syllabus needed) |
 | | | Someone else's file as syllabus | `403 FILES_NOT_OWNED` at `fulfilled_courses[0].syllabus_file` |
+| | **Compatibility probe** | A submit only the current code refuses with all three field paths (country, target courses, note) | otherwise every submit test is skipped ("restart the backend") |
+| | **One application per PTE course (Group 6)** | Student B applies again for the course of B's open application (with A's file, as a safety net) | `409 ALREADY_APPLIED` at `target_course_ids` |
+| | **Note limit (Group 7)** | A note of 2001 characters | `400 NOTE_TOO_LONG` at `student_note`, `max` 2000 |
+| | | 2000 emoji (`.length` says 4000); 2000 accented letters typed as letter + accent | accepted (counted as 2000 characters after NFC) |
+| | | A note that is not text | `400 INVALID_NOTE` |
+| | | A reply note ("add missing info") of 2001 characters | `400 NOTE_TOO_LONG` at `student_resubmit_note` |
 | 4b | **File uploads (Group 5)** | A PDF | stored under a generated name (random id); the original name is returned |
 | | | Downloading it | `Content-Disposition` keeps the original name, accents included (`filename*=UTF-8''tant%C3%A1rgyle%C3%ADr%C3%A1s.pdf`) |
 | | | A text file renamed to `.pdf`; a PNG named `.pdf`; a Word file | `400 FILE_TYPE_NOT_ALLOWED` (type taken from the file's first bytes) |
@@ -126,6 +138,20 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A highlighted file of 11 MB | accepted (limit 15 MB) |
 | | | A file over 15 MB | `413 FILE_TOO_LARGE`, refused from its announced size before it is read |
 | | | Refused uploads | nothing stored (file count unchanged) |
+| | **Request errors (Group 7)** | A request body over 100 KB | `413 REQUEST_TOO_LARGE` as JSON (not an HTML page) |
+| | | Broken JSON | `400 INVALID_JSON` as JSON |
+| 4c | **Drafts (Group 7)** | Read, save or delete a draft without a token | `401 NO_TOKEN` |
+| | | Reviewer reads a draft; superadmin saves one | `403 FORBIDDEN_ROLE` |
+| | | A saves a draft with A's file, B's file and a missing file, and reads it back | A's file kept; B's and the missing file removed (`dropped_files` 2); only A's file names returned |
+| | | Cache header | `Cache-Control: no-store` |
+| | | B reads a draft after A saved one | never A's draft |
+| | | A saves with B's id in the address and the body | stored as A's draft; B's draft unchanged |
+| | | B deletes a draft | A's draft untouched |
+| | | No format version, version as text, a list instead of an object, 11 institutions, 21 course rows, a NUL character | `400 INVALID_DRAFT` at `version` / `data` |
+| | | A draft of 210 KB (limit 200 KB) | `413 DRAFT_TOO_LARGE` at `data`, `max` 200 |
+| | | A draft request over 256 KB | `413 REQUEST_TOO_LARGE` |
+| | | After the refused drafts | the saved draft is unchanged |
+| | | A deletes the draft | no draft any more |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -173,6 +199,21 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-28 | local development backend, Group 2 (programmes), seeded data | **95 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
 | 2026-10-28 | local development backend, Group 4 (application form), seeded data | **130 passed, 0 failed, 0 skipped**; 0 emails sent; no applications saved |
 | 2026-10-29 | throwaway copy with migration 004, Group 5 (evidence and file rules) | **144 passed, 0 failed, 0 skipped**; run 5 times in a row for the 16 MB check; no applications saved, test uploads deleted |
+| 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
+| 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
+
+**One-time tests on throwaway copies of the database (Groups 6 and 7):**
+
+| What | Result |
+|---|---|
+| Migration 005 on data that already has two active applications for one course | refused, nothing changed; the message says to resolve the duplicates first |
+| Two submits for the same course **at the same moment** | one `200`, one `409 ALREADY_APPLIED`; only one application stored |
+| A new application after the earlier one was rejected | accepted (rejected doesn't block) |
+| Reviewer reopens a rejected application while a newer one for the same course is active | `409 ALREADY_APPLIED`; status unchanged |
+| `npm run seed:dev` | fills the new course-code column |
+| A real submit with a saved draft | `200`; the draft is gone afterwards |
+| Deleting a student account that has a draft | the draft is deleted with it |
+| A draft with the student's own uploads | read back with the files' original names |
 
 ---
 
@@ -191,6 +232,7 @@ It covers 19 inputs (valid, every kind of error, values exactly at each limit, s
 |---|---|
 | 2026-10-28 | **23 passed, 0 failed**: all 19 inputs identical in browser and server |
 | 2026-10-29 | **46 passed, 0 failed**: also the syllabus rule (8 cases), one PTE course, and the file rules (9 files, sizes, download names) identical in browser and server |
+| 2026-10-29 | **70 passed, 0 failed**: also the blocking statuses and course-code matching (Group 6), note counting (emoji, accents, Hungarian letters) and its verdicts (Group 7), and drafts: a draft comes back exactly as saved, files the server removes are removed in the form too, an odd draft can never break the form, same 200 KB limit |
 
 **Term book with Group 4 data** (one-time test on a throwaway copy of the database): an application with a 160-character course name, ECTS credits 7.5, a grade "1,3 (sehr gut)" and an image as evidence was submitted and the term book built with the real code. The book contained the course name (wrapped onto several lines, never past the right margin), code, credits, grade, target course and the embedded image. Institutions, countries and grading documents are not in the term book yet: planned for the admin round (see [PLANNED.md](PLANNED.md)).
 
@@ -292,6 +334,29 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B52 | Add missing info | In the resubmit window, save a PDF letter without highlights; then a highlighted one | Without highlights the whole original is uploaded unchanged; with highlights the highlighted version |
 | B53 | Reviewer | Open a Group 5 application as `reviewer.cs` | 📄 icon for PDF transcripts (no broken image); the syllabus under each course with Open and Download |
 
+**Groups 6 and 7: target courses, duplicates and submitting** (run `npm run migrate` in `backend/` and restart the backend first; as `student.cs@tr.pte.hu`, check texts in EN, HU and DE)
+
+| # | Test | Steps | Expected |
+|---|---|---|---|
+| B54 | Applied courses in the picker | Submit an application for a course; open the submit tab again | That course is greyed out with "— already applied (under review)"; after the reviewer approves it, "— already approved" |
+| B55 | Rejected course can be chosen again | As `reviewer.cs`, reject the application; reload as the student | The course can be chosen again |
+| B56 | Duplicate from another tab | Open the submit tab in two tabs; submit the same course in both | The second shows "There is already an active or approved application for this PTE course." under the course picker, and the picker greys it out |
+| B57 | Note counter | Type into the note; paste 2001 characters; type emoji | "… / 2000 characters"; near the limit "… characters left", over it "… characters over the limit", and Submit reports it under the note; an emoji counts as 1 |
+| B58 | Note counter with a screen reader | VoiceOver on, type until fewer than 200 characters are left | Announced at 200, 100 and 50 left, at 0 and when over, not at every key |
+| B59 | Confirmation summary | Fill a complete form, press Submit | Dialog with the target course, institutions and grading documents, courses (credits, grade, files), syllabus reasons and the note; focus on its heading; keyboard stays inside |
+| B60 | Back to edit | Press "Back to edit", then Esc on a reopened dialog | Dialog closes, nothing sent, focus back on Submit |
+| B61 | Confirm and submit | Press "Confirm and submit" | Sent once (buttons disabled while sending); "My Status" opens with "Submitted successfully!" at the top, read out by the screen reader, closed with ×; no browser pop-up |
+| B62 | Refused after confirming | Close submissions as admin with the dialog open, then confirm | Dialog closes; the error is shown under Submit |
+| B63 | Draft saved | Type in the form, wait 3 seconds | "Draft saved 14:32" above Submit (in the current language's time format) |
+| B64 | Draft restored | Close the tab and log in again (also in another browser) | Form filled in as left, with "Your unsent application was restored (last saved …)" at the top; file names shown with their original names |
+| B65 | Draft on leaving | Type, then close the tab within 3 seconds; log in again | The last change is there |
+| B66 | Draft before idle logout | Type, then leave the tab untouched until logged out (30 minutes) | After logging in again, the form is restored |
+| B67 | Draft with a removed file | Upload a transcript, wait for "Draft saved", delete the file in MinIO, reload | "1 file from the draft is no longer available…"; the row asks for the evidence again |
+| B68 | Draft after submit | Submit; open the submit tab again; reload | Empty form, no "restored" notice |
+| B69 | Old draft format | In the database set `UPDATE application_drafts SET version = 0`, reload | "…made with an older version of this form and could not be restored."; empty form |
+| B70 | Draft not loading | Stop the backend, reload the dashboard, start the backend | "Your saved draft could not be loaded. Autosave is paused…"; reloading restores it |
+| B71 | No drafts while impersonating | As admin, impersonate a student and open the submit tab | No draft status, no "not allowed" banner, the student's draft unchanged |
+
 ---
 
 ## 3. Pending for the reviewer round
@@ -332,4 +397,6 @@ The highlighter's rules are tested in Node (`frontend/src/highlighter.js`), with
 - **Impersonation shows every programme's courses.** While the superadmin impersonates a student, the course picker uses the admin's token, so it lists the courses of all programmes, not only that student's. Submitting is refused during impersonation anyway. To be fixed in the admin round.
 - **Highlights are not verified by the server** (see "Evidence highlighter" above).
 - **Uploads from forms that are never submitted stay in storage** until a cleanup job exists (see [PLANNED.md](PLANNED.md)).
+- **Drafts: the last save wins.** With the form open in two tabs or browsers, each saves its own state; the later save replaces the other. Opening the form again shows the last saved state. A tab left open after a submit can also save the submitted form again as a draft; submitting it a second time is refused with `ALREADY_APPLIED`. A conflict check is planned (see [PLANNED.md](PLANNED.md)).
+- **Drafts are readable by the student only, not encrypted.** They are stored in the database as JSON, like the applications themselves.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

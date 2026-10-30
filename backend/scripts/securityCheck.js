@@ -66,6 +66,22 @@ const cleanupRateLimitRows = async () => {
     return rowCount;
 };
 
+// ---------- drafts of students A and B (put back at the end) ----------
+
+// The drafts tests overwrite A's and B's draft; their real drafts are kept here and restored
+let draftBackup = null; // { ids, rows }
+const restoreDrafts = async () => {
+    if (!draftBackup) return 0;
+    const { ids, rows } = draftBackup;
+    await pool.query('DELETE FROM application_drafts WHERE student_id = ANY($1)', [ids]);
+    for (const r of rows) {
+        await pool.query('INSERT INTO application_drafts (student_id, version, data, updated_at) VALUES ($1, $2, $3, $4)',
+            [r.student_id, r.version, JSON.stringify(r.data), r.updated_at]);
+    }
+    draftBackup = null;
+    return rows.length;
+};
+
 // ---------- small helpers ----------
 
 const results = { pass: 0, fail: 0, skip: 0 };
@@ -171,6 +187,7 @@ const loadTestData = async () => {
         studentB,
         appOfB: apps.find((a) => a.student_id === studentB.id),
         fileOfB: filesByOwner.get(studentB.id)[0],
+        fileOfA: filesByOwner.get(studentA.id)[0],
         goneUser: { id: Math.max(...users.map((u) => u.id)) + 100000, role: 'student' },
         programmeCodes,
     };
@@ -255,10 +272,17 @@ const run = async () => {
         if (!settings.body || settings.body.isOpen !== true) {
             skip("A submits an application with B's file", 'submissions are closed, so the server stops earlier');
         } else {
-            const coursesOf = async (programmeId) => (await pool.query(
-                'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
-            )).rows.map((c) => c.id);
-            const ownCourses = await coursesOf(d.studentA.programme_id);
+            // A's own programme's courses, those A has NOT applied for first: the submit tests must not
+            // run into the one-active-application rule (Group 6), which is tested on its own further down
+            const appliedByA = new Set((await pool.query(
+                "SELECT target_course_code FROM applications WHERE student_id = $1 AND status = ANY($2) AND target_course_code IS NOT NULL",
+                [d.studentA.id, ['pending', 'needs_info', 'approved']]
+            )).rows.map((r) => r.target_course_code));
+            const ownWithCodes = (await pool.query('SELECT id, course_code FROM courses WHERE programme_id = $1 ORDER BY id', [d.studentA.programme_id])).rows;
+            const ownCourses = [
+                ...ownWithCodes.filter((c) => !appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
+                ...ownWithCodes.filter((c) => appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
+            ].map((c) => c.id);
             const otherCourses = (await pool.query(
                 'SELECT id FROM courses WHERE programme_id IS DISTINCT FROM $1 ORDER BY id', [d.studentA.programme_id]
             )).rows.map((c) => c.id);
@@ -278,6 +302,28 @@ const run = async () => {
                 return submitForm(body);
             };
 
+            // Compatibility probe. Every submit test relies on the server reading the same fields as
+            // this script (B's file only refuses if the server sees it). An outdated backend once saved
+            // such requests. This probe is refused by EVERY version (empty target list), but only the
+            // current code reports both problems with their paths; otherwise no submit test runs.
+            const probe = await submitForm({
+                institutions: [{ name: 'Probe University', country: 'XX', grading_file: d.fileOfB }],
+                fulfilled_courses: [{ institution: 0, course_name: 'Probe', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB }],
+                target_course_ids: [],
+                student_note: 'x'.repeat(2001),
+            });
+            const probeCodes = (probe.body?.errors || []).map((e) => `${e.field} ${e.code}`);
+            // The newest rule (note limit, Group 7) must be there too, so an outdated server never passes
+            const serverIsCurrent = probe.status === 400
+                && probeCodes.includes('institutions[0].country INVALID_COUNTRY')
+                && probeCodes.includes('target_course_ids INVALID_TARGET_COURSES')
+                && probeCodes.includes('student_note NOTE_TOO_LONG');
+            report(serverIsCurrent, 'The backend runs the current code (compatibility probe)', serverIsCurrent ? 'submit tests will run' : `${probe.status} ${probe.code}: RESTART THE BACKEND`);
+            if (!serverIsCurrent) {
+                console.log('WARNING: the backend answers like older code. All submit tests are SKIPPED, so nothing can be saved.');
+                console.log('         Restart the backend (Ctrl+C, then node server.js) and run the check again.');
+                skip('All submit tests', 'the backend runs older code (see the probe above)');
+            } else {
             const withBsFile = await submitAs(ownCourses.slice(0, 1));
             report(withBsFile.status === 403 && withBsFile.code === 'FILES_NOT_OWNED', "A submits an application with B's file", `${withBsFile.status} ${withBsFile.code}`);
             const filePaths = (withBsFile.body?.errors || []).map((e) => e.field).sort().join(', ');
@@ -391,6 +437,35 @@ const run = async () => {
             // 12 copies of one own course count as 1 after removing duplicates, so they are one course
             // and reach the file check
             await expect('Duplicates are removed before the limit', submitAs(Array(12).fill(ownCourses[0])), 403, 'FILES_NOT_OWNED');
+
+            // --- Group 7: note limits (2000 characters, counted like the browser) ---
+            await fieldError('Note of 2001 characters', { ...formWith({}), student_note: 'n'.repeat(2001) }, 'student_note', 'NOTE_TOO_LONG', { max: 2000 });
+            await passesFields('Note of 2000 emoji (2000 characters, although .length says 4000)', { ...formWith({}), student_note: '😀'.repeat(2000) });
+            await passesFields('Note of 2000 accented letters typed as letter + accent', { ...formWith({}), student_note: 'a\u0301'.repeat(2000) });
+            await fieldError('Note that is not text', { ...formWith({}), student_note: { text: 'x' } }, 'student_note', 'INVALID_NOTE');
+            const longReply = await call('PUT', `applications/${d.appOfB.id}/resubmit`, { token: A, json: { student_resubmit_note: 'r'.repeat(2001), new_files: '' } });
+            report(longReply.status === 400 && longReply.code === 'NOTE_TOO_LONG' && longReply.body?.field === 'student_resubmit_note',
+                'Reply note of 2001 characters ("add missing info")', `${longReply.status} ${longReply.code} at ${longReply.body?.field}`);
+
+            // --- Group 6: one active application per PTE course ---
+            // Student B applies again for the course of B's own open application. The request uses A's
+            // file, so even a broken duplicate check would still be refused by the file check.
+            const openOfB = (await pool.query(
+                "SELECT target_courses->0->>'course_id' AS course_id FROM applications WHERE student_id = $1 AND status = ANY($2) AND target_courses IS NOT NULL LIMIT 1",
+                [d.studentB.id, ['pending', 'needs_info', 'approved']]
+            )).rows[0];
+            if (!openOfB) {
+                skip('Second application for the same PTE course', 'student B has no open application');
+            } else {
+                const again = await call('POST', 'applications', { token: B, json: {
+                    institutions: [{ name: 'Duplicate Check University', country: 'AT', grading_file: d.fileOfA }],
+                    fulfilled_courses: [{ institution: 0, course_name: 'Duplicate check', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfA, syllabus_file: d.fileOfA }],
+                    target_course_ids: [Number(openOfB.course_id)],
+                } });
+                report(again.status === 409 && again.code === 'ALREADY_APPLIED' && again.body?.field === 'target_course_ids',
+                    'Second application for the same PTE course', `${again.status} ${again.code} at ${again.body?.field}`);
+            }
+            } // end of: the backend runs the current code
         }
     }
 
@@ -443,6 +518,7 @@ const run = async () => {
         stream.on('end', () => resolve(n));
         stream.on('error', reject);
     });
+    const created = [];
     const uploadAs = async (name, bytes, mime, kind) => {
         const form = new FormData();
         if (kind) form.append('kind', kind);
@@ -450,6 +526,9 @@ const run = async () => {
         try {
             const res = await fetch(`${API}/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${A}` }, body: form });
             const body = await res.json().catch(() => null);
+            // Every file the server stored is deleted at the end, even one it should have refused
+            // (e.g. an outdated backend accepting a fake PDF), so the check never leaves files behind
+            if (body?.fileName && !created.includes(body.fileName)) created.push(body.fileName);
             return { status: res.status, code: body?.code, body };
         } catch (err) {
             return { status: 0, code: `connection closed (${err.cause?.code || err.message})` };
@@ -458,11 +537,9 @@ const run = async () => {
     const pdf = (size = 64) => Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(Math.max(0, size - 9), 0x20)]);
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(56)]);
     const MB = 1024 * 1024;
-    const created = [];
     const before = await objectCount();
 
     const good = await uploadAs('tantárgyleírás.pdf', pdf(), 'application/pdf');
-    if (good.body?.fileName) created.push(good.body.fileName);
     report(good.status === 200 && /^[0-9a-f-]{36}\.pdf$/.test(good.body?.fileName || '') && good.body?.originalName === 'tantárgyleírás.pdf',
         'A PDF is stored under a generated name, the original name is returned', `${good.status} ${good.body?.fileName} / ${good.body?.originalName}`);
     if (good.body?.fileName) {
@@ -478,13 +555,83 @@ const run = async () => {
     report(unchangedBig.status === 413 && unchangedBig.code === 'FILE_TOO_LARGE' && unchangedBig.body?.errors?.[0]?.params?.max === 10,
         'An unchanged file over 10 MB', `${unchangedBig.status} ${unchangedBig.code} max ${unchangedBig.body?.errors?.[0]?.params?.max}`);
     const highlightedBig = await uploadAs('syllabus (highlighted).pdf', pdf(11 * MB), 'application/pdf', 'highlighted');
-    if (highlightedBig.body?.fileName) created.push(highlightedBig.body.fileName);
     report(highlightedBig.status === 200, 'A highlighted file of 11 MB is allowed (limit 15 MB)', `${highlightedBig.status}`);
     const huge = await uploadAs('huge.pdf', pdf(16 * MB), 'application/pdf', 'highlighted');
     report(huge.status === 413 && huge.code === 'FILE_TOO_LARGE', 'A file over 15 MB is refused before it is read', `${huge.status} ${huge.code}`);
 
     for (const name of created) await call('DELETE', `uploads/${name}`, { token: A });
     report(await objectCount() === before, 'Refused uploads leave nothing in storage', `${before} files before and after (test uploads deleted)`);
+
+    // Request bodies the server can't take are answered in the usual { error, code } format
+    const bigBody = await fetch(`${API}/applications`, { method: 'POST', headers: { Authorization: `Bearer ${A}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ student_note: 'x'.repeat(200 * 1024) }) });
+    const bigAnswer = await bigBody.json().catch(() => null);
+    report(bigBody.status === 413 && bigAnswer?.code === 'REQUEST_TOO_LARGE', 'A request body over 100 KB gets a JSON answer', `${bigBody.status} ${bigAnswer?.code || 'not JSON'}`);
+    const badJson = await fetch(`${API}/applications`, { method: 'POST', headers: { Authorization: `Bearer ${A}`, 'Content-Type': 'application/json' }, body: '{ this is not json' });
+    const badAnswer = await badJson.json().catch(() => null);
+    report(badJson.status === 400 && badAnswer?.code === 'INVALID_JSON', 'Broken JSON gets a JSON answer', `${badJson.status} ${badAnswer?.code || 'not JSON'}`);
+
+    section('4c. Drafts (Group 7): only ever the student\'s own');
+    const draftsTable = (await pool.query("SELECT to_regclass('public.application_drafts') AS t")).rows[0].t;
+    const draftsProbe = draftsTable ? await call('GET', 'drafts/mine', { token: A }) : null;
+    if (!draftsTable) {
+        skip('All drafts tests', 'the application_drafts table is missing: run "npm run migrate" in backend/');
+    } else if (draftsProbe.status !== 200) {
+        report(false, 'The backend knows the drafts routes', `${draftsProbe.status} ${draftsProbe.code || ''}: RESTART THE BACKEND`);
+        skip('All drafts tests', 'the backend runs older code');
+    } else {
+        draftBackup = {
+            ids: [d.studentA.id, d.studentB.id],
+            rows: (await pool.query('SELECT * FROM application_drafts WHERE student_id = ANY($1)', [[d.studentA.id, d.studentB.id]])).rows,
+        };
+        for (const method of ['GET', 'PUT', 'DELETE']) await expect(`${method} /api/drafts/mine without a token`, call(method, 'drafts/mine'), 401, 'NO_TOKEN');
+        await expect('Reviewer reads a draft', call('GET', 'drafts/mine', { token: R }), 403, 'FORBIDDEN_ROLE');
+        await expect('Superadmin saves a draft', call('PUT', 'drafts/mine', { token: S, json: { version: 1, data: {} } }), 403, 'FORBIDDEN_ROLE');
+
+        const marker = `DRAFT-MARKER-${Date.now()}`;
+        const missingFile = `no-such-file-${Date.now()}.pdf`;
+        const draftOfA = (note) => ({ version: 1, data: {
+            institutions: [{ key: 'i1', name: 'Draft University', country: 'AT', grading_file: d.fileOfA }],
+            rows: [{ id: 'r1', institutionKey: 'i1', course_name: 'Draft', file: d.fileOfB, syllabus_file: missingFile }],
+            target_course_id: null, note,
+        } });
+        await expect('A saves a draft', call('PUT', 'drafts/mine', { token: A, json: draftOfA(marker) }), 200);
+        const readA = await call('GET', 'drafts/mine', { token: A });
+        const back = readA.body?.draft;
+        report(back?.data?.note === marker && back.data.institutions[0].grading_file === d.fileOfA, 'A reads the draft back, with A\'s own file', `${readA.status}`);
+        report(back?.data?.rows?.[0]?.file === null && back.data.rows[0].syllabus_file === null && back.dropped_files === 2,
+            "B's file and a missing file are removed when A's draft is read", `${back?.dropped_files} removed`);
+        report(back && !Object.keys(back.file_names || {}).some((name) => name !== d.fileOfA), 'Only names of A\'s own files come back', Object.keys(back?.file_names || {}).length + ' name(s)');
+        report((readA.headers.get('cache-control') || '').includes('no-store'), 'Drafts are sent with Cache-Control: no-store', readA.headers.get('cache-control') || 'missing');
+        const readB = await call('GET', 'drafts/mine', { token: B });
+        report(readB.status === 200 && !JSON.stringify(readB.body).includes(marker), "B never gets A's draft", `${readB.status}`);
+        const marker2 = `${marker}-2`;
+        await call('PUT', `drafts/mine?student_id=${d.studentB.id}`, { token: A, json: { ...draftOfA(marker2), student_id: d.studentB.id } });
+        const readB2 = await call('GET', 'drafts/mine', { token: B });
+        report(!JSON.stringify(readB2.body).includes(marker2), "A can't write B's draft (an id in the address or body is ignored)");
+        await call('DELETE', 'drafts/mine', { token: B });
+        const stillA = await call('GET', 'drafts/mine', { token: A });
+        report(stillA.body?.draft?.data?.note === marker2, "B deleting a draft never touches A's");
+
+        const draftError = async (name, json, status, code, field) => {
+            const r = await call('PUT', 'drafts/mine', { token: A, json });
+            report(r.status === status && r.code === code && (!field || r.body?.field === field), name, `${r.status} ${r.code || ''}${r.body?.field ? ` at ${r.body.field}` : ''}`);
+        };
+        await draftError('Draft without a format version', { data: {} }, 400, 'INVALID_DRAFT', 'version');
+        await draftError('Draft version as text', { version: '1', data: {} }, 400, 'INVALID_DRAFT', 'version');
+        await draftError('Draft that is a list', { version: 1, data: [] }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft with 11 institutions (limit 10)', { version: 1, data: { institutions: Array(11).fill({}) } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft with 21 course rows (limit 20)', { version: 1, data: { rows: Array(21).fill({}) } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft of 210 KB (limit 200 KB)', { version: 1, data: { note: 'x'.repeat(210 * 1024) } }, 413, 'DRAFT_TOO_LARGE', 'data');
+        await draftError('Draft with a NUL character', { version: 1, data: { note: 'a\u0000b' } }, 400, 'INVALID_DRAFT', 'data');
+        await draftError('Draft request over 256 KB', { version: 1, data: { note: 'x'.repeat(300 * 1024) } }, 413, 'REQUEST_TOO_LARGE');
+        const unchanged = await call('GET', 'drafts/mine', { token: A });
+        report(unchanged.body?.draft?.data?.note === marker2, 'Refused drafts never replace the saved one');
+        await expect('A deletes the draft', call('DELETE', 'drafts/mine', { token: A }), 200);
+        const gone = await call('GET', 'drafts/mine', { token: A });
+        report(gone.status === 200 && gone.body?.draft === null, 'After deleting, there is no draft', JSON.stringify(gone.body?.draft));
+        const restored = await restoreDrafts();
+        console.log(`(put back ${restored} real draft(s) of students A and B)`);
+    }
 
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
@@ -594,6 +741,11 @@ const run = async () => {
 
 // Removes this run's rate-limit rows, also after a crash
 const finish = async (ok) => {
+    try {
+        await restoreDrafts();
+    } catch (err) {
+        console.error('Could not put back the drafts of students A and B:', err.message);
+    }
     try {
         const removed = await cleanupRateLimitRows();
         if (removed) console.log(`(removed ${removed} rate-limit rows created by this run)`);

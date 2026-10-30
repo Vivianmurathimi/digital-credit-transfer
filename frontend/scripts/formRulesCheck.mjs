@@ -17,6 +17,7 @@ const require = createRequire(new URL('../../backend/utils/', import.meta.url));
 const server = require('./applicationForm.js');
 const { isCountryCode } = require('./countries.js');
 const serverFiles = require('./fileRules.js');
+const serverDrafts = require('./drafts.js');
 
 let failed = 0;
 const report = (ok, name, detail = '') => {
@@ -105,6 +106,37 @@ report(browserFiles.MAX_MB.highlighted === serverFiles.MAX_BYTES.highlighted / s
 const header = serverFiles.contentDisposition('tantárgyleírás "v2".pdf');
 report(browserFiles.fileNameFromDisposition(header) === 'tantárgyleírás "v2".pdf', "The browser reads the server's download name, accents and quotes included", header);
 
+console.log('\nOne application per PTE course: browser vs. server\n');
+report(JSON.stringify(browser.BLOCKING_STATUSES) === JSON.stringify(server.BLOCKING_STATUSES), 'Same blocking statuses', server.BLOCKING_STATUSES.join(', '));
+const codes = ['CS202', 'cs202', ' cs 202 ', 'CS\t202', 'MATH-205', 'math 205'];
+report(codes.every((c) => browser.normalizeCourseCode(c) === server.normalizeCourseCode(c)), 'Course codes normalised the same way', codes.map((c) => `${JSON.stringify(c)}→${server.normalizeCourseCode(c)}`).join(' '));
+const blocked = browser.blockedCourseCodes([
+    { status: 'rejected', target_course_code: 'CS101' }, { status: 'pending', target_course_code: 'CS202' },
+    { status: 'approved', target_course_code: 'CS305' }, { status: 'withdrawn', target_course_code: 'CS310' },
+    { status: 'needs_info', target_courses: [{ course_code: 'cs 401' }] },
+]);
+report(JSON.stringify(blocked) === JSON.stringify({ CS202: 'pending', CS305: 'approved', CS401: 'needs_info' }),
+    'Picker blocks pending, needs-info and approved courses; rejected and withdrawn stay available', JSON.stringify(blocked));
+
+console.log('\nNote length: browser vs. server\n');
+report(browser.NOTE_MAX === server.NOTE_MAX, 'Same note limit', String(server.NOTE_MAX));
+const noteCases = {
+    'plain text': 'Hello reviewer',
+    'accents typed as one character': 'tantárgyleírás',
+    'accents typed as letter + accent': 'tanta\u0301rgylei\u0301ra\u0301s',
+    'emoji': '👍🎓📚',
+    'combined emoji (family)': '👨‍👩‍👧',
+    'Hungarian ő and ű': 'őű ŐŰ',
+};
+for (const [name, text] of Object.entries(noteCases)) {
+    report(browser.noteLength(text) === server.noteLength(text), `Counted the same: ${name}`, `${server.noteLength(text)} characters (.length ${text.length})`);
+}
+const edge = (text) => `${JSON.stringify(browser.checkNote(text))} / ${JSON.stringify(server.checkNote(text) && { code: server.checkNote(text).code, ...(server.checkNote(text).params ? { params: server.checkNote(text).params } : {}) })}`;
+for (const [name, text] of [['2000 emoji', '😀'.repeat(2000)], ['2001 emoji', '😀'.repeat(2001)], ['2000 letters typed as letter + accent', 'a\u0301'.repeat(2000)], ['2001 letters', 'x'.repeat(2001)], ['not text', 42]]) {
+    const [b, s2] = edge(text).split(' / ');
+    report(b === s2, `Same verdict: ${name}`, b === 'null' ? 'allowed' : b);
+}
+
 console.log('\nLimits and stored data\n');
 report(JSON.stringify(browser.LIMITS) === JSON.stringify(server.LIMITS), 'Same limits', JSON.stringify(server.LIMITS));
 report(JSON.stringify(browser.CREDIT_MAX) === JSON.stringify(server.CREDIT_MAX), 'Same credit maximum per system', JSON.stringify(server.CREDIT_MAX));
@@ -112,6 +144,42 @@ const otherIgnored = server.validateApplicationForm(cases['"Other" name sent wit
 report(otherIgnored.credit_system_other === null, 'An "Other" name sent with ECTS is not stored', `stored: ${JSON.stringify(otherIgnored.credit_system_other)}`);
 const sent = browser.buildSubmission([{ key: 'k1', name: 'TU Wien', country: 'AT', grading_file: 'g' }], [{ id: 'r1', institutionKey: 'k1', course_name: 'X', course_code: '', credits: '5', credit_system: 'ECTS', credit_system_other: 'leftover', grade: 'A', file: 'e' }]);
 report(!('credit_system_other' in sent.fulfilled_courses[0]) && sent.fulfilled_courses[0].credits === 5, 'The form sends credits as numbers and no leftover "Other" name', JSON.stringify(sent.fulfilled_courses[0]));
+
+console.log('\nDrafts (Group 7)\n');
+report(browser.DRAFT_MAX_KB === serverDrafts.DRAFT_MAX_KB, 'Same draft size limit', `${serverDrafts.DRAFT_MAX_KB} KB`);
+const formState = {
+    institutions: [{ key: 'inst-a', name: 'TU Wien', country: 'AT', grading_file: 'g.pdf' }, { key: 'inst-b', name: 'ELTE', country: 'HU', grading_file: null }],
+    rows: [
+        { ...browser.newCourseRow(), id: 'row-1', institutionKey: 'inst-a', course_name: 'Statics', credits: '5', credit_system: 'ECTS', grade: 'A', file: 't.pdf', syllabus_file: 's.pdf' },
+        { ...browser.newCourseRow(), id: 'row-2', institutionKey: 'inst-b', course_name: 'Physics', credits: '4.5', credit_system: 'OTHER', credit_system_other: 'Points', grade: '5', file: 't2.pdf' },
+    ],
+    targetCourseId: 7,
+    note: 'Hello ő 😀',
+};
+const draft = browser.draftFromForm(formState);
+const files = [...serverDrafts.draftFileNames(draft)].sort().join(', ');
+report(files === 'g.pdf, s.pdf, t.pdf, t2.pdf', 'The server finds every file the browser puts in a draft', files);
+const allKept = serverDrafts.keepOnlyFiles(draft, new Set(['g.pdf', 's.pdf', 't.pdf', 't2.pdf']));
+const back = browser.formFromDraft(JSON.parse(JSON.stringify(allKept.data)));
+report(allKept.dropped === 0 && JSON.stringify(browser.draftFromForm(back)) === JSON.stringify(draft), 'A draft comes back exactly as it was saved', `${back.institutions.length} institutions, ${back.rows.length} rows, course ${back.targetCourseId}`);
+const someGone = serverDrafts.keepOnlyFiles(draft, new Set(['t.pdf']));
+const backGone = browser.formFromDraft(someGone.data);
+report(someGone.dropped === 3 && backGone.institutions[0].grading_file === null && backGone.rows[0].syllabus_file === null && backGone.rows[0].file === 't.pdf' && backGone.rows[1].file === null,
+    'Files that are gone or not the student\'s own are removed, the rest stays', `${someGone.dropped} removed`);
+const odd = browser.formFromDraft({
+    institutions: [{ key: 'same', name: 5, country: null, grading_file: {} }, { key: 'same', name: 'B' }, 'not an object'],
+    rows: [{ id: 'r', institutionKey: 'unknown', credits: 6, credit_system: 'POINTS', file: 42 }, { id: 'r' }],
+    target_course_id: '7', note: ['x'],
+});
+report(odd.institutions.length === 2 && odd.institutions[0].key !== odd.institutions[1].key && odd.institutions[0].name === '5' && odd.institutions[0].country === '' && odd.institutions[0].grading_file === null
+    && odd.rows[0].institutionKey === '' && odd.rows[0].credits === '6' && odd.rows[0].credit_system === '' && odd.rows[0].file === null && odd.rows[0].id !== odd.rows[1].id
+    && odd.targetCourseId === null && odd.note === '', 'An odd draft can never break the form (types, repeated keys, unknown institution, unknown credit system)');
+const nothing = browser.formFromDraft(null);
+report(nothing.institutions.length === 1 && nothing.rows.length === 1 && browser.isEmptyDraft(browser.draftFromForm(nothing)), 'An empty or missing draft gives one empty institution and row');
+report(!browser.isEmptyDraft(browser.draftFromForm({ ...nothing, note: 'x' })) && !browser.isEmptyDraft(browser.draftFromForm({ ...nothing, targetCourseId: 1 })), 'A note or a chosen course alone is worth keeping');
+const tooMany = { institutions: Array(11).fill({}), rows: [] };
+report(serverDrafts.checkDraft(1, tooMany)?.code === 'INVALID_DRAFT' && browser.formFromDraft(tooMany).institutions.length === 10, 'Over the form limits: refused by the server, cut by the browser');
+report(serverDrafts.checkDraft(1, { note: 'x'.repeat(205 * 1024) })?.code === 'DRAFT_TOO_LARGE' && serverDrafts.checkDraft(1, draft) === null, 'Size limit: a normal draft fits, 205 KB does not');
 
 console.log(`\n${failed === 0 ? 'All checks passed' : `${failed} check(s) FAILED`}`);
 process.exitCode = failed === 0 ? 0 : 1;

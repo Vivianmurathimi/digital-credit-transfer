@@ -93,6 +93,19 @@ export const buildSubmission = (institutions, rows) => {
 // (backend/utils/applicationForm.js), run on the same body that is sent. Only for convenience:
 // the server checks everything again. A test runs both on the same inputs and compares them.
 
+// Notes to the reviewer: counted like the server (backend/utils/applicationForm.js), after
+// normalising (an "á" typed as "a" + accent is one character), in Unicode characters (an emoji is
+// one, not two as .length would count). check:form-rules compares both.
+export const NOTE_MAX = 2000;
+export const normalizeNote = (text) => (typeof text === 'string' ? text.normalize('NFC') : '');
+export const noteLength = (text) => [...normalizeNote(text)].length;
+export const checkNote = (value) => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string') return { code: 'INVALID_NOTE' };
+    if (noteLength(value) > NOTE_MAX) return { code: 'NOTE_TOO_LONG', params: { max: NOTE_MAX } };
+    return null;
+};
+
 export const LIMITS = { institutions: 10, fulfilledCourses: 20, targetCourses: 1, institutionName: 200, courseName: 200, courseCode: 50, grade: 20, creditSystemOther: 50 };
 export const CREDIT_MAX = { ECTS: 60, US_CREDIT_HOURS: 30, UK_CATS: 120, OTHER: 120 };
 const MOST_GENEROUS_MAX = Math.max(...Object.values(CREDIT_MAX));
@@ -170,11 +183,14 @@ export const validateSubmission = (body, isCountryCode) => {
         });
     }
 
+    const noteProblem = checkNote(body.student_note);
+    if (noteProblem) add('student_note', noteProblem.code, noteProblem.params);
+
     const targets = body.target_course_ids;
     const ids = Array.isArray(targets) && targets.every((id) => Number.isInteger(id) && id > 0) ? [...new Set(targets)] : null;
     if (!ids || ids.length < 1 || ids.length > LIMITS.targetCourses) add('target_course_ids', 'INVALID_TARGET_COURSES');
 
-    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : 2);
+    const order = (field) => (field.startsWith('institutions') ? 0 : field.startsWith('fulfilled_courses') ? 1 : field === 'target_course_ids' ? 2 : 3);
     return errors.sort((a, b) => order(a.field) - order(b.field));
 };
 
@@ -188,7 +204,7 @@ export const validateSubmission = (body, isCountryCode) => {
 const INSTITUTION_FIELDS = ['name', 'country', 'grading_file'];
 const ROW_FIELDS = ['institution', 'course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade', 'file', 'syllabus_file'];
 export const formKeyForPath = (path, map) => {
-    if (['target_course_ids', 'institutions', 'fulfilled_courses'].includes(path)) return path;
+    if (['target_course_ids', 'institutions', 'fulfilled_courses', 'student_note', 'student_resubmit_note'].includes(path)) return path;
     let match = /^institutions\[(\d+)\]\.(\w+)$/.exec(path);
     if (match && INSTITUTION_FIELDS.includes(match[2]) && map.institutionKeyAt[match[1]]) return `inst:${map.institutionKeyAt[match[1]]}:${match[2]}`;
     match = /^fulfilled_courses\[(\d+)\]\.(\w+)$/.exec(path);
@@ -227,4 +243,102 @@ export const syllabusReasonsWhileEditing = (rows, targetCourse) => {
     const sent = rows.map((row) => ({ credits: toCredits(row.credits), credit_system: row.credit_system }));
     if (sent.some((row) => !row.credit_system || row.credits === null)) return null;
     return syllabusReasons(sent, Number(targetCourse.credits));
+};
+
+// ---------------------------------------------------------------------------------------------
+// One active application per PTE course: the same statuses and code comparison as the server
+// (backend/utils/applicationForm.js). Every other status (rejected, a future "withdrawn") allows a new one.
+export const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
+export const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUpperCase();
+
+/**
+ * PTE courses the student can't apply for right now: { normalisedCode: status }.
+ * @param applications the student's own applications (from applications/mine)
+ */
+export const blockedCourseCodes = (applications) => {
+    const blocked = {};
+    for (const app of applications) {
+        if (!BLOCKING_STATUSES.includes(app.status)) continue;
+        const code = normalizeCourseCode(app.target_course_code || app.target_courses?.[0]?.course_code);
+        // "approved" is the stronger reason to show
+        if (code && blocked[code] !== 'approved') blocked[code] = app.status;
+    }
+    return blocked;
+};
+
+// --- Drafts (Group 7): the unsent form, saved on the server while the student types ---
+// Raise DRAFT_VERSION whenever the shape below changes: a draft in an older shape is then
+// discarded with a notice instead of being restored wrongly.
+export const DRAFT_VERSION = 1;
+export const DRAFT_SAVE_DELAY_MS = 3000; // saved this long after the last change
+// Same limit as the server (backend/utils/drafts.js)
+export const DRAFT_MAX_KB = 200;
+
+const ROW_TEXT_FIELDS = ['course_name', 'course_code', 'credits', 'credit_system', 'credit_system_other', 'grade'];
+
+// What a draft keeps: the typed fields, the uploaded files' stored names, the target course and the note.
+// Not kept: upload progress, error messages, what is open in the highlighter.
+export const draftFromForm = ({ institutions, rows, targetCourseId, note }) => ({
+    institutions: institutions.map(({ key, name, country, grading_file }) => ({ key, name, country, grading_file })),
+    rows: rows.map((row) => ({
+        id: row.id,
+        institutionKey: row.institutionKey,
+        ...Object.fromEntries(ROW_TEXT_FIELDS.map((field) => [field, row[field]])),
+        file: row.file,
+        syllabus_file: row.syllabus_file,
+    })),
+    target_course_id: targetCourseId ?? null,
+    note,
+});
+
+// Whether a draft holds nothing the student typed or uploaded (then there is nothing to keep)
+export const isEmptyDraft = (draft) => draft.institutions.every((inst) => !inst.name.trim() && !inst.country && !inst.grading_file)
+    && !draft.rows.some(rowHasContent)
+    && draft.target_course_id === null
+    && !draft.note.trim();
+
+const text = (value) => (typeof value === 'string' ? value : (Number.isFinite(value) ? String(value) : ''));
+const fileName = (value) => (typeof value === 'string' && value ? value : null);
+
+/**
+ * A stored draft -> form state. The draft comes back from the server, but it is still checked
+ * here field by field, so an odd draft can never break the form: wrong types become empty,
+ * missing or repeated keys get new ones, and a row pointing to an unknown institution loses that choice.
+ * @returns {{ institutions, rows, targetCourseId: number|null, note: string }}
+ */
+export const formFromDraft = (data) => {
+    const seen = new Set();
+    const uniqueKey = (value, make) => {
+        const key = typeof value === 'string' && value && !seen.has(value) ? value : make();
+        seen.add(key);
+        return key;
+    };
+    const listOf = (value, max) => (Array.isArray(value) ? value : []).filter((item) => item && typeof item === 'object').slice(0, max);
+
+    const institutions = listOf(data?.institutions, LIMITS.institutions).map((inst) => ({
+        ...newInstitution(),
+        key: uniqueKey(inst.key, () => newInstitution().key),
+        name: text(inst.name),
+        country: text(inst.country),
+        grading_file: fileName(inst.grading_file),
+    }));
+    const keys = new Set(institutions.map((inst) => inst.key));
+    const rows = listOf(data?.rows, LIMITS.fulfilledCourses).map((row) => {
+        const fresh = newCourseRow();
+        return {
+            ...fresh,
+            id: uniqueKey(row.id, () => newCourseRow().id),
+            institutionKey: keys.has(row.institutionKey) ? row.institutionKey : '',
+            ...Object.fromEntries(ROW_TEXT_FIELDS.map((field) => [field, text(row[field])])),
+            credit_system: CREDIT_SYSTEMS.includes(row.credit_system) ? row.credit_system : '',
+            file: fileName(row.file),
+            syllabus_file: fileName(row.syllabus_file),
+        };
+    });
+    return {
+        institutions: institutions.length > 0 ? institutions : [newInstitution()],
+        rows: rows.length > 0 ? rows : [newCourseRow()],
+        targetCourseId: Number.isInteger(data?.target_course_id) ? data.target_course_id : null,
+        note: text(data?.note),
+    };
 };
