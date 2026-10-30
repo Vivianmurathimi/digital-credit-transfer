@@ -25,8 +25,8 @@ const ResetPassword = () => {
         }
 
         try {
-            const data = await http.post(`reset-password/${token}`, { json: { newPassword } }).json();
-            setMessage(data.message || t('reset_success_message'));
+            await http.post(`reset-password/${token}`, { json: { newPassword } }).json();
+            setMessage(t('reset_success_message')); // the server's text is English only; the page uses its own
             setTimeout(() => navigate('/login'), 2000);
         } catch (err) {
             setError(getErrorMessage(err, t, 'reset_error_default'));

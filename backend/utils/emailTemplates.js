@@ -48,7 +48,7 @@ const reasons = {
 const common = {
     hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', signature: 'PTE Kreditátvitel' },
     en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', signature: 'PTE Credit Transfer' },
-    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Prüfers:', reasonTitle: 'Begründung:', signature: 'PTE Kreditübertragung' },
+    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', signature: 'PTE Kreditübertragung' },
 };
 
 const templates = {
@@ -133,19 +133,19 @@ const templates = {
         },
         needsInfo: {
             subject: 'Handlungsbedarf: weitere Informationen zu Ihrem Antrag erforderlich',
-            body: () => `<p>Der Prüfer benötigt weitere Informationen, bevor über Ihren Antrag auf Kreditübertragung entschieden werden kann.</p>`,
+            body: () => `<p>Der Gutachter benötigt weitere Informationen, bevor über Ihren Antrag auf Kreditübertragung entschieden werden kann.</p>`,
             deadline: (date) => `<p>Bitte antworten Sie bis <strong>${date}</strong> (Budapester Zeit). Geht bis dahin keine Antwort ein, wird der Antrag automatisch abgelehnt.</p>`,
             after: () => `<p>Bitte melden Sie sich an, öffnen Sie den Reiter <strong>Mein Status</strong> und klicken Sie auf <strong>Fehlende Informationen hinzufügen</strong>, um zu antworten und Dokumente hochzuladen.</p>`,
         },
         reminder: {
             subject: 'Erinnerung: Bitte antworten Sie bis morgen zu Ihrem Antrag',
-            body: () => `<p>Der Prüfer wartet noch auf die zusätzlichen Informationen zu Ihrem Antrag auf Kreditübertragung.</p>`,
+            body: () => `<p>Der Gutachter wartet noch auf die zusätzlichen Informationen zu Ihrem Antrag auf Kreditübertragung.</p>`,
             deadline: (date) => `<p>Bitte antworten Sie bis <strong>${date}</strong> (Budapester Zeit). Geht bis dahin keine Antwort ein, wird der Antrag automatisch abgelehnt.</p>`,
             after: () => `<p>Bitte melden Sie sich an, öffnen Sie den Reiter <strong>Mein Status</strong> und klicken Sie auf <strong>Fehlende Informationen hinzufügen</strong>.</p>`,
         },
         withdrawn: {
             subject: 'Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen',
-            body: () => `<p>Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen. Der Prüfer bearbeitet ihn nicht mehr.</p>
+            body: () => `<p>Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen. Der Gutachter bearbeitet ihn nicht mehr.</p>
                 <p>Für denselben PTE-Kurs können Sie jederzeit einen neuen Antrag stellen. Falls Sie ihn nicht zurückgezogen haben, wenden Sie sich bitte an das Studierendensekretariat.</p>`,
         },
         statusUpdate: {
@@ -211,4 +211,86 @@ const buildEmail = (type, lang, data) => {
     return { subject: template.subject, html };
 };
 
-module.exports = { buildEmail, normalizeLanguage, escapeHtml, statusLabels, templates };
+// Account emails (Group 10): the verification link after registering and the password reset link.
+// Sent in the language chosen when registering / the account's saved language.
+const accountTemplates = {
+    hu: {
+        verifyAccount: {
+            subject: 'Teendő: erősítse meg PTE-fiókját',
+            heading: 'Üdvözöljük a PTE Kreditátviteli rendszerében!',
+            text: 'Kérjük, kattintson az alábbi gombra egyetemi e-mail-címe megerősítéséhez és fiókja aktiválásához.',
+            button: 'Fiók megerősítése',
+            footer: 'Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
+        },
+        resetPassword: {
+            subject: 'PTE Kreditátvitel: jelszó visszaállítása',
+            heading: 'Jelszó-visszaállítási kérelem',
+            text: 'Jelszó-visszaállítást kért PTE Kreditátviteli fiókjához. Új jelszó beállításához kattintson az alábbi gombra. A link 1 óráig érvényes.',
+            button: 'Jelszó visszaállítása',
+            footer: 'Ha nem Ön kérte, hagyja figyelmen kívül ezt az e-mailt.',
+        },
+    },
+    en: {
+        verifyAccount: {
+            subject: 'Action required: verify your PTE account',
+            heading: 'Welcome to the PTE Credit Transfer System!',
+            text: 'Please click the button below to verify your university email address and activate your account.',
+            button: 'Verify my account',
+            footer: "If the button doesn't work, copy this link into your browser:",
+        },
+        resetPassword: {
+            subject: 'PTE Credit Transfer: password reset',
+            heading: 'Password reset request',
+            text: 'You asked to reset the password of your PTE Credit Transfer account. Click the button below to set a new password. This link is valid for 1 hour.',
+            button: 'Reset password',
+            footer: 'If you did not ask for this, you can ignore this email.',
+        },
+    },
+    de: {
+        verifyAccount: {
+            subject: 'Handlungsbedarf: Bestätigen Sie Ihr PTE-Konto',
+            heading: 'Willkommen im PTE-Kreditübertragungssystem!',
+            text: 'Bitte klicken Sie auf die Schaltfläche unten, um Ihre Universitäts-E-Mail-Adresse zu bestätigen und Ihr Konto zu aktivieren.',
+            button: 'Konto bestätigen',
+            footer: 'Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
+        resetPassword: {
+            subject: 'PTE-Kreditübertragung: Passwort zurücksetzen',
+            heading: 'Anfrage zum Zurücksetzen des Passworts',
+            text: 'Sie haben das Zurücksetzen des Passworts für Ihr PTE-Kreditübertragungskonto angefordert. Klicken Sie auf die Schaltfläche unten, um ein neues Passwort festzulegen. Dieser Link ist 1 Stunde gültig.',
+            button: 'Passwort zurücksetzen',
+            footer: 'Falls Sie dies nicht angefordert haben, können Sie diese E-Mail ignorieren.',
+        },
+    },
+};
+
+/**
+ * Builds an account email with its link button.
+ * @param {'verifyAccount'|'resetPassword'} type
+ * @param {string} lang  falls back to Hungarian
+ * @param {{ url: string }} data
+ * @returns {{ subject: string, html: string }}
+ */
+const buildAccountEmail = (type, lang, { url }) => {
+    const language = normalizeLanguage(lang);
+    const words = accountTemplates[language][type];
+    const link = escapeHtml(url);
+    const color = type === 'resetPassword' ? '#dc3545' : '#004085';
+    // The verification email shows the link as text too; the reset email says what to do if unrequested
+    const footer = type === 'verifyAccount'
+        ? `<p>${escapeHtml(words.footer)}<br/>${link}</p>`
+        : `<p>${escapeHtml(words.footer)}</p>`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
+            <h2>${escapeHtml(words.heading)}</h2>
+            <p>${escapeHtml(words.text)}</p>
+            <a href="${link}" style="background-color: ${color}; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">${escapeHtml(words.button)}</a>
+            ${footer}
+        </div>`;
+    return { subject: words.subject, html };
+};
+
+// Every text table by language, for the translation check (frontend: npm run check:translations)
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates };
+
+module.exports = { buildEmail, buildAccountEmail, normalizeLanguage, escapeHtml, statusLabels, templates, translatedTables };

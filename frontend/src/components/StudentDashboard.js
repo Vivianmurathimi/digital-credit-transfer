@@ -592,7 +592,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     // Evidence files need the login token, so they are opened through openSecureFile
     const handleOpenFile = (e, fileName) => {
         e.preventDefault();
-        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
+        openSecureFile(fileName).catch((err) => setUploadStatus(getErrorMessage(err, t, 'file_open_failed')));
     };
     const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
     
@@ -818,7 +818,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     const submitResubmission = async () => {
         // Replies are allowed while new submissions are closed (the deadline keeps running)
-        if (resubmitFiles.length === 0 && resubmitNote.trim() === '') return alert(t('student_resubmit_missing_info_alert'));
+        // Nothing to send: said under the note instead of a pop-up
+        if (resubmitFiles.length === 0 && resubmitNote.trim() === '') { setResubmitNoteError(t('student_resubmit_missing_info_alert')); return undefined; }
         // Same note rule as the server: shown under the note, nothing sent
         const noteProblem = checkNote(resubmitNote);
         if (noteProblem) { setResubmitNoteError(t(`errors.${noteProblem.code}`, noteProblem.params || {})); return undefined; }
@@ -830,9 +831,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                 new_files: resubmitFiles.join(',') 
             } }).json();
             if (data.success) {
-                alert(t('student_resubmission_success'));
                 setResubmitModal({ isOpen: false, app: null }); setIsNoteExpanded(false); setResubmitFiles([]); setResubmitNote(''); setUploadStatus(''); 
                 fetchMyApplications(); 
+                setSubmitSuccess('student_resubmission_success'); // at the top of My Status, like a submit
             }
         } catch (err) {
             // A note error from the server goes under the note, anything else into the status line
@@ -982,7 +983,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             </p>
                         </div>
 
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Your Reply to Reviewer:</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>{t('student_reply_label')}</label>
                         <textarea 
                             value={resubmitNote}
                             onChange={(e) => { setResubmitNote(e.target.value); setResubmitNoteError(''); }}
@@ -990,13 +991,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             aria-invalid={resubmitNoteError ? true : undefined}
                             aria-describedby={resubmitNoteError ? 'resubmit-note-counter resubmit-note-error' : 'resubmit-note-counter'}
                             style={{ width: '100%', padding: '10px', borderRadius: '5px', border: resubmitNoteError ? '2px solid var(--danger-border)' : '1px solid var(--border-strong)', boxSizing: 'border-box' }}
-                            placeholder="Explain what you have updated or attach new highlighted files below..."
+                            placeholder={t('student_reply_placeholder')}
                         />
                         <NoteCounter id="resubmit-note-counter" text={resubmitNote} t={t} />
                         {resubmitNoteError && <p id="resubmit-note-error" style={{ color: 'var(--error-text)', fontSize: '12px', fontWeight: 'bold', margin: '4px 0 0 0' }}>{resubmitNoteError}</p>}
                         <div style={{ marginBottom: '15px' }} />
 
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>Upload Additional Evidence:</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', display: 'block', marginBottom: '8px' }}>{t('student_reply_upload_label')}</label>
                         <div style={{ backgroundColor: 'var(--surface-2)', padding: '15px', border: '2px dashed var(--orange)', borderRadius: '5px', marginBottom: '20px' }}>
                             <input type="file" accept={ACCEPT} onChange={(e) => handleFileSelect(e, true)} style={{ marginBottom: '4px' }}/>
                             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 10px 0' }}>{t('student_file_hint', { max: MAX_MB.highlighterOriginal })}</p>
@@ -1010,7 +1011,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
                             {resubmitFiles.length > 0 && (
                                 <div style={{ marginTop: '15px' }}>
-                                    <strong style={{ color: 'var(--success-accent)' }}>Attached New Files:</strong>
+                                    <strong style={{ color: 'var(--success-accent)' }}>{t('student_reply_attached_files')}</strong>
                                     {/* Same thumbnail + Open file + Remove layout as the first upload */}
                                     {resubmitFiles.map((file, idx) => (
                                         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
