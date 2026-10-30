@@ -8,12 +8,18 @@ import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode,
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode, statusKey,
     NOTE_MAX, noteLength, checkNote, DRAFT_VERSION, DRAFT_SAVE_DELAY_MS, draftFromForm, isEmptyDraft, formFromDraft, DRAFT_MAX_KB } from '../applicationForm';
 
 
 // What the form's draft remembers when the server holds no draft (see the draft section below)
 const NOTHING_SAVED = '';
+
+// Badge colour of each status in My Status (statusKey turns anything unexpected into 'unknown')
+const STATUS_COLORS = {
+    pending: 'var(--blue)', needs_info: 'var(--orange)', approved: 'var(--brand)',
+    rejected: 'var(--red)', withdrawn: 'var(--grey)', unknown: 'var(--grey)',
+};
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
 const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
@@ -382,6 +388,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
             saveDraftOnLeave(); // the dashboard closes (e.g. Log Out)
         };
     }, [draftsEnabled, saveDraft, saveDraftOnLeave]);
+
+    // Status as the student sees it: a translated label and badge colour, never the raw code
+    const statusLabel = (status) => t(`student_status_${statusKey(status)}`);
+    const statusColor = (status) => STATUS_COLORS[statusKey(status)];
 
     const clockTime = (at) => new Date(at).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
     // PTE courses with an open or approved application can't be chosen again (shown with the reason)
@@ -811,10 +821,10 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
                         <thead>
                             <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
-                                <th style={{ padding: '12px', textAlign: 'left' }}>Fulfilled Courses</th>
+                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('student_column_fulfilled')}</th>
                                 <th style={{ padding: '12px', textAlign: 'left' }}>{t('reviewer_target_courses')}</th>
-                                <th style={{ padding: '12px', textAlign: 'center' }}>Status</th>
-                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('reviewer_actions')}</th>
+                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('student_column_status')}</th>
+                                <th style={{ padding: '12px', textAlign: 'center' }}>{t('student_column_next')}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -837,14 +847,14 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                         </ul>
                                     </td>
                                     <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                        <span style={{ fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '11px', backgroundColor: app.status === 'approved' ? 'var(--brand)' : app.status === 'rejected' ? 'var(--red)' : app.status === 'needs_info' ? 'var(--orange)' : 'var(--blue)' }}>
-                                            {t(`status_${app.status}`)}
+                                        <span style={{ fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '11px', backgroundColor: statusColor(app.status) }}>
+                                            {statusLabel(app.status)}
                                         </span>
                                     </td>
                                     <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                         {app.status === 'needs_info' ? (
                                             <button onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
-                                        ) : <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t('student_locked_action')}</span>}
+                                        ) : <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
                                     </td>
                                 </tr>
                             )})}

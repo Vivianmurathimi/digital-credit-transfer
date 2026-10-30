@@ -14,9 +14,9 @@ const TIMEZONE = 'Europe/Budapest';
 const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
 const COLORS = {
     brand: '#004085', text: '#000000', muted: '#666666', line: '#cccccc', panel: '#f0f4fa',
-    status: { approved: '#0a58ca', pending: '#2f73cf', needs_info: '#fd7e14', rejected: '#dc3545' },
+    status: { approved: '#0a58ca', pending: '#2f73cf', needs_info: '#fd7e14', rejected: '#dc3545', withdrawn: '#6c757d' },
 };
-const STATUS_LABELS = { pending: 'Pending', needs_info: 'Needs Info', approved: 'Approved', rejected: 'Rejected' };
+const STATUS_LABELS = { pending: 'Pending', needs_info: 'Needs Info', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' };
 const NOTE_LABELS = [
     ['student', "Student's note"],
     ['system', 'System note (credit check)'],

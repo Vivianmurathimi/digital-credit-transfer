@@ -23,11 +23,11 @@ const escapeHtml = (text) => String(text)
 // Reviewer's message exactly as written: escaped, with line breaks kept
 const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
-// Same labels the app shows on screen (status_* keys in the frontend locales)
+// Same labels the student sees in My Status (student_status_* keys in the frontend locales)
 const statusLabels = {
-    hu: { approved: 'Elfogadva', rejected: 'Elutasítva', pending: 'Folyamatban' },
-    en: { approved: 'Approved', rejected: 'Rejected', pending: 'Pending' },
-    de: { approved: 'Genehmigt', rejected: 'Abgelehnt', pending: 'Ausstehend' },
+    hu: { pending: 'Elbírálás alatt', needs_info: 'Kiegészítés szükséges', approved: 'Elfogadva', rejected: 'Elutasítva', withdrawn: 'Visszavonva' },
+    en: { pending: 'Under review', needs_info: 'Information needed', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' },
+    de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
 };
 
 // Words shared by every template in a language

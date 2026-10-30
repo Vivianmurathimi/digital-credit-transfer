@@ -246,6 +246,12 @@ export const syllabusReasonsWhileEditing = (rows, targetCourse) => {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Every status an application can have (Group 8). The student sees each one as a translated
+// label (student_status_*); anything else shows "Status unknown", never the raw code.
+export const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+export const statusKey = (status) => (STATUSES.includes(status) ? status : 'unknown');
+
+// ---------------------------------------------------------------------------------------------
 // One active application per PTE course: the same statuses and code comparison as the server
 // (backend/utils/applicationForm.js). Every other status (rejected, a future "withdrawn") allows a new one.
 export const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
