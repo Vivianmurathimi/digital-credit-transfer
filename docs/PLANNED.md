@@ -17,6 +17,7 @@ Things deliberately left for later while building the student side, with the rea
 - **Term book: append highlighted PDF evidence.** Since Group 5 a syllabus is saved as a highlighted PDF (page 1 plus the highlighted pages). pdfkit can only embed images, so the term book lists PDF evidence by name; merging the PDF pages into the book (e.g. with pdf-lib) would show them.
 - **Term book: add grading-system files** (`applications.institutions[].grading_file`) and show institution, country and credit system. Today it embeds only each course's evidence file.
 - **Impersonation shows every programme's courses** in the student course picker, because the request uses the admin's token. Needs a way for the admin to read the impersonated student's programme. Also no profile card while impersonating.
+- **Clean up uploads from forms that are never submitted (after semester end).** Evidence and grading documents are uploaded as soon as they are chosen; if the student never submits, those files belong to no application. Removing a course row, a document or an institution in the form deletes its file. The rest needs a cleanup job after semester end: delete files that no application **and no draft** refers to (a draft keeps its files until it is submitted or cleared).
 - **Role change to "student"** needs a Neptun code and programme picker. Until then it is refused with `STUDENT_PROFILE_REQUIRED`.
 - **Correcting a student's programme** (students can't change it themselves).
 - **Course import from Neptun CSV** per programme at semester start. Courses are seeded until then.
@@ -31,6 +32,8 @@ Things deliberately left for later while building the student side, with the rea
 ## Group 3 (postponed)
 
 - **Semesters and the application window.** Needs a semester model that doesn't exist yet, and one open decision.
+- **Clear drafts at semester end.** Drafts (`application_drafts`, Group 7) are kept until the student submits or the account is deleted. When a semester closes, unsent drafts should be deleted (or the students reminded first), so a new semester never starts from an old form.
+- **History across semesters for the duplicate rule.** "One active application per PTE course" (Group 6) reads only the `applications` table. Once semesters exist and old applications are archived, the rule needs a history source across semesters (e.g. approved courses from earlier semesters), so a course approved in an earlier semester still can't be applied for again.
 
 ## Group 5
 
@@ -38,13 +41,14 @@ Things deliberately left for later while building the student side, with the rea
 
 ## Later (student side)
 
+- **Drafts: conflict check across tabs.** Today the last save wins (documented under "Known limitations" in SECURITY_TESTS.md). A check could send the `updated_at` the tab last saw and, when the server has a newer draft, ask which one to keep.
+
 - **Reusing an institution and its documents** (grading document, transcript) from an earlier application, instead of uploading them again.
 
 ## Other
 
 - **"Add missing info" window texts:** a few labels there ("Upload …", "Attached New Files") are still English; its PDFs share the 30-page syllabus limit.
 
-- **Uploads from forms that are never submitted stay in storage.** Evidence and grading documents are uploaded as soon as they are chosen; if the student leaves without submitting, those files are kept but belong to no application. Removing a course row, a document or an institution in the form deletes its file. Cleaning up the rest needs a background job, e.g. deleting files older than a day that no application refers to.
 - ~~"Evidence required" note is written by the browser~~ **(fixed in Group 5):** the server works out when a syllabus is required, writes `system_note` itself and ignores what the browser sends.
 - **Register reveals registered addresses and Neptun codes** (`EMAIL_TAKEN`, `NEPTUN_TAKEN`). Fix: always answer "check your inbox" and email the existing account owner.
 - Success messages of forgot / reset password are still English.
