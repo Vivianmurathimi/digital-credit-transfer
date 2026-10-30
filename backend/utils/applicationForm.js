@@ -219,6 +219,9 @@ const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [
     field: `fulfilled_courses[${r}].syllabus_file`, code: 'SYLLABUS_REQUIRED', message: 'Upload the syllabus for this course',
 }]));
 
+// Every status an application can have. "withdrawn" is set only by the student (Group 8).
+const ALL_STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+
 // --- One active application per PTE course (Group 6) ---
 // While an application has one of these statuses, the student can't apply for the same PTE course
 // again. Every other status (rejected, and a future "withdrawn") allows a new application.
@@ -230,5 +233,5 @@ const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUp
 
 module.exports = {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi,
-    BLOCKING_STATUSES, normalizeCourseCode, NOTE_MAX, normalizeNote, noteLength, checkNote, CREDIT_MAX, LIMITS,
+    ALL_STATUSES, BLOCKING_STATUSES, normalizeCourseCode, NOTE_MAX, normalizeNote, noteLength, checkNote, CREDIT_MAX, LIMITS,
 };

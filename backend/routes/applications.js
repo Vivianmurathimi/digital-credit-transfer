@@ -6,6 +6,8 @@ const requireRole = require('../middleware/requireRole');
 const notifyStudent = require('../utils/notifyStudent');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
+const inTransaction = require('../utils/transaction');
+const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { sendValidationErrors } = sendError;
 const {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
@@ -17,8 +19,12 @@ const isDuplicateApplication = (err) => err.code === '23505' && err.constraint =
 const alreadyApplied = (res) => sendError(res, 409, 'ALREADY_APPLIED', 'There is already an active or approved application for this PTE course', { field: 'target_course_ids' });
 
 
-// The only statuses the app understands (badges, reviewer tabs, emails, term book)
+// The statuses a reviewer or the superadmin may set. "withdrawn" is set only by the student
+// (the withdraw route below), and a withdrawn application can't be changed by anyone.
 const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
+
+// A student may withdraw an application while it is waiting: under review or waiting for their reply
+const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
 
 const checkSubmissionsOpen = async () => {
     const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
@@ -91,12 +97,18 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         ));
         if (fileErrors.length > 0) return sendValidationErrors(res, fileErrors, 403);
 
-        const inserted = await pool.query(
-            `INSERT INTO applications 
-            (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
-            [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, normalizeNote(student_note)]
-        ).catch((err) => {
+        // The application and the first step of its history are saved together
+        const studentNote = normalizeNote(student_note);
+        const inserted = await inTransaction(async (client) => {
+            const { rows } = await client.query(
+                `INSERT INTO applications 
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending') RETURNING id`,
+                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote]
+            );
+            await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: 'student', actorId: student_id, status: 'pending', note: studentNote });
+            return rows[0];
+        }).catch((err) => {
             // Two submits at the same moment both passed the check above: the database lets only one in
             if (isDuplicateApplication(err)) return null;
             throw err;
@@ -116,26 +128,56 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
     }
 });
 
-// The logged-in student's own applications: the id comes from the token, never from the URL
+// The logged-in student's own applications: the id comes from the token, never from the URL.
+// Only the fields a student may see (utils/applicationEvents.js), never SELECT *.
 router.get('/applications/mine', verifyToken, requireRole('student'), async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM applications WHERE student_id=$1 ORDER BY created_at DESC', [req.user.id]);
-        res.json({ success: true, applications: result.rows });
+        res.json({ success: true, applications: await listStudentApplications(pool, req.user.id) });
     } catch (err) {
         console.error('❌ Fetch my apps error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
     }
 });
 
-// One student's applications, for reviewers and the superadmin (e.g. the impersonation view)
+// One of the student's own applications in full, with its history (the detail view in My Status).
+// Another student's application and an id that doesn't exist get the same 404.
+router.get('/applications/mine/:id', verifyToken, requireRole('student'), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+        const application = await getStudentApplication(pool, req.user.id, req.params.id);
+        if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        res.json({ success: true, application });
+    } catch (err) {
+        console.error('❌ Fetch my application error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// One student's applications as that student sees them, for reviewers and the superadmin
+// (the impersonation view shows the student's own screen)
 router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
-    const requestedId = parseInt(req.params.id, 10);
+    const requestedId = Number(req.params.id);
+    if (!Number.isSafeInteger(requestedId)) return res.json({ success: true, applications: [] });
 
     try {
-        const result = await pool.query('SELECT * FROM applications WHERE student_id=$1 ORDER BY created_at DESC', [requestedId]);
-        res.json({ success: true, applications: result.rows });
+        res.json({ success: true, applications: await listStudentApplications(pool, requestedId) });
     } catch (err) {
         console.error('❌ Fetch student apps error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// One application of that student, as the detail view shows it (impersonation, read-only)
+router.get('/applications/student/:id/:applicationId', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+    const requestedId = Number(req.params.id);
+    try {
+        const application = Number.isSafeInteger(requestedId)
+            ? await getStudentApplication(pool, requestedId, req.params.applicationId)
+            : null;
+        if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        res.json({ success: true, application });
+    } catch (err) {
+        console.error('❌ Fetch student application error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
     }
 });
@@ -160,35 +202,58 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     if (!VALID_STATUSES.includes(status)) {
         return sendError(res, 400, 'INVALID_STATUS', 'This status is not valid');
     }
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+    // No note (the admin's override sends none) keeps the reviewer's note that is already there
+    const newNote = typeof note === 'string' ? note : null;
 
     try {
-        // Read the current status first, so we only email when it actually changes
-        const current = await pool.query('SELECT status FROM applications WHERE id=$1', [req.params.id]);
-        if (current.rows.length === 0) {
-            return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
-        }
-        const previousStatus = current.rows[0].status;
-
-        // Record who made the decision and when (the logged-in reviewer or superadmin).
-        // Reopening an old rejected application while the student has a newer active one for the
-        // same PTE course would break the one-active-application rule: the database refuses it.
+        // The status change and its history entry are saved together. The row is locked while
+        // this runs, so the previous status (used for the email) can't change underneath.
         let updated;
         try {
-            updated = await pool.query(
-                'UPDATE applications SET status=$1, reviewer_note=$2, reviewed_by=$3, reviewed_at=NOW() WHERE id=$4 RETURNING student_id, reviewer_note',
-                [status, note, req.user.id, req.params.id]
-            );
+            updated = await inTransaction(async (client) => {
+                const current = await client.query('SELECT status, reviewer_note FROM applications WHERE id=$1 FOR UPDATE', [id]);
+                if (current.rows.length === 0) return null;
+                const previous = current.rows[0];
+                // The student withdrew it: it is closed for good
+                if (previous.status === 'withdrawn') return { withdrawn: true };
+
+                // Record who made the decision and when (the logged-in reviewer or superadmin).
+                // Reply deadline (Group 9): set when the application is newly sent back for information,
+                // kept when it is asked again while already waiting, cleared by any other status.
+                // Reopening an old rejected application while the student has a newer active one for the
+                // same PTE course would break the one-active-application rule: the database refuses it.
+                const { rows } = await client.query(
+                    `UPDATE applications SET status=$1, reviewer_note=COALESCE($2, reviewer_note), reviewed_by=$3, reviewed_at=NOW(),
+                        info_requested_at     = CASE WHEN $5 THEN COALESCE(info_requested_at, now()) END,
+                        info_deadline         = CASE WHEN $5 THEN COALESCE(info_deadline, info_reply_deadline(now())) END,
+                        info_reminder_sent_at = CASE WHEN $5 THEN info_reminder_sent_at END
+                     WHERE id=$4 RETURNING student_id, reviewer_note, info_deadline`,
+                    [status, newNote, req.user.id, id, status === 'needs_info']
+                );
+                // Saving the same status and note again adds nothing to the history
+                if (status !== previous.status || (newNote !== null && newNote !== previous.reviewer_note)) {
+                    await addEvent(client, {
+                        applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
+                        actorRole: actorRoleOf(req.user), actorId: req.user.id, status, note: newNote,
+                    });
+                }
+                return { previousStatus: previous.status, ...rows[0] };
+            });
         } catch (err) {
             if (isDuplicateApplication(err)) return alreadyApplied(res);
             throw err;
         }
+        if (!updated) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (updated.withdrawn) return sendError(res, 409, 'APPLICATION_WITHDRAWN', 'The student has withdrawn this application');
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)
-        if (status !== previousStatus) {
-            const { student_id, reviewer_note } = updated.rows[0];
+        if (status !== updated.previousStatus) {
+            const { student_id, reviewer_note, info_deadline } = updated;
             const type = status === 'needs_info' ? 'needsInfo' : 'statusUpdate';
-            notifyStudent(student_id, type, { status, note: reviewer_note });
+            notifyStudent(student_id, type, { status, note: reviewer_note, deadline: info_deadline });
         }
     } catch (err) {
        console.error("❌ Status update error:", err.message);
@@ -196,10 +261,46 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     }
 });
 
+// The student withdraws their own application (Group 8). Allowed while it is pending or waiting
+// for their reply, also while submissions are closed. The reply deadline is cleared, the step is
+// added to the history, and a withdrawn application no longer blocks a new one for the same course.
+// Another student's application and an id that doesn't exist get the same 404.
+router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+
+    try {
+        // The status is checked in the update itself, so a decision or an automatic rejection
+        // made a moment earlier can't be overwritten
+        const result = await inTransaction(async (client) => {
+            const { rowCount } = await client.query(
+                `UPDATE applications SET status = 'withdrawn', info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
+                 WHERE id = $1 AND student_id = $2 AND status = ANY($3)`,
+                [id, req.user.id, WITHDRAWABLE_STATUSES]
+            );
+            if (rowCount === 0) {
+                const own = await client.query('SELECT 1 FROM applications WHERE id = $1 AND student_id = $2', [id, req.user.id]);
+                return own.rows.length === 0 ? 'not_found' : 'not_allowed';
+            }
+            await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: 'student', actorId: req.user.id, status: 'withdrawn' });
+            return 'withdrawn';
+        });
+        if (result === 'not_found') return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (result === 'not_allowed') return sendError(res, 409, 'CANNOT_WITHDRAW', 'Only an application under review or waiting for your reply can be withdrawn');
+        res.json({ success: true });
+
+        // Respond first, then email in the background (never blocks or fails the request)
+        notifyStudent(req.user.id, 'withdrawn');
+    } catch (err) {
+        console.error('❌ Withdraw error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Withdraw failed');
+    }
+});
+
 // Resubmit adds a note and evidence files only. Target courses and programme can't be changed
 // here: any target_course_ids, pte_course_names or programme_id in the request is ignored.
 router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), async (req, res) => {
-    const { id } = req.params;
+    const id = Number(req.params.id);
     const { student_resubmit_note, new_files } = req.body;
 
     // The same note rules as the application note (2000 characters, counted the same way)
@@ -212,7 +313,9 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
     }
 
     try {
-        const ownerCheck = await pool.query('SELECT student_id, status, supplemental_files FROM applications WHERE id = $1', [id]);
+        const ownerCheck = Number.isSafeInteger(id) && id > 0
+            ? await pool.query('SELECT student_id, status, supplemental_files, info_deadline <= now() AS deadline_passed FROM applications WHERE id = $1', [id])
+            : { rows: [] };
         if (ownerCheck.rows.length === 0) {
             return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
         }
@@ -224,10 +327,12 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
             return sendError(res, 409, 'NOT_WAITING_FOR_INFO', 'This application is not waiting for more information');
         }
 
-        const isOpen = await checkSubmissionsOpen();
-        if (!isOpen) {
-            return sendError(res, 403, 'SUBMISSIONS_CLOSED', 'Submissions are currently closed');
+        // After the deadline the reply is refused; the background job rejects the application
+        if (ownerCheck.rows[0].deadline_passed) {
+            return sendError(res, 409, 'INFO_DEADLINE_PASSED', 'The deadline for replying has passed');
         }
+        // A reply is allowed while new submissions are closed: it answers an existing application,
+        // and its deadline keeps running either way
 
         // Only the student's own uploads may be added as evidence
         const newFiles = splitFileList(new_files);
@@ -238,10 +343,22 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
         // Append to the existing list without empty entries (no stray commas)
         const updatedFiles = [...splitFileList(ownerCheck.rows[0].supplemental_files), ...newFiles].join(',');
 
-        await pool.query(
-            "UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2 WHERE id = $3", 
-            [normalizeNote(student_resubmit_note), updatedFiles, id]
-        );
+        // Back to review, the deadline cleared, and the reply added to the history, all together.
+        // The status is checked again in the update itself, so a reply can never overwrite an
+        // application that was rejected (e.g. at its deadline) a moment ago.
+        const replyNote = normalizeNote(student_resubmit_note);
+        const saved = await inTransaction(async (client) => {
+            const { rowCount } = await client.query(
+                `UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2,
+                    info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
+                 WHERE id = $3 AND student_id = $4 AND status = 'needs_info' AND (info_deadline IS NULL OR info_deadline > now())`,
+                [replyNote, updatedFiles, id, req.user.id]
+            );
+            if (rowCount === 0) return false;
+            await addEvent(client, { applicationId: id, kind: 'replied', actorRole: 'student', actorId: req.user.id, status: 'pending', note: replyNote, files: newFiles });
+            return true;
+        });
+        if (!saved) return sendError(res, 409, 'NOT_WAITING_FOR_INFO', 'This application is not waiting for more information');
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)

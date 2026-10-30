@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/",
     "security-check": "node scripts/securityCheck.js",
     "migrate": "node scripts/migrate.js",
     "reset:dev": "node scripts/resetDevData.js",

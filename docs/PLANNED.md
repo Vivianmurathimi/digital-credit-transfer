@@ -11,6 +11,8 @@ Things deliberately left for later while building the student side, with the rea
 - **Show why a syllabus was required, translated:** the server stores the reasons as codes in `applications.syllabus_reasons` (`CREDIT_GAP`, `CREDIT_SYSTEMS`, `COMBINED_COURSES`); the English `system_note` stays for the term book.
 - **Move the reviewer dashboard to the shared ky client** (it still uses the axios bridge, `src/api.js`).
 - Reviewer page does not refresh by itself after changes.
+- **Rules for allowed status changes.** Today the status route accepts any of pending, needs info, approved and rejected from any status (only "withdrawn" is closed for good, since Group 8). The reviewer round should define which changes are allowed, e.g. no reopening of an approved application without a reason, and refuse the rest with their own error code.
+- **Show the history and the reply deadline on the reviewer screen.** Since Group 8 every step is in `application_events` (who, when, note, files of each reply) and a needs-info application has `info_deadline`; the reviewer screen still reads the single note columns, which only hold the latest note.
 
 ## Admin round
 
@@ -28,11 +30,14 @@ Things deliberately left for later while building the student side, with the rea
 ## After the reviewer and admin rounds
 
 - **Drop `applications.pte_course_names`.** It is a text copy of `target_courses`, kept only because the reviewer screen, admin screen and term book still read it.
+- **Read notes from the history only.** `reviewer_note`, `student_resubmit_note` and `supplemental_files` duplicate what `application_events` records (Group 8), keeping only the latest of each. Once the reviewer screen, admin screen and term book read the history, they can be dropped.
 
 ## Group 3 (postponed)
 
 - **Semesters and the application window.** Needs a semester model that doesn't exist yet, and one open decision.
 - **Clear drafts at semester end.** Drafts (`application_drafts`, Group 7) are kept until the student submits or the account is deleted. When a semester closes, unsent drafts should be deleted (or the students reminded first), so a new semester never starts from an old form.
+- **Previous semesters in My Status (Group 8, item 33).** My Status lists every application of the student; with semesters it should group them, or show earlier semesters separately.
+- **Semester-end automatic rejection.** The background job of Group 9 (`backend/jobs/applicationJobs.js`) is built for it: `rejectAutomatically()` with the semester-end condition and a new reason code, added to `STEPS`.
 - **History across semesters for the duplicate rule.** "One active application per PTE course" (Group 6) reads only the `applications` table. Once semesters exist and old applications are archived, the rule needs a history source across semesters (e.g. approved courses from earlier semesters), so a course approved in an earlier semester still can't be applied for again.
 
 ## Group 5
@@ -41,6 +46,7 @@ Things deliberately left for later while building the student side, with the rea
 
 ## Later (student side)
 
+- **Retry a failed reminder email.** The reminder before the reply deadline is recorded before it is sent, so it never goes out twice, but also not again if that email failed. A small "emails to retry" table would allow both.
 - **Drafts: conflict check across tabs.** Today the last save wins (documented under "Known limitations" in SECURITY_TESTS.md). A check could send the `updated_at` the tab last saw and, when the server has a newer draft, ask which one to keep.
 
 - **Reusing an institution and its documents** (grading document, transcript) from an earlier application, instead of uploading them again.
@@ -53,5 +59,5 @@ Things deliberately left for later while building the student side, with the rea
 - **Register reveals registered addresses and Neptun codes** (`EMAIL_TAKEN`, `NEPTUN_TAKEN`). Fix: always answer "check your inbox" and email the existing account owner.
 - Success messages of forgot / reset password are still English.
 - The PDF highlighter shows an untranslated browser alert.
-- Student "My Status" does not show the reviewer's note or the resubmit information.
-- `db.js` keeps its startup test connection open (harmless for the server; scripts exit explicitly because of it).
+- ~~Student "My Status" does not show the reviewer's note or the resubmit information~~ **(fixed in Group 8):** the table shows the reviewer's note and a "Resubmitted" marker; the detail view shows the whole history.
+- ~~`db.js` keeps its startup test connection open~~ **(fixed in Group 9):** the connection is given back after the test, so `npm test` ends on its own.

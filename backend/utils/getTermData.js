@@ -1,8 +1,8 @@
 const pool = require('../db');
+const { ALL_STATUSES } = require('./applicationForm');
 
 // Semester dates are calendar days in Hungary
 const APP_TIMEZONE = 'Europe/Budapest';
-const STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
 
 // fulfilled_courses_json is jsonb, but older rows may hold a JSON string
 const parseCourses = (value) => {
@@ -79,7 +79,7 @@ const getTermData = async (from, to) => {
     });
 
     // Totals by status for the cover page (every known status listed, even at 0)
-    const totals = Object.fromEntries(STATUSES.map((s) => [s, 0]));
+    const totals = Object.fromEntries(ALL_STATUSES.map((s) => [s, 0]));
     applications.forEach((app) => { totals[app.status] = (totals[app.status] || 0) + 1; });
 
     return { from, to, generatedAt: new Date(), total: applications.length, totals, applications };
