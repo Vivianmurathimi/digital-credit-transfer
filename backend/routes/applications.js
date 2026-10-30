@@ -69,7 +69,10 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
         // 2b. One active application per PTE course: refused while one for the same course
-        //     (code + programme, so it also works after courses are re-imported) is still open or approved
+        //     (code + programme, so it also works after courses are re-imported) is still open or approved.
+        //     Deliberately in every semester (Group 3): a course approved in an earlier semester can't be
+        //     applied for again; a rejected (or withdrawn) one can. Earlier semesters' pending ones are
+        //     closed at their semester end, so in practice only "approved" carries over.
         const targetCode = normalizeCourseCode(targetCourses[0].course_code);
         const existing = await pool.query(
             'SELECT 1 FROM applications WHERE student_id = $1 AND programme_id = $2 AND target_course_code = $3 AND status = ANY($4)',

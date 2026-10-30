@@ -6,7 +6,9 @@
  *
  * Every request is either read-only or one the server must refuse before it saves anything
  * (also every withdraw request: only refused ones are sent). Section 4d adds two temporary
- * applications of student A (rejected, withdrawn) and deletes them again,
+ * applications of student A (rejected, withdrawn) and deletes them again; section 4e moves the
+ * current semester's days, adds a temporary past semester with two applications of A, and puts
+ * everything back,
  * so the check changes no data and sends no emails. The only exception: the rate-limit
  * checks add rows to rate_limit_hits, and the script deletes exactly those rows at the end
  * (otherwise this computer would stay rate-limited for an hour). Test tokens are signed locally with
@@ -84,7 +86,33 @@ const restoreDrafts = async () => {
     return rows.length;
 };
 
-// ---------- temporary applications of section 4d (deleted at the end, also after a crash) ----------
+// ---------- section 4e: the current semester's days and the admin toggle (put back at the end, also after a crash) ----------
+let semesterBackup = null;
+let toggleBackup = null;
+const tempSemesterIds = [];
+const restoreSemesters = async () => {
+    const done = [];
+    if (semesterBackup) {
+        const b = semesterBackup;
+        semesterBackup = null;
+        await pool.query('UPDATE semesters SET applications_open_on = $2, applications_close_on = $3, ends_on = $4 WHERE id = $1',
+            [b.id, b.applications_open_on, b.applications_close_on, b.ends_on]);
+        done.push('semester days put back');
+    }
+    if (toggleBackup !== null) {
+        await pool.query('UPDATE system_settings SET is_submissions_open = $1', [toggleBackup]);
+        toggleBackup = null;
+        done.push('admin toggle put back');
+    }
+    if (tempSemesterIds.length > 0) {
+        // Their applications are removed first (removeTempApplications)
+        const { rowCount } = await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [tempSemesterIds.splice(0)]);
+        done.push(`${rowCount} temporary semester(s) removed`);
+    }
+    return done.join(', ') || 'nothing to put back';
+};
+
+// ---------- temporary applications of sections 4d and 4e (deleted at the end, also after a crash) ----------
 const tempApplicationIds = [];
 const removeTempApplications = async () => {
     if (tempApplicationIds.length === 0) return 0;
@@ -732,6 +760,107 @@ const run = async () => {
         }
     }
 
+    section('4e. Application period and semesters (Group 3)');
+    // The current semester's dates are moved for each case and put back afterwards (also after a
+    // crash). It never ends meanwhile, so the background job never closes anything. Without a current
+    // semester, a temporary one is used. "Between semesters" is tested with a fake clock (npm test).
+    const semestersTable = (await pool.query("SELECT to_regclass('public.semesters') AS t")).rows[0].t;
+    const periodProbe = semestersTable ? await call('GET', 'settings/status', { token: A }) : null;
+    if (!semestersTable) {
+        skip('All application period tests', 'the semesters table is missing: run "npm run migrate" in backend/');
+    } else if (!periodProbe.body?.submission) {
+        report(false, 'The backend reports the application period', 'RESTART THE BACKEND');
+        skip('All application period tests', 'the backend runs older code');
+    } else {
+        let semesterId = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now()')).rows[0]?.id;
+        if (semesterId) {
+            semesterBackup = (await pool.query('SELECT id, applications_open_on, applications_close_on, ends_on FROM semesters WHERE id = $1', [semesterId])).rows[0];
+        } else {
+            semesterId = (await pool.query(
+                `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on)
+                 SELECT 'Security check ' || now(), d - 10, d + 20, d + 40 FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t RETURNING id`
+            )).rows[0].id;
+            tempSemesterIds.push(semesterId);
+        }
+        toggleBackup = (await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1')).rows[0].is_submissions_open;
+
+        // Days relative to today in Budapest
+        const setDays = (from, until, ends) => pool.query(
+            `UPDATE semesters SET applications_open_on = d + $2::int, applications_close_on = d + $3::int, ends_on = d + $4::int
+             FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t WHERE id = $1`,
+            [semesterId, from, until, ends]
+        ).then(() => true, (err) => (err.code === '23P01' ? false : Promise.reject(err)));
+        const periodCase = async (label, days, toggle, expectedState, submitStatus, submitCode) => {
+            if (!(await setDays(...days))) return skip(`Submitting ${label}`, 'those days would overlap another semester');
+            await pool.query('UPDATE system_settings SET is_submissions_open = $1', [toggle]);
+            const status = await call('GET', 'settings/status', { token: A });
+            report(status.body?.submission?.state === expectedState, `Application period ${label}: state "${expectedState}"`, status.body?.submission?.state);
+            // An empty form: refused by the period check, or (when submitting is possible) by the field checks
+            await expect(`Submitting ${label}`, call('POST', 'applications', { token: A, json: {} }), submitStatus, submitCode);
+            if (submitStatus === 403) {
+                await expect(`Saving a draft ${label}`, call('PUT', 'drafts/mine', { token: A, json: { version: 1, data: {} } }), 403, submitCode);
+            }
+            return undefined;
+        };
+        await periodCase('before it starts', [10, 20, 40], true, 'not_started', 403, 'APPLICATION_PERIOD_NOT_STARTED');
+        await periodCase('during it', [-10, 20, 40], true, 'open', 400);
+        await periodCase('in its last 7 days', [-10, 3, 40], true, 'last_days', 400);
+        await periodCase('after it (semester still running)', [-20, -1, 40], true, 'period_over', 403, 'NO_APPLICATION_PERIOD');
+        await periodCase('while the admin has closed it', [-10, 20, 40], false, 'closed_by_admin', 403, 'SUBMISSIONS_CLOSED');
+        await pool.query('UPDATE system_settings SET is_submissions_open = true');
+
+        // Earlier semesters: a temporary past semester with two applications of student A
+        const pastId = (await pool.query(
+            `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on)
+             VALUES ('Security check past ' || now(), '2001-02-01', '2001-03-01', '2001-06-30') RETURNING id`
+        )).rows[0].id;
+        tempSemesterIds.push(pastId);
+        const appliedCodes = new Set((await pool.query(
+            "SELECT target_course_code FROM applications WHERE student_id = $1 AND status IN ('pending', 'needs_info', 'approved')", [d.studentA.id]
+        )).rows.map((r) => r.target_course_code));
+        const freeCourses = (await pool.query(
+            'SELECT id, course_code FROM courses WHERE programme_id = $1 AND semester_id = $2 ORDER BY id', [d.studentA.programme_id, semesterId]
+        )).rows.filter((c) => !appliedCodes.has(c.course_code.replace(/\s/g, '').toUpperCase()));
+        const pastApp = async (status, code) => {
+            const id = (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check') RETURNING id`,
+                [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]),
+                    code.replace(/\s/g, '').toUpperCase(), status, pastId]
+            )).rows[0].id;
+            tempApplicationIds.push(id);
+            return id;
+        };
+        if (freeCourses.length < 2) {
+            skip('Cross-semester duplicate checks', "student A needs two courses of the current semester without an open application");
+            await pastApp('approved', 'SECCHECK-PAST');
+        } else {
+            await setDays(-10, 20, 40);
+            const [approvedCourse, rejectedCourse] = freeCourses;
+            await pastApp('approved', approvedCourse.course_code);
+            await pastApp('rejected', rejectedCourse.course_code);
+            // As in section 4, every submit uses B's file: even a broken check could never save anything
+            const form = (courseId) => ({
+                institutions: [{ name: 'Security Check University', country: 'AT', grading_file: d.fileOfB }],
+                fulfilled_courses: [{ institution: 0, course_name: 'Security check', course_code: 'SC-1', credits: 60, credit_system: 'ECTS', grade: 'A', file: d.fileOfB, syllabus_file: d.fileOfB }],
+                target_course_ids: [courseId],
+            });
+            await expect('A applies for a course approved in an earlier semester', call('POST', 'applications', { token: A, json: form(approvedCourse.id) }), 409, 'ALREADY_APPLIED');
+            await expect('A applies for a course rejected in an earlier semester (passes, stopped at the file check)', call('POST', 'applications', { token: A, json: form(rejectedCourse.id) }), 403, 'FILES_NOT_OWNED');
+        }
+        const pastOfA = tempApplicationIds[tempApplicationIds.length - 1];
+        const listA = await call('GET', 'applications/mine', { token: A });
+        const listed = (listA.body?.applications || []).find((app) => app.id === pastOfA);
+        report(listed?.current_semester === false && /^Security check past/.test(listed?.semester_name || ''), "A's earlier-semester application is listed under its semester, not as current");
+        const pastByB = await call('GET', `applications/mine/${pastOfA}`, { token: B });
+        report(pastByB.status === 404 && pastByB.code === 'APPLICATION_NOT_FOUND', "B opens A's earlier-semester application: 404", `${pastByB.status} ${pastByB.code || ''}`);
+        await expect("B withdraws A's earlier-semester application", call('PUT', `applications/${pastOfA}/withdraw`, { token: B }), 404, 'APPLICATION_NOT_FOUND');
+
+        const removedApps = await removeTempApplications();
+        const restored = await restoreSemesters();
+        console.log(`(removed ${removedApps} temporary application(s); ${restored})`);
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -844,6 +973,11 @@ const finish = async (ok) => {
         await removeTempApplications();
     } catch (err) {
         console.error('Could not remove the temporary applications:', err.message);
+    }
+    try {
+        await restoreSemesters();
+    } catch (err) {
+        console.error('Could not put back the semester days and the admin toggle:', err.message);
     }
     try {
         await restoreDrafts();
