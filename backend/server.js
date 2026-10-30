@@ -21,6 +21,7 @@ const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
 const archiveRoutes = require('./routes/archive');
 const draftRoutes = require('./routes/drafts');
+const { startJobs } = require('./jobs/scheduler');
 
 const app = express();
 
@@ -105,5 +106,8 @@ listPendingMigrations()
         }
         app.listen(PORT, () => {
             console.log(`🚀 Server running on port ${PORT}`);
+            // Reminders and automatic rejections need the current schema (migration 007)
+            if (pending.length > 0) console.warn('⚠️  Background jobs not started until the migrations have run.');
+            else startJobs();
         });
     });

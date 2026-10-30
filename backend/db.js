@@ -10,9 +10,13 @@ const pool = new Pool({
     port: process.env.DB_PORT,
 });
 
-// Test the connection
+// Test the connection, then give the connection back to the pool
+// (kept open, it stopped scripts and tests from ending on their own)
 pool.connect()
-    .then(() => console.log('📦 Successfully connected to the PostgreSQL Database!'))
+    .then((client) => {
+        client.release();
+        console.log('📦 Successfully connected to the PostgreSQL Database!');
+    })
     .catch(err => console.error('❌ Database connection error:', err.stack));
 
 module.exports = pool; // Exports this cable so other files can use it
