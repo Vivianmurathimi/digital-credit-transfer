@@ -1,4 +1,4 @@
-# Security tests: student side (Groups 1, 2, 4, 5, 6 and 7)
+# Security tests: student side (Groups 1, 2 and 4–9)
 
 This document describes how the access rules of the PTE digital credit transfer system are tested:
 - who may call which API route
@@ -9,12 +9,15 @@ This document describes how the access rules of the PTE digital credit transfer 
 - that uploads follow the file rules (type by real content, size, generated names) and that a syllabus is required when the rules say so (Group 5)
 - that a student has only one active application per PTE course (Group 6)
 - that the note to the reviewer is limited to 2000 characters, counted the same in browser and server, and that a saved draft of the form is only ever the student's own (Group 7)
+- that My Status and the detail view only ever show the student's own applications, without internal fields, and that only the student can withdraw their own application, only while it is waiting (Group 8)
+- that the "needs info" reply deadline, the reminder and the automatic rejection work exactly once, also with two backend processes and across a clock change (Group 9)
 
-There are three parts:
+There are four parts:
 
-1. **Automated API check** (`npm run security-check`): 177 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 195 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
-3. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
+3. **Background job tests** (`npm test` in `backend/`): reminders and automatic rejections with a fake clock (section 1c).
+4. **Browser checklist**: behaviour that only the frontend can show (redirects, messages, inline errors, downloads).
 
 ---
 
@@ -57,6 +60,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 - **Compatibility probe before any submit test.** Every submit test relies on the server reading the same fields as the script. On 2026-10-28 the check was run against a backend that had not been restarted after a code change: the old code did not understand the new request shape, saw no files, and **saved 32 empty applications** (cleaned up with a dev-data reset). Since then a probe runs first: it is refused by every version (empty target course list), but only the current code reports both of its mistakes with their field paths. Otherwise all submit tests are skipped with "restart the backend". Tested against a real older version of the backend: nothing was saved.
 - **Every file the server stores during the check is deleted at the end**, including files an outdated server accepted although it should have refused them.
 - **Drafts of students A and B are put back.** The drafts checks (section 4c) save and delete drafts of A and B. Their real drafts are copied first and restored afterwards, also after a crash; the script prints how many it put back. Without migration 006, or against a backend that doesn't know the drafts routes yet, the drafts checks are skipped and the reason is printed.
+- **Temporary applications of student A are deleted again.** Section 4d needs a rejected and a withdrawn application to try forbidden changes on. It adds one of each for student A (neither blocks anything), checks that every request was refused and nothing changed, and deletes both with their history, also after a crash. Every withdraw request the script sends is one the server must refuse.
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
@@ -152,6 +156,17 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A draft request over 256 KB | `413 REQUEST_TOO_LARGE` |
 | | | After the refused drafts | the saved draft is unchanged |
 | | | A deletes the draft | no draft any more |
+| 4d | **My Status and withdrawing (Groups 8 and 9)** | B's list of own applications | only the fields a student may see (no `reviewed_by`, `student_id`, …) |
+| | | B's detail view | no internal fields, no `actor_id` in the history; `Cache-Control: no-store` |
+| | | A opens B's application in detail; an id that doesn't exist | the same `404 APPLICATION_NOT_FOUND` for both |
+| | | Detail with an id that is not a number | `404 APPLICATION_NOT_FOUND` |
+| | | Detail without a token; a reviewer uses the student detail route | `401 NO_TOKEN`; `403 FORBIDDEN_ROLE` |
+| | | A withdraws B's application; an id that doesn't exist | the same `404 APPLICATION_NOT_FOUND`; B's application unchanged |
+| | | Withdraw without a token; as reviewer; as superadmin | `401 NO_TOKEN`; `403 FORBIDDEN_ROLE` |
+| | | Reviewer sets the status `withdrawn` | `400 INVALID_STATUS` (only the student can withdraw) |
+| | | A withdraws own rejected application; own withdrawn one again | `409 CANNOT_WITHDRAW` |
+| | | Reviewer changes a withdrawn application | `409 APPLICATION_WITHDRAWN`; nothing changed |
+| | | Changing a history entry in the database | refused by the database (append-only) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer reads the application list and opens a student's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -201,6 +216,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 004, Group 5 (evidence and file rules) | **144 passed, 0 failed, 0 skipped**; run 5 times in a row for the 16 MB check; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
+| 2026-10-30 | throwaway copy with migration 007, My Status, withdrawing, deadline (Groups 8 and 9) | **195 passed, 0 failed, 0 skipped**; the 2 temporary applications deleted. With student B's only application withdrawn (after a browser test), the duplicate check is skipped with "student B has no open application": submit a new one for B to run it |
 
 **One-time tests on throwaway copies of the database (Groups 6 and 7):**
 
@@ -214,6 +230,28 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | A real submit with a saved draft | `200`; the draft is gone afterwards |
 | Deleting a student account that has a draft | the draft is deleted with it |
 | A draft with the student's own uploads | read back with the files' original names |
+
+**One-time tests on throwaway copies of the database (Groups 8 and 9):**
+
+| What | Result |
+|---|---|
+| Migration 007 on a copy of the development data | every existing application got its "submitted" history entry (marked as rebuilt); applications waiting for information got a fresh, full deadline |
+| Deadline of a request on 24 Oct 2026 (the day before winter time), and at 23:30 Budapest time that day | 27 Oct 23:59:59 Budapest time = 22:59:59 UTC, both |
+| Deadline of a request on 28 Mar 2026 (the day before summer time) | 31 Mar 23:59:59 Budapest time = 21:59:59 UTC |
+| Reviewer asks for information twice, student replies, admin decides | history in this order: submitted, information requested ×2, information added, decided by admin; resubmit count 1 |
+| Asking again while waiting for information | the deadline stays the same |
+| A reply | the deadline is cleared; a second reply `409 NOT_WAITING_FOR_INFO` |
+| Admin decision without a note | the reviewer's note is kept |
+| Changing or deleting a history entry directly in the database | refused; deleting the whole application still removes its history |
+| Withdraw from "needs info" | withdrawn, deadline cleared, history entry "withdrawn" by the student |
+| After withdrawing | withdrawing again `409 CANNOT_WITHDRAW`, a reviewer decision `409 APPLICATION_WITHDRAWN`, a reply `409 NOT_WAITING_FOR_INFO` |
+| Withdrawing an approved or rejected application | `409 CANNOT_WITHDRAW` |
+| A new application for the course of a withdrawn one | accepted by the database index (withdrawn doesn't block) |
+| Withdraw and reply while submissions are closed | both `200` |
+| A reply one minute after the deadline (before the job ran) | `409 INFO_DEADLINE_PASSED`; the application stays waiting for the job |
+| Backend started with jobs on; with `JOBS_DISABLED=1`; with `JOBS_DISABLED=1` and `NODE_ENV=production` | "Background jobs running every 5 minutes"; a warning; a large ❌ block saying no automatic rejections will happen |
+| Dates in My Status in EN/HU/DE, on both sides of the clock change | always Budapest time (e.g. 27 Oct 23:59, 24 Oct 23:30), whatever the computer's time zone |
+| Emails: needs info, reminder, withdrawn, automatic rejection, in HU/EN/DE | deadline in the student's language and Budapest time; the automatic rejection shows "Reason: No response to information request." translated |
 
 ---
 
@@ -233,6 +271,31 @@ It covers 19 inputs (valid, every kind of error, values exactly at each limit, s
 | 2026-10-28 | **23 passed, 0 failed**: all 19 inputs identical in browser and server |
 | 2026-10-29 | **46 passed, 0 failed**: also the syllabus rule (8 cases), one PTE course, and the file rules (9 files, sizes, download names) identical in browser and server |
 | 2026-10-29 | **70 passed, 0 failed**: also the blocking statuses and course-code matching (Group 6), note counting (emoji, accents, Hungarian letters) and its verdicts (Group 7), and drafts: a draft comes back exactly as saved, files the server removes are removed in the form too, an odd draft can never break the form, same 200 KB limit |
+
+## 1c. Background jobs: reminders and automatic rejections
+
+The backend runs its background jobs itself (`backend/jobs/`): once at startup, then every 5 minutes. Nothing is kept in memory, and every change is one database update that only applies while its condition still holds, so a restart or a second backend process can't send or reject anything twice. Tests with a fake clock:
+
+```bash
+cd backend
+npm test
+```
+
+They use the database from `backend/.env` (run `npm run migrate` first). They add their own test applications, limit every job run to those (real applications are never touched), use a fake clock 60 days ahead, send no emails (a fake records them) and delete their applications at the end.
+
+| Test | Checks |
+|---|---|
+| Deadline across a clock change | 23:59:59 Budapest time on the third day, for requests the day before winter and summer time, and late in the evening |
+| One reminder | none 25 hours before the deadline; one 23 hours before, carrying the deadline; none on later runs |
+| Rejection at the deadline | not one second before; at the deadline: rejected, note "No response to information request.", decided by nobody (System), deadline cleared, history entry `auto_rejected` / `system` / `NO_INFO_RESPONSE` at the run's time, one status email with the reason code; nothing more on a later run |
+| After a reply | nothing happens |
+| Two runs at the same moment | each application rejected once, one history entry each, one email each in total |
+| A failed email | the rejection stays; the next application's email is still sent |
+| A full run | reminder and rejection steps together |
+
+| Date | Result |
+|---|---|
+| 2026-10-30 | **7 passed, 0 failed** (throwaway copy with migration 007) |
 
 **Term book with Group 4 data** (one-time test on a throwaway copy of the database): an application with a 160-character course name, ECTS credits 7.5, a grade "1,3 (sehr gut)" and an image as evidence was submitted and the term book built with the real code. The book contained the course name (wrapped onto several lines, never past the right margin), code, credits, grade, target course and the embedded image. Institutions, countries and grading documents are not in the term book yet: planned for the admin round (see [PLANNED.md](PLANNED.md)).
 
@@ -357,6 +420,42 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B70 | Draft not loading | Stop the backend, reload the dashboard, start the backend | "Your saved draft could not be loaded. Autosave is paused…"; reloading restores it |
 | B71 | No drafts while impersonating | As admin, impersonate a student and open the submit tab | No draft status, no "not allowed" banner, the student's draft unchanged |
 
+**My Status (Group 8):** run `npm run migrate` (007) and restart the backend first. Emails arrive in the Mailtrap sandbox.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| B72 | Status labels | Look at applications in each status; switch to HU and DE | "Under review", "Information needed", "Approved", "Rejected", "Withdrawn" (translated); never "Locked" or a raw code like `needs_info` |
+| B73 | Table | Open My Status | One row per application: PTE course (code, name, credits), status, submission date, "What next", Details |
+| B74 | Dates in Budapest time | Set the computer to another time zone (e.g. New York), reload | Dates unchanged (Budapest time), in the chosen language |
+| B75 | Long reviewer note | Reviewer requests information with a very long note | The note wraps, shows at most 4 lines in the table, no sideways scrolling; the full note is in Details |
+| B76 | Phone width | Make the window narrower than 640 px (or use a phone) | Each application becomes a card, each value with its column name above it |
+| B77 | Empty state | Log in as a student without applications | "No applications submitted yet." and **Start a new request**, which opens the submit tab |
+| B78 | Detail view with the keyboard | Tab to **Details**, press Enter; Tab through; press Esc | Opens with focus on the heading; focus stays inside; Esc closes, focus back on that Details button |
+| B79 | Detail contents | Open Details of a complete application | Institutions with grading document, courses with institution, credits, grade, transcript and syllabus (open in a new tab, original file names), syllabus reasons if any |
+| B80 | History | Reviewer requests information, student replies with a file, reviewer decides; open Details | In order: Application submitted (You), More information requested (Reviewer) with the note, Information added (You) with the note and the file, Status changed to … (Reviewer) |
+| B81 | Resubmitted marker | After a reply; after a second round | "Resubmitted on …"; "Resubmitted 2 times, last on …" |
+| B82 | Admin decision | As admin, change an application's status | Detail: "Last status change: Admin, …"; the reviewer's note is still there (no "System Override") |
+| B83 | Older application | Open Details of an application from before migration 007 | History with dates only and "Rebuilt from older records…" |
+| B84 | Withdraw: keep | Details of a pending application → **Withdraw application** → **Keep application** | Question shown with focus on it; Keep returns, focus on the Withdraw button, nothing changed |
+| B85 | Withdraw | Details → Withdraw application → **Withdraw** | Window closes; "Your application was withdrawn." at the top (focused); status "Withdrawn"; email "You withdrew your credit transfer application" in the student's language |
+| B86 | Withdrawn for the reviewer | Log in as `reviewer.cs` | The application is in none of the tabs |
+| B87 | Reviewer acts on a withdrawn one | Open the reviewer page; the student withdraws in another browser; the reviewer then approves it | "The student has withdrawn this application, so it can no longer be changed."; nothing changed |
+| B88 | Apply again | After withdrawing, open the submit tab | The course can be chosen again |
+| B89 | No withdraw | Details of an approved or rejected application; any application while impersonating | No Withdraw button |
+
+**The needs-info loop (Group 9):** the SQL lines are run with `docker exec -it credit_system_db psql -U user -d credit_db`; replace `<id>` with the application's id.
+
+| # | What | How | Expected |
+|---|---|---|---|
+| B90 | Deadline shown | As reviewer, request information | Table, Details and the "Add Missing Info" window show "Respond by 2 November 2026, 23:59" (3 days later, 23:59), translated |
+| B91 | Deadline in the email | Open the needs-info email | "Please reply by 2 November 2026, 23:59 (Budapest time)…", in the student's saved language |
+| B92 | Less than a day left | `UPDATE applications SET info_deadline = now() + interval '5 hours' WHERE id = <id>;` then reload | Red warning "Less than a day left to respond." |
+| B93 | Deadline passed (before the job runs) | Start the backend with `JOBS_DISABLED=1 node server.js`; `UPDATE applications SET info_deadline = now() - interval '1 minute' WHERE id = <id>;` reload | "The deadline for replying has passed…"; no Add Missing Info button. A reply sent from a tab opened earlier: "The deadline for replying has passed…" |
+| B94 | Reminder | `UPDATE applications SET info_deadline = now() + interval '20 hours', info_reminder_sent_at = NULL WHERE id = <id>;` then restart the backend (normally, without `JOBS_DISABLED`) | One reminder email ("Reminder: please reply about your application by tomorrow") with the deadline, in the student's language; restarting again sends no second one |
+| B95 | Automatic rejection | `UPDATE applications SET info_deadline = now() - interval '1 minute' WHERE id = <id>;` then restart the backend | Status "Rejected"; note "No response to information request." (translated in HU/DE); Details: "Last status change: System", history "Rejected automatically · System"; email with "Reason: No response to information request."; the reviewer sees it under Completed |
+| B96 | Reply while submissions are closed | As admin, close submissions; as the student, reply to an information request | Accepted; back to "Under review" |
+| B97 | Jobs switched off | Start the backend with `JOBS_DISABLED=1 node server.js` | Warning "Background jobs are switched off" in the terminal |
+
 ---
 
 ## 3. Pending for the reviewer round
@@ -399,4 +498,8 @@ The highlighter's rules are tested in Node (`frontend/src/highlighter.js`), with
 - **Uploads from forms that are never submitted stay in storage** until a cleanup job exists (see [PLANNED.md](PLANNED.md)).
 - **Drafts: the last save wins.** With the form open in two tabs or browsers, each saves its own state; the later save replaces the other. Opening the form again shows the last saved state. A tab left open after a submit can also save the submitted form again as a draft; submitting it a second time is refused with `ALREADY_APPLIED`. A conflict check is planned (see [PLANNED.md](PLANNED.md)).
 - **Drafts are readable by the student only, not encrypted.** They are stored in the database as JSON, like the applications themselves.
+- **A failed reminder email is not sent again.** The reminder is recorded before it is sent, so it can never go out twice; if that one email fails, the student still has the needs-info email and the deadline on screen.
+- **Automatic rejection can come up to 5 minutes after the deadline**, because the job runs every 5 minutes. Replies are refused exactly at the deadline, so nothing can arrive in between.
+- **History rebuilt by migration 007 is incomplete.** For applications from before Group 8, only the latest note of each kind and the closest recorded time were still known; those entries are marked as rebuilt.
+- **Withdrawing cannot be undone.** The student can submit a new application for the same course instead.
 - **Front-end checks are not security.** The route guards and role checks in the browser only decide which screens to show; the backend checks every request itself (sections 1–7).

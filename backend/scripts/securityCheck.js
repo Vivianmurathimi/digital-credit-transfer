@@ -4,7 +4,9 @@
  * Run against a RUNNING backend:   npm run security-check
  * Other address:                   SECURITY_CHECK_URL=http://localhost:5099 npm run security-check
  *
- * Every request is either read-only or one the server must refuse before it saves anything,
+ * Every request is either read-only or one the server must refuse before it saves anything
+ * (also every withdraw request: only refused ones are sent). Section 4d adds two temporary
+ * applications of student A (rejected, withdrawn) and deletes them again,
  * so the check changes no data and sends no emails. The only exception: the rate-limit
  * checks add rows to rate_limit_hits, and the script deletes exactly those rows at the end
  * (otherwise this computer would stay rate-limited for an hour). Test tokens are signed locally with
@@ -80,6 +82,15 @@ const restoreDrafts = async () => {
     }
     draftBackup = null;
     return rows.length;
+};
+
+// ---------- temporary applications of section 4d (deleted at the end, also after a crash) ----------
+const tempApplicationIds = [];
+const removeTempApplications = async () => {
+    if (tempApplicationIds.length === 0) return 0;
+    // Deleting the application also deletes its history (the only way history entries can go)
+    const { rowCount } = await pool.query('DELETE FROM applications WHERE id = ANY($1)', [tempApplicationIds.splice(0)]);
+    return rowCount;
 };
 
 // ---------- small helpers ----------
@@ -633,6 +644,82 @@ const run = async () => {
         console.log(`(put back ${restored} real draft(s) of students A and B)`);
     }
 
+    section('4d. My Status and withdrawing (Groups 8 and 9): only ever the student\'s own');
+    const eventsTable = (await pool.query("SELECT to_regclass('public.application_events') AS t")).rows[0].t;
+    const detailProbe = eventsTable ? await call('GET', `applications/mine/${d.appOfB.id}`, { token: B }) : null;
+    if (!eventsTable) {
+        skip('All My Status tests', 'the application_events table is missing: run "npm run migrate" in backend/');
+    } else if (detailProbe.status !== 200) {
+        report(false, 'The backend knows the detail route', `${detailProbe.status} ${detailProbe.code || ''}: RESTART THE BACKEND`);
+        skip('All My Status tests', 'the backend runs older code');
+    } else {
+        // Only the fields a student may see: an explicit list, never internal columns
+        const STUDENT_FIELDS = ['decided_at', 'decided_by', 'decision_reason', 'fulfilled_courses_json', 'id', 'info_deadline', 'last_resubmitted_at',
+            'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses'];
+        const listB = await call('GET', 'applications/mine', { token: B });
+        const extraFields = [...new Set((listB.body?.applications || []).flatMap((app) => Object.keys(app)))].filter((k) => !STUDENT_FIELDS.includes(k));
+        report(listB.status === 200 && extraFields.length === 0, 'My applications list has no internal fields (reviewed_by, student_id, ...)', extraFields.join(', ') || 'none extra');
+        const detail = detailProbe.body?.application || {};
+        const detailExtra = Object.keys(detail).filter((k) => ![...STUDENT_FIELDS, 'institutions', 'syllabus_reasons', 'events', 'file_names'].includes(k));
+        const eventExtra = [...new Set((detail.events || []).flatMap((e) => Object.keys(e)))]
+            .filter((k) => !['kind', 'actor_role', 'status', 'note', 'reason_code', 'files', 'backfilled', 'created_at'].includes(k));
+        report(detailExtra.length === 0 && eventExtra.length === 0, 'The detail view has no internal fields (no actor_id in the history)', [...detailExtra, ...eventExtra].join(', ') || 'none extra');
+        report((detailProbe.headers.get('cache-control') || '').includes('no-store'), 'The detail view is sent with Cache-Control: no-store', detailProbe.headers.get('cache-control') || 'missing');
+
+        const otherApp = await call('GET', `applications/mine/${d.appOfB.id}`, { token: A });
+        const noApp = await call('GET', 'applications/mine/999999999', { token: A });
+        report(otherApp.status === 404 && otherApp.code === 'APPLICATION_NOT_FOUND' && JSON.stringify(otherApp.body) === JSON.stringify(noApp.body),
+            "A opens B's application: the same 404 as an application that doesn't exist", `${otherApp.status} ${otherApp.code || ''}`);
+        await expect('Detail with an id that is not a number', call('GET', 'applications/mine/abc', { token: A }), 404, 'APPLICATION_NOT_FOUND');
+        await expect('Detail without a token', call('GET', `applications/mine/${d.appOfB.id}`), 401, 'NO_TOKEN');
+        await expect('Reviewer uses the student detail route', call('GET', `applications/mine/${d.appOfB.id}`, { token: R }), 403, 'FORBIDDEN_ROLE');
+
+        // Withdrawing: every request below must be refused before anything is saved
+        const statusOfB = async () => (await pool.query('SELECT status FROM applications WHERE id = $1', [d.appOfB.id])).rows[0].status;
+        const before = await statusOfB();
+        const withdrawOther = await call('PUT', `applications/${d.appOfB.id}/withdraw`, { token: A });
+        const withdrawNone = await call('PUT', 'applications/999999999/withdraw', { token: A });
+        report(withdrawOther.status === 404 && withdrawOther.code === 'APPLICATION_NOT_FOUND' && JSON.stringify(withdrawOther.body) === JSON.stringify(withdrawNone.body),
+            "A withdraws B's application: the same 404 as one that doesn't exist", `${withdrawOther.status} ${withdrawOther.code || ''}`);
+        report(await statusOfB() === before, "B's application is unchanged after A's attempt", before);
+        await expect('Withdraw without a token', call('PUT', `applications/${d.appOfB.id}/withdraw`), 401, 'NO_TOKEN');
+        await expect('Reviewer withdraws an application', call('PUT', `applications/${d.appOfB.id}/withdraw`, { token: R }), 403, 'FORBIDDEN_ROLE');
+        await expect('Superadmin withdraws an application', call('PUT', `applications/${d.appOfB.id}/withdraw`, { token: S }), 403, 'FORBIDDEN_ROLE');
+        await expect('Reviewer sets the status "withdrawn" (students only)', call('PUT', `applications/${d.appOfB.id}/status`, { token: R, json: { status: 'withdrawn', note: 'x' } }), 400, 'INVALID_STATUS');
+
+        // Two temporary applications of student A, one rejected and one withdrawn (neither blocks
+        // anything), deleted again at the end together with their history
+        const closedApp = async (status) => (await pool.query(
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note)
+             VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check') RETURNING id`,
+            [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: 'SECCHECK', course_name: 'Security check', credits: 1 }]), 'SECCHECK', status]
+        )).rows[0].id;
+        const rejectedOfA = await closedApp('rejected');
+        const withdrawnOfA = await closedApp('withdrawn');
+        tempApplicationIds.push(rejectedOfA, withdrawnOfA);
+        await expect('A withdraws own rejected application', call('PUT', `applications/${rejectedOfA}/withdraw`, { token: A }), 409, 'CANNOT_WITHDRAW');
+        await expect('A withdraws own application a second time', call('PUT', `applications/${withdrawnOfA}/withdraw`, { token: A }), 409, 'CANNOT_WITHDRAW');
+        await expect('Reviewer changes a withdrawn application', call('PUT', `applications/${withdrawnOfA}/status`, { token: R, json: { status: 'approved', note: 'x' } }), 409, 'APPLICATION_WITHDRAWN');
+        const tempStatuses = (await pool.query('SELECT status FROM applications WHERE id = ANY($1) ORDER BY id', [[rejectedOfA, withdrawnOfA]])).rows.map((r) => r.status);
+        report(tempStatuses.join() === 'rejected,withdrawn', 'The refused requests changed nothing', tempStatuses.join(', '));
+        const removedTemp = await removeTempApplications();
+        console.log(`(removed ${removedTemp} temporary application(s))`);
+
+        // The history is append-only in the database itself (tried in a transaction that is rolled back)
+        const hasEvents = (await pool.query('SELECT 1 FROM application_events LIMIT 1')).rows.length > 0;
+        const client = hasEvents ? await pool.connect() : null;
+        if (!client) skip('The database refuses changing a history entry', 'no history entries yet');
+        else try {
+            await client.query('BEGIN');
+            const changed = await client.query('UPDATE application_events SET note = note WHERE id = (SELECT min(id) FROM application_events)')
+                .then(() => 'allowed', (err) => err.message);
+            report(changed.includes('append-only'), 'The database refuses changing a history entry', changed.includes('append-only') ? 'refused' : changed);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -739,8 +826,13 @@ const run = async () => {
     return results.fail === 0;
 };
 
-// Removes this run's rate-limit rows, also after a crash
+// Removes this run's temporary applications and rate-limit rows and puts the drafts back, also after a crash
 const finish = async (ok) => {
+    try {
+        await removeTempApplications();
+    } catch (err) {
+        console.error('Could not remove the temporary applications:', err.message);
+    }
     try {
         await restoreDrafts();
     } catch (err) {
@@ -752,7 +844,6 @@ const finish = async (ok) => {
     } catch (err) {
         console.error('Could not remove this run\'s rate-limit rows:', err.message);
     }
-    // Exits explicitly: db.js keeps its startup test connection open, so the pool never closes by itself
     process.exit(ok ? 0 : 1);
 };
 
