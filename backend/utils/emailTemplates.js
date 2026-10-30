@@ -39,9 +39,9 @@ const statusLabels = {
 
 // Reasons of automatic decisions (stored as codes, see jobs/applicationJobs.js), in the student's language
 const reasons = {
-    hu: { NO_INFO_RESPONSE: 'Nem érkezett válasz az információkérésre.' },
-    en: { NO_INFO_RESPONSE: 'No response to information request.' },
-    de: { NO_INFO_RESPONSE: 'Keine Antwort auf die Informationsanfrage.' },
+    hu: { NO_INFO_RESPONSE: 'Nem érkezett válasz az információkérésre.', SEMESTER_ENDED: 'A kérelmet a félév lezárásáig nem bírálták el.' },
+    en: { NO_INFO_RESPONSE: 'No response to information request.', SEMESTER_ENDED: 'Not reviewed before the semester closed.' },
+    de: { NO_INFO_RESPONSE: 'Keine Antwort auf die Informationsanfrage.', SEMESTER_ENDED: 'Bis zum Semesterende nicht geprüft.' },
 };
 
 // Words shared by every template in a language

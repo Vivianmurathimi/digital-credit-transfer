@@ -39,7 +39,7 @@ const startJobs = () => {
     if (timer) return;
     runOnce();
     timer = setInterval(runOnce, EVERY_MS);
-    console.log(`⏱️  Background jobs running every ${EVERY_MS / 60000} minutes (deadline reminders, overdue information requests).`);
+    console.log(`⏱️  Background jobs running every ${EVERY_MS / 60000} minutes (semester end, deadline reminders, overdue information requests).`);
 };
 
 module.exports = { startJobs };

@@ -24,14 +24,19 @@ const minioClient = require('../minio');
 const { listPendingMigrations } = require('../utils/migrations');
 const { normalizeCourseCode } = require('../utils/applicationForm');
 const { addEvent } = require('../utils/applicationEvents');
-const { createSemester } = require('../utils/semesters');
+const { createSemester, adoptIntoSemester } = require('../utils/semesters');
 
 // A current semester for development: applications open from 30 days ago until 30 days from
-// now, ending in 90 days (Budapest days). Kept if one is already current; if the dates would
-// overlap a semester created by hand, nothing is created and the seed says so.
+// now, ending in 90 days (Budapest days). Kept if one is already current (courses and
+// applications without a semester still join it); if the dates would overlap a semester created
+// by hand, nothing is created and the seed says so.
 const ensureDevSemester = async () => {
     const current = await pool.query('SELECT id, name FROM semester_bounds WHERE opens_at <= now() AND ends_at > now()');
-    if (current.rows.length > 0) return current.rows[0].id;
+    if (current.rows.length > 0) {
+        const { adoptedCourses, adoptedApplications } = await adoptIntoSemester(pool, current.rows[0].id);
+        if (adoptedCourses || adoptedApplications) console.log(`Added to "${current.rows[0].name}": ${adoptedCourses} course(s), ${adoptedApplications} application(s) without a semester.`);
+        return current.rows[0].id;
+    }
     const days = (await pool.query(
         `SELECT d::text AS today, (d - 30)::text AS apply_from, (d + 30)::text AS apply_until, (d + 90)::text AS ends
          FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t`

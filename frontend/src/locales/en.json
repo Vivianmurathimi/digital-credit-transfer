@@ -130,6 +130,7 @@
   "student_tab_submit": "New Application",
   "student_my_applications": "My Applications",
   "student_no_applications": "No applications submitted yet.",
+  "student_no_applications_this_semester": "No applications in this semester yet.",
   "student_add_missing_info": "Add Missing Info",
   "student_status_pending": "Under review",
   "student_status_needs_info": "Information needed",
@@ -173,6 +174,10 @@
   "student_event_files": "Files added:",
   "student_event_backfilled": "Rebuilt from older records: the exact time and any earlier notes are not known.",
   "student_reason_NO_INFO_RESPONSE": "No response to information request.",
+  "student_previous_semesters": "Previous semesters ({{count}})",
+  "student_previous_read_only": "Applications from earlier semesters can only be viewed.",
+  "student_before_semesters": "Before semesters were introduced",
+  "student_reason_SEMESTER_ENDED": "Not reviewed before the semester closed.",
   "student_respond_by": "Respond by {{date}}",
   "student_deadline_soon": "Less than a day left to respond.",
   "student_deadline_passed": "The deadline for replying has passed. The application will be rejected automatically.",
@@ -403,7 +408,8 @@
     "APPLICATION_WITHDRAWN": "The student has withdrawn this application, so it can no longer be changed.",
     "INFO_DEADLINE_PASSED": "The deadline for replying has passed, so the information can no longer be added.",
     "NO_APPLICATION_PERIOD": "There is no open application period right now.",
-    "APPLICATION_PERIOD_NOT_STARTED": "The application period has not started yet."
+    "APPLICATION_PERIOD_NOT_STARTED": "The application period has not started yet.",
+    "SEMESTER_ENDED": "The semester has ended, so the application can no longer be changed."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",

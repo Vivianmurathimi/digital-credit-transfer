@@ -36,6 +36,8 @@ const formatDateTime = (date) => (date
     : '—');
 const statusLabel = (status) => STATUS_LABELS[status] || status || '—';
 const statusColor = (status) => COLORS.status[status] || COLORS.text;
+// An application the system closed at the semester end is listed as not reviewed (still counted as rejected)
+const appStatusLabel = (app) => (app.notReviewedBySemesterEnd ? 'Not reviewed before semester close' : statusLabel(app.status));
 const contentWidth = (doc) => doc.page.width - 2 * MARGIN;
 const currentPageIndex = (doc) => {
     const range = doc.bufferedPageRange();
@@ -138,7 +140,7 @@ const drawIndex = (doc, data, firstIndexPage, startPages) => {
             doc.font('Body').fontSize(11).fillColor(COLORS.muted).text('No applications were submitted in this period.', MARGIN, y + 6);
         }
         pageApps.forEach((app) => {
-            drawRow([app.id, app.student.name, formatDateTime(app.submittedAt), statusLabel(app.status), startPages[app.id] + 1], y,
+            drawRow([app.id, app.student.name, formatDateTime(app.submittedAt), appStatusLabel(app), startPages[app.id] + 1], y,
                 { colors: [null, null, null, statusColor(app.status)] });
             y += INDEX_ROW_HEIGHT;
         });
@@ -148,7 +150,7 @@ const drawIndex = (doc, data, firstIndexPage, startPages) => {
 const drawApplication = (doc, app, evidenceResults) => {
     // Title + status
     doc.font('Bold').fontSize(18).fillColor(COLORS.brand).text(`Application #${app.id}`, MARGIN, MARGIN);
-    doc.font('Bold').fontSize(12).fillColor(statusColor(app.status)).text(statusLabel(app.status).toUpperCase());
+    doc.font('Bold').fontSize(12).fillColor(statusColor(app.status)).text(appStatusLabel(app).toUpperCase());
 
     heading(doc, 'Student');
     detailRows(doc, [
@@ -159,7 +161,7 @@ const drawApplication = (doc, app, evidenceResults) => {
 
     heading(doc, 'Decision');
     detailRows(doc, [
-        ['Status', statusLabel(app.status), statusColor(app.status)],
+        ['Status', appStatusLabel(app), statusColor(app.status)],
         ['Reviewed by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email})` : '—'],
         ['Decision date', formatDateTime(app.reviewedAt)],
     ]);

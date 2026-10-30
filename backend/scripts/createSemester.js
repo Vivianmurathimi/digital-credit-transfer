@@ -6,7 +6,8 @@
  * Days are calendar days in Budapest: students can submit from 00:00 on --apply-from until
  * 23:59:59 on --apply-until; after --ends, unreviewed applications are rejected automatically.
  * Refuses invalid days, days out of order and overlaps with another semester.
- * Courses that belong to no semester yet are added to the new one.
+ * Courses that belong to no semester yet are added to the new one, and so are applications
+ * without a semester that were submitted during it.
  */
 process.env.DOTENV_CONFIG_QUIET = 'true';
 require('dotenv').config();
@@ -28,11 +29,11 @@ const main = async () => {
     const pending = await listPendingMigrations();
     if (pending.length > 0) throw new Error(`pending migrations (${pending.join(', ')}). Run "npm run migrate" first.`);
     const args = readArgs(process.argv.slice(2));
-    const { id, adoptedCourses } = await createSemester(pool, {
+    const { id, adoptedCourses, adoptedApplications } = await createSemester(pool, {
         name: args.name, applyFrom: args['apply-from'], applyUntil: args['apply-until'], ends: args.ends,
     });
     console.log(`Semester "${args.name.trim()}" created (id ${id}): applications ${args['apply-from']} to ${args['apply-until']}, ends ${args.ends} (Budapest time).`);
-    console.log(`Courses without a semester added to it: ${adoptedCourses}.`);
+    console.log(`Courses without a semester added to it: ${adoptedCourses}. Applications without a semester submitted during it: ${adoptedApplications}.`);
 };
 
 main()

@@ -134,6 +134,9 @@ const expect = async (name, request, status, code) => {
 };
 
 // Test tokens (never printed)
+// The semester students apply in now: the current one, or before it starts the coming one (SQL, Group 3)
+const SEMESTER_NOW = '(SELECT id FROM semester_bounds WHERE ends_at > now() ORDER BY opens_at LIMIT 1)';
+
 // Whether students can submit now: the semester's application period and the admin toggle (Group 3);
 // an older backend only sends the toggle
 const canSubmitNow = (settings) => (settings.body?.submission ? settings.body.submission.canSubmit === true : settings.body?.isOpen === true);
@@ -293,7 +296,7 @@ const run = async () => {
                 "SELECT target_course_code FROM applications WHERE student_id = $1 AND status = ANY($2) AND target_course_code IS NOT NULL",
                 [d.studentA.id, ['pending', 'needs_info', 'approved']]
             )).rows.map((r) => r.target_course_code));
-            const ownWithCodes = (await pool.query('SELECT id, course_code FROM courses WHERE programme_id = $1 ORDER BY id', [d.studentA.programme_id])).rows;
+            const ownWithCodes = (await pool.query(`SELECT id, course_code FROM courses WHERE programme_id = $1 AND semester_id = ${SEMESTER_NOW} ORDER BY id`, [d.studentA.programme_id])).rows;
             const ownCourses = [
                 ...ownWithCodes.filter((c) => !appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
                 ...ownWithCodes.filter((c) => appliedByA.has(c.course_code.replace(/\s/g, '').toUpperCase())),
@@ -497,9 +500,10 @@ const run = async () => {
     report(meA.body?.user && extraFields.length === 0, '/me returns no password, tokens or other hidden fields', extraFields.length ? `extra: ${extraFields.join(', ')}` : 'only name, email, role, Neptun code, programme');
     report((meA.headers.get('cache-control') || '').includes('no-store'), '/me is sent with Cache-Control: no-store', meA.headers.get('cache-control') || 'missing');
 
-    // Course list: a student only ever sees their own programme's courses
+    // Course list: a student only ever sees their own programme's courses, of the current
+    // (or coming) semester (Group 3)
     const courseIdsOf = async (programmeId) => (await pool.query(
-        'SELECT id FROM courses WHERE programme_id = $1 ORDER BY id', [programmeId]
+        `SELECT id FROM courses WHERE programme_id = $1 AND semester_id = ${SEMESTER_NOW} ORDER BY id`, [programmeId]
     )).rows.map((c) => c.id);
     const idsIn = (res) => (res.body?.courses || []).map((c) => c.id).sort((x, y) => x - y);
     const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
@@ -662,7 +666,8 @@ const run = async () => {
     } else {
         // Only the fields a student may see: an explicit list, never internal columns
         const STUDENT_FIELDS = ['decided_at', 'decided_by', 'decision_reason', 'fulfilled_courses_json', 'id', 'info_deadline', 'last_resubmitted_at',
-            'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses'];
+            'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
+            'semester_name', 'current_semester'];
         const listB = await call('GET', 'applications/mine', { token: B });
         const extraFields = [...new Set((listB.body?.applications || []).flatMap((app) => Object.keys(app)))].filter((k) => !STUDENT_FIELDS.includes(k));
         report(listB.status === 200 && extraFields.length === 0, 'My applications list has no internal fields (reviewed_by, student_id, ...)', extraFields.join(', ') || 'none extra');

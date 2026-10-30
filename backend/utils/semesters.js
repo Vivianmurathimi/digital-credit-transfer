@@ -78,10 +78,26 @@ const isDay = (value) => {
 };
 
 /**
+ * Courses without a semester join this one, and so do applications without one that were
+ * submitted during it (created_at is stored as UTC without a time zone). Safe to run again.
+ * @returns {Promise<{ adoptedCourses: number, adoptedApplications: number }>}
+ */
+const adoptIntoSemester = async (db, semesterId) => {
+    const courses = await db.query('UPDATE courses SET semester_id = $1 WHERE semester_id IS NULL', [semesterId]);
+    const applications = await db.query(
+        `UPDATE applications a SET semester_id = b.id FROM semester_bounds b
+         WHERE b.id = $1 AND a.semester_id IS NULL
+           AND a.created_at AT TIME ZONE 'UTC' >= b.opens_at AND a.created_at AT TIME ZONE 'UTC' < b.ends_at`,
+        [semesterId]
+    );
+    return { adoptedCourses: courses.rowCount, adoptedApplications: applications.rowCount };
+};
+
+/**
  * Creates a semester (used by npm run semester:create and the dev seed). Courses that belong to
- * no semester yet are added to it. Refuses missing or invalid days, days out of order, a name
+ * no semester yet are added to it, and so are applications without one submitted during it. Refuses missing or invalid days, days out of order, a name
  * that exists and an overlap with another semester, each with a message saying what is wrong.
- * @returns {Promise<{ id: number, adoptedCourses: number }>}
+ * @returns {Promise<{ id: number, adoptedCourses: number, adoptedApplications: number }>}
  */
 const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 50) throw new Error('The name is missing or longer than 50 characters.');
@@ -96,8 +112,7 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
             'INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, $2, $3, $4) RETURNING id',
             [name.trim(), applyFrom, applyUntil, ends]
         );
-        const adopted = await db.query('UPDATE courses SET semester_id = $1 WHERE semester_id IS NULL', [rows[0].id]);
-        return { id: rows[0].id, adoptedCourses: adopted.rowCount };
+        return { id: rows[0].id, ...(await adoptIntoSemester(db, rows[0].id)) };
     } catch (err) {
         if (err.code === '23505') throw new Error(`A semester called "${name.trim()}" already exists.`);
         if (err.code === '23P01') {
@@ -112,4 +127,4 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
     }
 };
 
-module.exports = { getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, SUBMITTING_STATES };
+module.exports = { getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };

@@ -10,9 +10,10 @@ const inTransaction = require('../utils/transaction');
 // at the same moment can't both act on the same application: the second finds nothing to do.
 // Emails go out after the change is saved; a failed email is logged and never undoes it.
 //
-// Every step takes { now, notify, only }: `now` is the time to compare against (a fixed time in the
-// tests, the real time otherwise), `notify` sends the student email (notifyStudent by default),
-// and `only` (tests only) limits the step to these application ids, so a test never touches real data.
+// Every step takes { now, notify, only, onlyDraftsOf }: `now` is the time to compare against (a fixed
+// time in the tests, the real time otherwise), `notify` sends the student email (notifyStudent by
+// default), and `only` / `onlyDraftsOf` (tests only) limit the step to these application ids and
+// these students' drafts, so a test never touches real data.
 
 const REMINDER_BEFORE = '24 hours';
 
@@ -20,6 +21,7 @@ const REMINDER_BEFORE = '24 hours';
 // text is stored as the reviewer note (for the reviewer screen, admin screen and term book)
 const REJECTION_REASONS = {
     NO_INFO_RESPONSE: 'No response to information request.',
+    SEMESTER_ENDED: 'Not reviewed before the semester closed.',
 };
 
 // Sends each email on its own, so one failure never stops the others
@@ -93,8 +95,32 @@ const rejectOverdueInfoRequests = ({ now, notify, only }) => rejectAutomatically
     condition: "status = 'needs_info' AND info_deadline <= $1",
 });
 
-// The steps of one run, in order. Group 3 adds its semester-end step here.
+/**
+ * Semester end (Group 3): applications still under review or waiting for information when their
+ * semester ended are rejected as "System" with SEMESTER_ENDED, and drafts last saved before the
+ * latest semester end are deleted (the new semester starts with an empty form). Both are
+ * conditional on the end having passed, so running again, or after a restart, changes nothing.
+ * Applications from before semesters (no semester) are never touched here.
+ */
+const closeEndedSemesters = async ({ now, notify, only = null, onlyDraftsOf = null }) => {
+    const rejected = await rejectAutomatically({
+        now, notify, only, reasonCode: 'SEMESTER_ENDED',
+        condition: "status IN ('pending', 'needs_info') AND semester_id IN (SELECT id FROM semester_bounds WHERE ends_at <= $1)",
+    });
+    const drafts = await pool.query(
+        `DELETE FROM application_drafts
+         WHERE updated_at < (SELECT max(ends_at) FROM semester_bounds WHERE ends_at <= $1)
+           AND ($2::int[] IS NULL OR student_id = ANY($2))`,
+        [now, onlyDraftsOf]
+    );
+    if (drafts.rowCount > 0) console.log(`⏱️  Background job, semester end: ${drafts.rowCount} draft(s) deleted`);
+    return rejected;
+};
+
+// The steps of one run, in order. The semester end comes first, so an application whose semester
+// ended is closed with that reason even if its reply deadline passed at the same time.
 const STEPS = [
+    ['semester end', closeEndedSemesters],
     ['deadline reminders', sendDeadlineReminders],
     ['overdue information requests', rejectOverdueInfoRequests],
 ];
@@ -103,11 +129,11 @@ const STEPS = [
  * One run of every step. A failing step is logged and the next one still runs.
  * @returns {Promise<Record<string, number|string>>} what each step did (count, or 'failed')
  */
-const runApplicationJobs = async ({ now = new Date(), notify = notifyStudent, only = null } = {}) => {
+const runApplicationJobs = async ({ now = new Date(), notify = notifyStudent, only = null, onlyDraftsOf = null } = {}) => {
     const results = {};
     for (const [name, step] of STEPS) {
         try {
-            results[name] = await step({ now, notify, only });
+            results[name] = await step({ now, notify, only, onlyDraftsOf });
             if (results[name] > 0) console.log(`⏱️  Background job, ${name}: ${results[name]}`);
         } catch (err) {
             results[name] = 'failed';
@@ -117,4 +143,4 @@ const runApplicationJobs = async ({ now = new Date(), notify = notifyStudent, on
     return results;
 };
 
-module.exports = { runApplicationJobs, sendDeadlineReminders, rejectOverdueInfoRequests, rejectAutomatically, REJECTION_REASONS };
+module.exports = { runApplicationJobs, sendDeadlineReminders, rejectOverdueInfoRequests, closeEndedSemesters, rejectAutomatically, REJECTION_REASONS };

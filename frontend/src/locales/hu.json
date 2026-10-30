@@ -130,6 +130,7 @@
   "student_tab_submit": "Új kérelem",
   "student_my_applications": "Kérelmeim",
   "student_no_applications": "Még nem nyújtott be kérelmet.",
+  "student_no_applications_this_semester": "Ebben a félévben még nem nyújtott be kérelmet.",
   "student_add_missing_info": "Hiányzó információ hozzáadása",
   "student_status_pending": "Elbírálás alatt",
   "student_status_needs_info": "Kiegészítés szükséges",
@@ -173,6 +174,10 @@
   "student_event_files": "Csatolt fájlok:",
   "student_event_backfilled": "Régebbi adatokból helyreállítva: a pontos időpont és a korábbi üzenetek nem ismertek.",
   "student_reason_NO_INFO_RESPONSE": "Nem érkezett válasz az információkérésre.",
+  "student_previous_semesters": "Korábbi félévek ({{count}})",
+  "student_previous_read_only": "A korábbi félévek kérelmei csak megtekinthetők.",
+  "student_before_semesters": "A félévek bevezetése előtt",
+  "student_reason_SEMESTER_ENDED": "A kérelmet a félév lezárásáig nem bírálták el.",
   "student_respond_by": "Válaszhatáridő: {{date}}",
   "student_deadline_soon": "Kevesebb mint egy napja maradt a válaszra.",
   "student_deadline_passed": "A válaszhatáridő lejárt. A kérelmet a rendszer automatikusan elutasítja.",
@@ -403,7 +408,8 @@
     "APPLICATION_WITHDRAWN": "A hallgató visszavonta ezt a kérelmet, ezért már nem módosítható.",
     "INFO_DEADLINE_PASSED": "A válaszhatáridő lejárt, ezért a kiegészítés már nem küldhető be.",
     "NO_APPLICATION_PERIOD": "Jelenleg nincs nyitott jelentkezési időszak.",
-    "APPLICATION_PERIOD_NOT_STARTED": "A jelentkezési időszak még nem kezdődött el."
+    "APPLICATION_PERIOD_NOT_STARTED": "A jelentkezési időszak még nem kezdődött el.",
+    "SEMESTER_ENDED": "A félév véget ért, ezért a kérelem már nem módosítható."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",

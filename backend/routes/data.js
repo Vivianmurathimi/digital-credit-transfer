@@ -5,6 +5,7 @@ const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
 const { COUNTRY_CODES } = require('../utils/countries');
+const { getSubmissionState } = require('../utils/semesters');
 
 // Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
 // Superadmin only: it lists every student's and reviewer's name and email.
@@ -140,18 +141,21 @@ router.get('/countries', (req, res) => {
 // PTE target courses for the application form.
 // Students get only their own programme's courses: the programme is read from the database
 // for the id in the checked token, never from the request (any query is ignored).
+// And only the current semester's (or, before it starts, the coming one's); between semesters
+// none (Group 3). Courses from before semesters (no semester) are never offered.
 // Reviewers and the superadmin still get every course for now (also used while the superadmin
 // impersonates a student); the reviewer and admin rounds can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
+        const semester = req.user.role === 'student' ? (await getSubmissionState()).semester : null;
         const result = req.user.role === 'student'
             ? await pool.query(
                 `SELECT c.id, c.course_code, c.course_name, c.credits
                  FROM courses c
                  JOIN users u ON u.programme_id = c.programme_id
-                 WHERE u.id = $1
+                 WHERE u.id = $1 AND c.semester_id = $2
                  ORDER BY c.course_code`,
-                [req.user.id]
+                [req.user.id, semester ? semester.id : null]
             )
             : await pool.query('SELECT id, course_code, course_name, credits FROM courses ORDER BY course_code');
         res.json({ success: true, courses: result.rows });
