@@ -43,7 +43,7 @@ const Dashboard = () => {
             </div>
 
             {role === 'superadmin' && !impersonating && <SuperAdminDashboard userId={userId} />}
-            {role === 'reviewer' && <ReviewerDashboard />}
+            {role === 'reviewer' && <ReviewerDashboard userId={userId} isImpersonating={impersonating} />}
             {role === 'student' && <StudentDashboard userId={userId} isImpersonating={impersonating} />}
         </div>
     );

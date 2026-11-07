@@ -213,6 +213,7 @@ const buildEmail = (type, lang, data) => {
 
 // Account emails (Group 10): the verification link after registering and the password reset link.
 // Sent in the language chosen when registering / the account's saved language.
+// reviewerInvite (reviewer Group 2): the superadmin's invitation, in the language chosen for it.
 const accountTemplates = {
     hu: {
         verifyAccount: {
@@ -228,6 +229,13 @@ const accountTemplates = {
             text: 'Jelszó-visszaállítást kért PTE Kreditátviteli fiókjához. Új jelszó beállításához kattintson az alábbi gombra. A link 1 óráig érvényes.',
             button: 'Jelszó visszaállítása',
             footer: 'Ha nem Ön kérte, hagyja figyelmen kívül ezt az e-mailt.',
+        },
+        reviewerInvite: {
+            subject: 'Meghívó bírálónak – PTE Kreditátvitel',
+            heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
+            text: (programme) => `Meghívást kapott a(z) ${programme} szak bírálójának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
+            button: 'Meghívó elfogadása',
+            footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
     },
     en: {
@@ -245,6 +253,13 @@ const accountTemplates = {
             button: 'Reset password',
             footer: 'If you did not ask for this, you can ignore this email.',
         },
+        reviewerInvite: {
+            subject: 'Reviewer invitation – PTE Credit Transfer',
+            heading: 'Invitation to the PTE Credit Transfer System',
+            text: (programme) => `You have been invited to be the reviewer for the ${programme} programme. Click the button below to set your password and activate your account.`,
+            button: 'Accept invitation',
+            footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
     },
     de: {
         verifyAccount: {
@@ -261,29 +276,37 @@ const accountTemplates = {
             button: 'Passwort zurücksetzen',
             footer: 'Falls Sie dies nicht angefordert haben, können Sie diese E-Mail ignorieren.',
         },
+        reviewerInvite: {
+            subject: 'Einladung als Gutachter – PTE-Kreditübertragung',
+            heading: 'Einladung zum PTE-Kreditübertragungssystem',
+            text: (programme) => `Sie wurden als Gutachter für den Studiengang ${programme} eingeladen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.`,
+            button: 'Einladung annehmen',
+            footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
     },
 };
 
 /**
  * Builds an account email with its link button.
- * @param {'verifyAccount'|'resetPassword'} type
+ * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'} type
  * @param {string} lang  falls back to Hungarian
- * @param {{ url: string }} data
+ * @param {{ url: string, programme?: string }} data  programme: the programme's name (reviewer invite)
  * @returns {{ subject: string, html: string }}
  */
-const buildAccountEmail = (type, lang, { url }) => {
+const buildAccountEmail = (type, lang, { url, programme = '' }) => {
     const language = normalizeLanguage(lang);
     const words = accountTemplates[language][type];
     const link = escapeHtml(url);
     const color = type === 'resetPassword' ? '#dc3545' : '#004085';
-    // The verification email shows the link as text too; the reset email says what to do if unrequested
-    const footer = type === 'verifyAccount'
-        ? `<p>${escapeHtml(words.footer)}<br/>${link}</p>`
-        : `<p>${escapeHtml(words.footer)}</p>`;
+    const text = typeof words.text === 'function' ? words.text(programme) : words.text;
+    // The verification and invite emails show the link as text too; the reset email says what to do if unrequested
+    const footer = type === 'resetPassword'
+        ? `<p>${escapeHtml(words.footer)}</p>`
+        : `<p>${escapeHtml(words.footer)}<br/>${link}</p>`;
     const html = `
         <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
             <h2>${escapeHtml(words.heading)}</h2>
-            <p>${escapeHtml(words.text)}</p>
+            <p>${escapeHtml(text)}</p>
             <a href="${link}" style="background-color: ${color}; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">${escapeHtml(words.button)}</a>
             ${footer}
         </div>`;

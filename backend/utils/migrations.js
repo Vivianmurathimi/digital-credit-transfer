@@ -37,6 +37,9 @@ const runPendingMigrations = async () => {
     await ensureMigrationsTable();
     const client = await pool.connect();
     const done = [];
+    // A migration can report what it changed with RAISE NOTICE; show it in the terminal
+    const showNotice = (msg) => console.log(msg.message);
+    client.on('notice', showNotice);
     try {
         await client.query("SELECT pg_advisory_lock(hashtext('schema_migrations'))");
         const applied = new Set((await client.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
@@ -56,6 +59,7 @@ const runPendingMigrations = async () => {
         }
     } finally {
         await client.query("SELECT pg_advisory_unlock(hashtext('schema_migrations'))").catch(() => {});
+        client.removeListener('notice', showNotice);
         client.release();
     }
     return done;

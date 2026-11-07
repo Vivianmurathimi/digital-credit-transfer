@@ -9,6 +9,7 @@ const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
+const { programmeScopeOf, lockProgramme, resolveReviewerView } = require('../utils/reviewers');
 const { sendValidationErrors } = sendError;
 const {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
@@ -99,10 +100,14 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // The application and the first step of its history are saved together
         const studentNote = normalizeNote(student_note);
         const inserted = await inTransaction(async (client) => {
+            // The programme's active reviewer gets it (or nobody while the programme has none).
+            // The lock waits for a reviewer change running at this moment (utils/reviewers.js).
+            await lockProgramme(client, programmeId, 'SHARE');
             const { rows } = await client.query(
                 `INSERT INTO applications 
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11) RETURNING id`,
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11,
+                        (SELECT id FROM users WHERE role = 'reviewer' AND reviewer_deactivated_at IS NULL AND programme_id = $2)) RETURNING id`,
                 [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: 'student', actorId: student_id, status: 'pending', note: studentNote });
@@ -153,13 +158,14 @@ router.get('/applications/mine/:id', verifyToken, requireRole('student'), async 
 });
 
 // One student's applications as that student sees them, for reviewers and the superadmin
-// (the impersonation view shows the student's own screen)
+// (the impersonation view shows the student's own screen). A reviewer gets only the ones in
+// their own programme (reviewer Group 2).
 router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const requestedId = Number(req.params.id);
     if (!Number.isSafeInteger(requestedId)) return res.json({ success: true, applications: [] });
 
     try {
-        res.json({ success: true, applications: await listStudentApplications(pool, requestedId) });
+        res.json({ success: true, applications: await listStudentApplications(pool, requestedId, programmeScopeOf(req.user)) });
     } catch (err) {
         console.error('❌ Fetch student apps error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
@@ -171,7 +177,7 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
     const requestedId = Number(req.params.id);
     try {
         const application = Number.isSafeInteger(requestedId)
-            ? await getStudentApplication(pool, requestedId, req.params.applicationId)
+            ? await getStudentApplication(pool, requestedId, req.params.applicationId, programmeScopeOf(req.user))
             : null;
         if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
         res.json({ success: true, application });
@@ -182,11 +188,20 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
 });
 
 
+// Every application a reviewer may see: only their own programme's (reviewer Group 2).
+// The superadmin sees every programme; ?as_reviewer=<user id> (while impersonating a reviewer)
+// shows only that reviewer's programme. That is a view filter only: the superadmin's decisions
+// are still made, and stored, as "admin".
 router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
-
     try {
+        const view = await resolveReviewerView(pool, req, { allowAll: true });
+        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
+        const programmeId = view.all ? null : view.reviewer.programme_id;
         const result = await pool.query(
-            `SELECT a.*, u.name as student_name FROM applications a JOIN users u ON a.student_id=u.id ORDER BY a.created_at DESC`
+            `SELECT a.*, u.name as student_name FROM applications a JOIN users u ON a.student_id=u.id
+             WHERE ($1::int IS NULL OR a.programme_id = $1)
+             ORDER BY a.created_at DESC`,
+            [programmeId]
         );
         res.json({ success: true, applications: result.rows });
     } catch (err) {
@@ -212,7 +227,12 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
         let updated;
         try {
             updated = await inTransaction(async (client) => {
-                const current = await client.query('SELECT status, reviewer_note FROM applications WHERE id=$1 FOR UPDATE', [id]);
+                // A reviewer can only change their own programme's applications; any other id is
+                // "not found", exactly like one that doesn't exist (reviewer Group 2)
+                const current = await client.query(
+                    'SELECT status, reviewer_note FROM applications WHERE id=$1 AND ($2::int IS NULL OR programme_id = $2) FOR UPDATE',
+                    [id, programmeScopeOf(req.user)]
+                );
                 if (current.rows.length === 0) return null;
                 const previous = current.rows[0];
                 // The student withdrew it: it is closed for good

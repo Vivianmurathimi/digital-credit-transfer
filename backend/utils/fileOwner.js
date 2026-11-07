@@ -36,8 +36,36 @@ const findFilesNotOwnedBy = async (fileNames, userId) => {
     return notOwned;
 };
 
+/**
+ * Whether an application of this programme refers to the file (reviewer Group 2: a reviewer may
+ * open only their own programme's files). Every place an application can name a file:
+ *   1. fulfilled_courses_json[*].file           the transcript of each fulfilled course
+ *   2. fulfilled_courses_json[*].syllabus_file  its syllabus
+ *   3. institutions[*].grading_file             each institution's grading system
+ *   4. supplemental_files                       the old comma-separated list of reply files
+ *   5. application_events.files                 files the student added with a reply
+ * @param {{ query: Function }} db
+ * @returns {Promise<boolean>}
+ */
+const isFileInProgramme = async (db, fileName, programmeId) => {
+    const { rows } = await db.query(
+        `SELECT 1 FROM applications a
+         WHERE a.programme_id = $2 AND (
+               EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]'::jsonb END) c
+                       WHERE c->>'file' = $1 OR c->>'syllabus_file' = $1)
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.institutions) = 'array' THEN a.institutions ELSE '[]'::jsonb END) i
+                       WHERE i->>'grading_file' = $1)
+            OR $1 = ANY (string_to_array(replace(COALESCE(a.supplemental_files, ''), ' ', ''), ','))
+            OR EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND $1 = ANY (e.files))
+         )
+         LIMIT 1`,
+        [fileName, programmeId]
+    );
+    return rows.length > 0;
+};
+
 // "a.png,b.png," -> ['a.png', 'b.png']
 const splitFileList = (value) =>
     String(value || '').split(',').map((name) => name.trim()).filter(Boolean);
 
-module.exports = { getFileOwner, findFilesNotOwnedBy, splitFileList };
+module.exports = { getFileOwner, findFilesNotOwnedBy, isFileInProgramme, splitFileList };

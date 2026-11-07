@@ -67,6 +67,12 @@ router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req
         }
         const targetUser = userResult.rows[0];
 
+        // Becoming or stopping being a reviewer goes through the invite and remove-reviewer routes
+        // (reviewer Group 2), which keep one active reviewer per programme and move the applications
+        if (newRole === 'reviewer' || targetUser.role === 'reviewer') {
+            return sendError(res, 400, 'USE_REVIEWER_INVITE', 'Reviewers are added by invitation and removed with remove-reviewer');
+        }
+
         // Students must have a Neptun code and a programme (database rule). Until the admin
         // round adds a programme picker here, an account without them can't become a student.
         if (newRole === 'student' && targetUser.role !== 'student' && (!targetUser.neptun_code || !targetUser.programme_id)) {

@@ -8,8 +8,10 @@
  * (also every withdraw request: only refused ones are sent). Section 4d adds two temporary
  * applications of student A (rejected, withdrawn) and deletes them again; section 4e moves the
  * current semester's days, adds a temporary past semester with two applications of A, and puts
- * everything back,
- * so the check changes no data and sends no emails. The only exception: the rate-limit
+ * everything back. Section 4f (reviewer access) adds temporary applications, invites and reviewer
+ * accounts, deactivates the test reviewer for a moment, and puts everything back; its few invite
+ * emails go only to @security-check.invalid addresses (caught by Mailtrap). Otherwise
+ * the check changes no data and sends no emails. The only exception: the rate-limit
  * checks add rows to rate_limit_hits, and the script deletes exactly those rows at the end
  * (otherwise this computer would stay rate-limited for an hour). Test tokens are signed locally with
  * JWT_SECRET from backend/.env; neither the secret nor the tokens are ever printed.
@@ -121,6 +123,26 @@ const removeTempApplications = async () => {
     return rowCount;
 };
 
+// ---------- section 4f: reviewer access (put back at the end, also after a crash) ----------
+// The test reviewer (student B's programme's) is deactivated by an accepted test invite and
+// reactivated afterwards; test accounts and invites all use @security-check.invalid addresses.
+const TEST_DOMAIN = '@security-check.invalid';
+let reviewerBackup = null; // { reviewerId, deactivatedAt, programmeId, assignments: [{ id, assigned }] }
+const restoreReviewerAccess = async () => {
+    if (!reviewerBackup) return 'nothing to put back';
+    const b = reviewerBackup;
+    reviewerBackup = null;
+    await pool.query('DELETE FROM reviewer_invites WHERE email LIKE $1', [`%${TEST_DOMAIN}`]);
+    const testUsers = (await pool.query('SELECT id FROM users WHERE email LIKE $1', [`%${TEST_DOMAIN}`])).rows.map((r) => r.id);
+    // Test reviewers off first (one active reviewer per programme), then the real one back
+    await pool.query("UPDATE users SET reviewer_deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
+    await pool.query('UPDATE users SET reviewer_deactivated_at = $2, programme_id = $3 WHERE id = $1', [b.reviewerId, b.deactivatedAt, b.programmeId]);
+    for (const a of b.assignments) await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [a.id, a.assigned]);
+    await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [testUsers]);
+    const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [testUsers]);
+    return `reviewer #${b.reviewerId} active again, ${rowCount} test account(s) and the test invites removed`;
+};
+
 // ---------- small helpers ----------
 
 const results = { pass: 0, fail: 0, skip: 0 };
@@ -199,12 +221,12 @@ const listFileOwners = async () => {
 };
 
 const loadTestData = async () => {
-    const users = (await pool.query('SELECT id, role, email, neptun_code, programme_id FROM users ORDER BY id')).rows;
+    const users = (await pool.query('SELECT id, role, email, name, neptun_code, programme_id, reviewer_deactivated_at FROM users ORDER BY id')).rows;
     const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
-    const reviewer = users.find((u) => u.role === 'reviewer');
+    const activeReviewers = users.filter((u) => u.role === 'reviewer' && !u.reviewer_deactivated_at);
     const admin = users.find((u) => u.role === 'superadmin');
     // Student B: has an application and a tagged file. Student A: another student with a tagged file,
     // preferably in a DIFFERENT programme, so the cross-programme checks can run.
@@ -216,8 +238,15 @@ const loadTestData = async () => {
     const studentA = pair?.a;
     const studentB = pair?.b;
 
+    // Reviewers only see their own programme (reviewer Group 2): "the reviewer" is student B's
+    // programme's reviewer; student A's programme's reviewer (if any) is used for A's applications
+    const reviewer = studentB && activeReviewers.find((u) => u.programme_id === studentB.programme_id);
+    const reviewerOfA = studentA && studentA.programme_id !== studentB?.programme_id
+        ? activeReviewers.find((u) => u.programme_id === studentA.programme_id) || null
+        : null;
+
     const missing = [];
-    if (!reviewer) missing.push('a reviewer account');
+    if (!reviewer) missing.push("an active reviewer for student B's programme");
     if (!admin) missing.push('a superadmin account');
     if (!studentB) missing.push('a student with an application and an uploaded file (student B)');
     if (!studentA) missing.push('a second student with an uploaded file (student A)');
@@ -228,12 +257,14 @@ const loadTestData = async () => {
 
     return {
         reviewer,
+        reviewerOfA,
         admin,
         studentA,
         studentB,
         appOfB: apps.find((a) => a.student_id === studentB.id),
         fileOfB: filesByOwner.get(studentB.id)[0],
         fileOfA: filesByOwner.get(studentA.id)[0],
+        filesOfA: filesByOwner.get(studentA.id),
         goneUser: { id: Math.max(...users.map((u) => u.id)) + 100000, role: 'student' },
         programmeCodes,
     };
@@ -273,6 +304,9 @@ const run = async () => {
         ['GET', 'pte-courses'], ['GET', 'settings/status'], ['PUT', 'settings/toggle'],
         ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'],
         ['POST', 'refresh-token'], ['GET', 'me'],
+        ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
+        ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`],
+        ['GET', 'reviewer/applications'],
     ];
     for (const [method, path] of protectedRoutes) {
         await expect(`${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
@@ -298,6 +332,10 @@ const run = async () => {
     await expect('Reviewer: open/close submissions', call('PUT', 'settings/toggle', { token: R, json: { isOpen: false } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: generate a term book', call('POST', 'archive/generate', { token: R, json: { from: '2025-01-01', to: '2025-06-30' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: upload as a student', call('POST', 'uploads', { token: R }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: invite a reviewer', call('POST', 'users/invite-reviewer', { token: R, json: { email: 'x@security-check.invalid', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: list invites', call('GET', 'users/reviewer-invites', { token: R }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: remove a reviewer', call('PUT', `users/${d.reviewer.id}/remove-reviewer`, { token: R }), 403, 'FORBIDDEN_ROLE');
+    await expect('Student: invite a reviewer', call('POST', 'users/invite-reviewer', { token: A, json: { email: 'x@security-check.invalid', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
     await expect('Superadmin: student-only "my applications"', call('GET', 'applications/mine', { token: S }), 403, 'FORBIDDEN_ROLE');
     await expect('Superadmin: submit an application', call('POST', 'applications', { token: S, json: {} }), 403, 'FORBIDDEN_ROLE');
 
@@ -739,7 +777,9 @@ const run = async () => {
         tempApplicationIds.push(rejectedOfA, withdrawnOfA);
         await expect('A withdraws own rejected application', call('PUT', `applications/${rejectedOfA}/withdraw`, { token: A }), 409, 'CANNOT_WITHDRAW');
         await expect('A withdraws own application a second time', call('PUT', `applications/${withdrawnOfA}/withdraw`, { token: A }), 409, 'CANNOT_WITHDRAW');
-        await expect('Reviewer changes a withdrawn application', call('PUT', `applications/${withdrawnOfA}/status`, { token: R, json: { status: 'approved', note: 'x' } }), 409, 'APPLICATION_WITHDRAWN');
+        // Student A's application: its own programme's reviewer (the admin if that programme has none)
+        await expect(`${d.reviewerOfA ? 'Reviewer' : 'Admin'} changes a withdrawn application`,
+            call('PUT', `applications/${withdrawnOfA}/status`, { token: d.reviewerOfA ? tokenFor(d.reviewerOfA) : S, json: { status: 'approved', note: 'x' } }), 409, 'APPLICATION_WITHDRAWN');
         const tempStatuses = (await pool.query('SELECT status FROM applications WHERE id = ANY($1) ORDER BY id', [[rejectedOfA, withdrawnOfA]])).rows.map((r) => r.status);
         report(tempStatuses.join() === 'rejected,withdrawn', 'The refused requests changed nothing', tempStatuses.join(', '));
         const removedTemp = await removeTempApplications();
@@ -861,6 +901,290 @@ const run = async () => {
         console.log(`(removed ${removedApps} temporary application(s); ${restored})`);
     }
 
+    section('4f. Reviewer access (reviewer Group 2): own programme only, invites, removal');
+    {
+        const programmeOfB = d.studentB.programme_id;
+        const programmeOfA = d.studentA.programme_id;
+        const codeOf = async (programmeId) => (await pool.query('SELECT code FROM programmes WHERE id = $1', [programmeId])).rows[0].code;
+        const codeOfB = await codeOf(programmeOfB);
+        let seq = 0;
+        // A temporary application of student A in the given programme (deleted at the end)
+        const tempApp = async (programmeId, status, fields = {}) => {
+            seq += 1;
+            const code = `SECR${Date.now().toString(36)}${seq}`.toUpperCase();
+            const { rows } = await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                     student_note, supplemental_files, info_requested_at, info_deadline)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, 'Temporary application of the security check', $8,
+                         CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                 RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify(fields.institutions || []), JSON.stringify(fields.courses || []),
+                    JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code, status, fields.supplemental || null]
+            );
+            tempApplicationIds.push(rows[0].id);
+            return rows[0].id;
+        };
+
+        await expect('Register with a staff (@mik.pte.hu) address', call('POST', 'register', { json: { name: 'Staff', email: `nobody.${Date.now()}@mik.pte.hu`, password: 'Whatever123' } }), 403, 'STAFF_BY_INVITATION');
+
+        if (programmeOfA === programmeOfB) {
+            skip('Reviewer sees only their own programme (applications, status, files)', 'students A and B are in the same programme');
+        } else {
+            // --- Applications of another programme: missing from the list, 404 everywhere else
+            const other = await tempApp(programmeOfA, 'rejected');
+            const list = await call('GET', 'applications', { token: R });
+            const programmes = new Set((list.body?.applications || []).map((a) => a.programme_id));
+            report(list.status === 200 && !(list.body.applications || []).some((a) => a.id === other) && [...programmes].every((p) => p === programmeOfB),
+                "Reviewer's list has only their own programme", `${(list.body?.applications || []).length} application(s), programmes ${[...programmes].join(',') || '-'}`);
+            const ofA = await call('GET', `applications/student/${d.studentA.id}`, { token: R });
+            report(ofA.status === 200 && !(ofA.body.applications || []).some((a) => a.programme_id !== programmeOfB),
+                "Reviewer reads another programme's student: none of that programme's applications", `${(ofA.body?.applications || []).length} returned`);
+            await expect("Reviewer opens another programme's application", call('GET', `applications/student/${d.studentA.id}/${other}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
+            await expect("Reviewer changes another programme's application", call('PUT', `applications/${other}/status`, { token: R, json: { status: 'approved', note: 'x' } }), 404, 'APPLICATION_NOT_FOUND');
+            const after = (await pool.query('SELECT status, decided_by FROM applications WHERE id = $1', [other])).rows[0];
+            report(after.status === 'rejected' && after.decided_by === null, 'The refused change saved nothing', after.status);
+
+            // --- Files: each place an application can name a file. In another programme's application: 404;
+            // the same application moved into the reviewer's programme: 200 (so that place is really checked)
+            const referenced = (await pool.query(
+                `SELECT DISTINCT f FROM applications a, LATERAL (
+                     SELECT c->>'file' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]' END) c
+                     UNION SELECT c->>'syllabus_file' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]' END) c
+                     UNION SELECT i->>'grading_file' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.institutions) = 'array' THEN a.institutions ELSE '[]' END) i
+                     UNION SELECT unnest(string_to_array(replace(COALESCE(a.supplemental_files, ''), ' ', ''), ','))
+                     UNION SELECT unnest(e.files) FROM application_events e WHERE e.application_id = a.id
+                 ) x(f) WHERE a.programme_id = $1`, [programmeOfB]
+            )).rows.map((r) => r.f);
+            const freeFile = d.filesOfA.find((f) => !referenced.includes(f));
+            if (!freeFile) skip("Reviewer opens another programme's files", "every file of student A is in an application of the reviewer's programme");
+            else {
+                const fileUrl = `uploads/${encodeURIComponent(freeFile)}`;
+                await expect("Reviewer opens a file no application of their programme names", call('GET', fileUrl, { token: R }), 404, 'FILE_NOT_FOUND');
+                const kinds = [
+                    ['transcript (fulfilled_courses_json[].file)', { courses: [{ course_name: 'x', credits: 1, file: freeFile }] }],
+                    ['syllabus (fulfilled_courses_json[].syllabus_file)', { courses: [{ course_name: 'x', credits: 1, file: null, syllabus_file: freeFile }] }],
+                    ['grading system (institutions[].grading_file)', { institutions: [{ name: 'x', country: 'AT', grading_file: freeFile }] }],
+                    ['old reply file (supplemental_files)', { supplemental: `other.png, ${freeFile},` }],
+                    ['reply file (application_events.files)', { event: true }],
+                ];
+                for (const [kind, fields] of kinds) {
+                    const id = await tempApp(programmeOfA, 'rejected', fields);
+                    if (fields.event) {
+                        await pool.query(
+                            "INSERT INTO application_events (application_id, kind, actor_role, actor_id, status, note, files) VALUES ($1, 'replied', 'student', $2, 'pending', 'Security check', $3)",
+                            [id, d.studentA.id, [freeFile]]
+                        );
+                    }
+                    const outside = await call('GET', fileUrl, { token: R });
+                    await pool.query('UPDATE applications SET programme_id = $2 WHERE id = $1', [id, programmeOfB]);
+                    const inside = await call('GET', fileUrl, { token: R });
+                    report(outside.status === 404 && inside.status === 200, `File as ${kind}: 404 from another programme, 200 from own`, `${outside.status} / ${inside.status}`);
+                    await pool.query('DELETE FROM applications WHERE id = $1', [id]);
+                    tempApplicationIds.splice(tempApplicationIds.indexOf(id), 1);
+                }
+                await expect('Superadmin opens any file', call('GET', fileUrl, { token: S }), 200);
+            }
+
+            // --- The admin impersonating a reviewer: only that reviewer's programme (a view filter)
+            const asReviewer = await call('GET', `applications?as_reviewer=${d.reviewer.id}`, { token: S });
+            const all = await call('GET', 'applications', { token: S });
+            report(asReviewer.status === 200 && (asReviewer.body.applications || []).every((a) => a.programme_id === programmeOfB)
+                && (all.body?.applications || []).some((a) => a.id === other),
+            "Admin viewing as the reviewer sees only that programme (and everything without it)", `${(asReviewer.body?.applications || []).length} of ${(all.body?.applications || []).length}`);
+            await expect('as_reviewer with a non-reviewer id', call('GET', `applications?as_reviewer=${d.studentA.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+            const ignored = await call('GET', `applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
+            report(ignored.status === 200 && !(ignored.body.applications || []).some((a) => a.programme_id !== programmeOfB), 'A reviewer cannot use as_reviewer to see another programme', `${ignored.status}`);
+
+            // --- An admin decision (also while impersonating) is stored as admin. Same status, new
+            // note: a decision is recorded but the status doesn't change, so no email is sent.
+            await expect('Admin changes the decision note', call('PUT', `applications/${other}/status`, { token: S, json: { status: 'rejected', note: 'Admin decision (security check)' } }), 200);
+            const decision = (await pool.query('SELECT decided_by, decided_by_role, decided_at FROM applications WHERE id = $1', [other])).rows[0];
+            report(decision.decided_by_role === 'admin' && decision.decided_by === d.admin.id && decision.decided_at !== null,
+                'The decision is stored as admin, with the date', `${decision.decided_by_role} #${decision.decided_by}`);
+        }
+
+        // --- Invites and the takeover, in student B's programme (the test reviewer is put back at the end)
+        reviewerBackup = {
+            reviewerId: d.reviewer.id, deactivatedAt: d.reviewer.reviewer_deactivated_at, programmeId: d.reviewer.programme_id,
+            assignments: (await pool.query('SELECT id, assigned_reviewer_id AS assigned FROM applications WHERE programme_id = $1', [programmeOfB])).rows,
+        };
+        const stamp = Date.now().toString(36);
+        const newEmail = `invited-${stamp}${TEST_DOMAIN}`;
+        const invite = (json) => call('POST', 'users/invite-reviewer', { token: S, json });
+        const tokenOf = (link) => String(link || '').split('/invite/')[1] || '';
+
+        await expect('Invite: programme already has a reviewer, no replace', invite({ email: newEmail, programme_code: codeOfB }), 409, 'PROGRAMME_HAS_REVIEWER');
+        await expect("Invite: a student's email", invite({ email: d.studentA.email, programme_code: codeOfB, replace: true }), 409, 'EMAIL_TAKEN');
+        await expect("Invite: an active reviewer's email", invite({ email: d.reviewer.email, programme_code: codeOfB, replace: true }), 409, 'EMAIL_TAKEN');
+        await expect('Invite: not an email address', invite({ email: 'not an email', programme_code: codeOfB }), 400, 'INVALID_EMAIL');
+        await expect('Invite: unknown programme', invite({ email: newEmail, programme_code: 'NOPE' }), 400, 'INVALID_PROGRAMME');
+        await expect('Role route: make someone a reviewer', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'reviewer' } }), 400, 'USE_REVIEWER_INVITE');
+        await expect('Role route: change a reviewer\'s role', call('PUT', `users/${d.reviewer.id}/role`, { token: S, json: { newRole: 'student' } }), 400, 'USE_REVIEWER_INVITE');
+
+        const openApp = await tempApp(programmeOfB, 'needs_info');
+        const decidedApp = await tempApp(programmeOfB, 'rejected');
+        await pool.query("UPDATE applications SET assigned_reviewer_id = $2, decided_by = $2, decided_by_role = 'reviewer', decided_at = now() WHERE id = $1", [decidedApp, d.reviewer.id]);
+        await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [openApp, d.reviewer.id]);
+        const deadlineBefore = (await pool.query('SELECT info_deadline FROM applications WHERE id = $1', [openApp])).rows[0].info_deadline;
+
+        const created = await invite({ email: ` ${newEmail.toUpperCase()} `, programme_code: codeOfB, replace: true, language: 'en' });
+        const token1 = tokenOf(created.body?.link);
+        report(created.status === 201 && created.body.invite.email === newEmail && token1.length === 64, 'Invite with replace: created, email lowercased, link returned to the admin', `${created.status}`);
+        const stored = (await pool.query('SELECT row_to_json(i)::text AS row, token_hash FROM reviewer_invites i WHERE email = $1', [newEmail])).rows[0];
+        report(!!stored && !stored.row.includes(token1) && stored.token_hash !== token1 && stored.token_hash.length === 64, 'The invite token is not stored in plain text', 'hash only');
+        const listed = await call('GET', 'users/reviewer-invites', { token: S });
+        report(listed.status === 200 && listed.body.invites.some((i) => i.email === newEmail) && !JSON.stringify(listed.body).includes(stored.token_hash),
+            'Open invites are listed, without token or hash', `${listed.body?.invites?.length} open`);
+
+        await expect('Before acceptance the old reviewer keeps full access', call('GET', 'applications', { token: R }), 200);
+        await expect('The invite link opens', call('GET', `invites/${token1}`), 200);
+        await expect('Accept: password shorter than 8 characters', call('POST', `invites/${token1}/accept`, { json: { name: 'Invited Reviewer', password: 'short' } }), 400, 'PASSWORD_TOO_SHORT');
+        await expect('Accept: no name for a new account', call('POST', `invites/${token1}/accept`, { json: { password: 'LongEnough1' } }), 400, 'MISSING_FIELDS');
+        await expect('Accept the invite', call('POST', `invites/${token1}/accept`, { json: { name: 'Invited Reviewer', password: 'LongEnough1' } }), 200);
+        const newReviewer = (await pool.query('SELECT id, role, programme_id, is_verified, reviewer_deactivated_at FROM users WHERE email = $1', [newEmail])).rows[0];
+        report(newReviewer && newReviewer.role === 'reviewer' && newReviewer.programme_id === programmeOfB && newReviewer.is_verified && !newReviewer.reviewer_deactivated_at,
+            'The new account is an active, verified reviewer of the programme', newReviewer ? `#${newReviewer.id}` : 'missing');
+        await expect('The old reviewer is refused from the next request on', call('GET', 'applications', { token: R }), 401, 'REVIEWER_REMOVED');
+        const moved = (await pool.query('SELECT id, assigned_reviewer_id, decided_by, info_deadline FROM applications WHERE id = ANY($1)', [[openApp, decidedApp]])).rows;
+        const openRow = moved.find((r) => r.id === openApp);
+        const decidedRow = moved.find((r) => r.id === decidedApp);
+        report(openRow.assigned_reviewer_id === newReviewer.id && openRow.info_deadline.getTime() === deadlineBefore.getTime(),
+            'The open (needs_info) application moved to the new reviewer, reply deadline unchanged', `#${openRow.assigned_reviewer_id}`);
+        report(decidedRow.assigned_reviewer_id === d.reviewer.id && decidedRow.decided_by === d.reviewer.id,
+            'The decided application keeps the original reviewer', `#${decidedRow.assigned_reviewer_id}`);
+        await expect('A used invite link is refused', call('POST', `invites/${token1}/accept`, { json: { name: 'Again', password: 'LongEnough1' } }), 410, 'INVITE_INVALID');
+        await expect('An unknown invite link is refused', call('GET', `invites/${'0'.repeat(64)}`), 410, 'INVITE_INVALID');
+        const NR = tokenFor(newReviewer);
+        await expect('The new reviewer reads their list', call('GET', 'applications', { token: NR }), 200);
+
+        // Expired, resent and cancelled links
+        const second = await invite({ email: `second-${stamp}${TEST_DOMAIN}`, programme_code: codeOfB, replace: true });
+        const token2 = tokenOf(second.body?.link);
+        await pool.query("UPDATE reviewer_invites SET expires_at = now() - interval '1 minute' WHERE id = $1", [second.body?.invite?.id]);
+        await expect('An expired invite link', call('GET', `invites/${token2}`), 410, 'INVITE_EXPIRED');
+        await expect('Accepting an expired invite', call('POST', `invites/${token2}/accept`, { json: { name: 'Late', password: 'LongEnough1' } }), 410, 'INVITE_EXPIRED');
+        const resent = await call('POST', `users/reviewer-invites/${second.body?.invite?.id}/resend`, { token: S });
+        const token3 = tokenOf(resent.body?.link);
+        report(resent.status === 200 && token3 && token3 !== token2, 'Resend gives a new link', `${resent.status}`);
+        await expect('The link from before the resend is refused', call('GET', `invites/${token2}`), 410, 'INVITE_INVALID');
+        await expect('The resent link opens', call('GET', `invites/${token3}`), 200);
+        await expect('Cancel the invite', call('DELETE', `users/reviewer-invites/${second.body?.invite?.id}`, { token: S }), 200);
+        await expect('A cancelled invite link is refused', call('GET', `invites/${token3}`), 410, 'INVITE_INVALID');
+        await expect('Cancelling it again', call('DELETE', `users/reviewer-invites/${second.body?.invite?.id}`, { token: S }), 404, 'INVITE_NOT_FOUND');
+
+        // Removing the new reviewer, then inviting the same email again
+        await expect('Remove-reviewer on a student', call('PUT', `users/${d.studentA.id}/remove-reviewer`, { token: S }), 400, 'NOT_A_REVIEWER');
+        await expect('Remove the new reviewer', call('PUT', `users/${newReviewer.id}/remove-reviewer`, { token: S }), 200);
+        await expect('The removed reviewer is refused on the next request', call('GET', 'applications', { token: NR }), 401, 'REVIEWER_REMOVED');
+        await expect('The removed reviewer cannot log in', call('POST', 'login', { json: { email: newEmail, password: 'LongEnough1' } }), 403, 'REVIEWER_REMOVED');
+        const unassigned = (await pool.query('SELECT assigned_reviewer_id FROM applications WHERE id = $1', [openApp])).rows[0].assigned_reviewer_id;
+        report(unassigned === null, 'Their open application has no reviewer now', `${unassigned}`);
+        const again = await call('PUT', `users/${newReviewer.id}/remove-reviewer`, { token: S });
+        report(again.status === 200 && again.body.alreadyRemoved === true, 'Removing again changes nothing', `${again.status}`);
+
+        const reinvite = await invite({ email: newEmail, programme_code: codeOfB });
+        const token4 = tokenOf(reinvite.body?.link);
+        report(reinvite.status === 201, "Re-invite a removed reviewer's email (programme has no active reviewer now)", `${reinvite.status} ${reinvite.code || ''}`);
+        const shown = await call('GET', `invites/${token4}`);
+        report(shown.status === 200 && shown.body.invite.existingName === 'Invited Reviewer', 'The accept page gets the existing name (read-only)', `${shown.body?.invite?.existingName}`);
+        const reaccepted = await call('POST', `invites/${token4}/accept`, { json: { name: 'A Different Name', password: 'AnotherPass2' } });
+        const back = (await pool.query('SELECT id, name, reviewer_deactivated_at FROM users WHERE email = $1', [newEmail])).rows;
+        report(reaccepted.status === 200 && reaccepted.body.reactivated === true && back.length === 1 && back[0].id === newReviewer.id
+            && back[0].name === 'Invited Reviewer' && !back[0].reviewer_deactivated_at,
+        'Re-invite reactivates the same account, name unchanged', `#${back[0]?.id} "${back[0]?.name}"`);
+        await expect('The reactivated reviewer has access again', call('GET', 'applications', { token: NR }), 200);
+        const reassigned = (await pool.query('SELECT assigned_reviewer_id FROM applications WHERE id = $1', [openApp])).rows[0].assigned_reviewer_id;
+        report(reassigned === newReviewer.id, 'The open application is theirs again', `#${reassigned}`);
+
+        const removedApps = await removeTempApplications();
+        const restored = await restoreReviewerAccess();
+        console.log(`(removed ${removedApps} temporary application(s); ${restored})`);
+        await expect('The original reviewer has access again', call('GET', 'applications', { token: R }), 200);
+    }
+
+    section('4g. Reviewer dashboard list (reviewer Group 3): own programme, current semester, no withdrawn');
+    {
+        const programmeOfB = d.studentB.programme_id;
+        const programmeOfA = d.studentA.programme_id;
+        const current = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1')).rows[0];
+        const oldDecisions = (await pool.query("SELECT count(*)::int AS n FROM applications WHERE status IN ('approved', 'rejected') AND decided_at IS NULL")).rows[0].n;
+        console.log(`(decided applications without decision columns, shown as "—": ${oldDecisions})`);
+
+        await expect('Student opens the reviewer list', call('GET', 'reviewer/applications', { token: A }), 403, 'FORBIDDEN_ROLE');
+        await expect('Superadmin without as_reviewer', call('GET', 'reviewer/applications', { token: S }), 400, 'AS_REVIEWER_REQUIRED');
+        await expect('Superadmin with a non-reviewer as_reviewer', call('GET', `reviewer/applications?as_reviewer=${d.studentA.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+
+        if (!current) skip('Reviewer list: semesters, withdrawn and other applications', 'no semester is running now');
+        else {
+            let seq = 0;
+            const temp = async (programmeId, status, semesterId) => {
+                seq += 1;
+                const code = `SECL${Date.now().toString(36)}${seq}`.toUpperCase();
+                const decided = status === 'approved' || status === 'rejected';
+                const { rows } = await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         decided_by_role, decided_at, info_requested_at, info_deadline)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 'admin' END, CASE WHEN $7 THEN now() END,
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                     RETURNING id`,
+                    [d.studentA.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Security check list', credits: 1 }]), code, status, semesterId, decided]
+                );
+                tempApplicationIds.push(rows[0].id);
+                return rows[0].id;
+            };
+            const past = (await pool.query(
+                "INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, '2001-02-01', '2001-02-10', '2001-06-30') RETURNING id",
+                [`Security check past ${Date.now()}`]
+            )).rows[0].id;
+            tempSemesterIds.push(past);
+
+            const open = await temp(programmeOfB, 'pending', current.id);
+            const decidedNow = await temp(programmeOfB, 'approved', current.id);
+            const withdrawn = await temp(programmeOfB, 'withdrawn', current.id);
+            const decidedPast = await temp(programmeOfB, 'rejected', past);
+            const decidedNoSemester = await temp(programmeOfB, 'rejected', null);
+            const otherProgramme = programmeOfA !== programmeOfB ? await temp(programmeOfA, 'pending', current.id) : null;
+            // Submitted 3 days ago, replied yesterday: the reply is the last action
+            await pool.query("UPDATE applications SET created_at = (now() AT TIME ZONE 'UTC') - interval '3 days' WHERE id = $1", [open]);
+            await pool.query(
+                "INSERT INTO application_events (application_id, kind, actor_role, actor_id, status, note, created_at) VALUES ($1, 'replied', 'student', $2, 'pending', 'Security check', now() - interval '1 day')",
+                [open, d.studentA.id]
+            );
+
+            const list = await call('GET', 'reviewer/applications', { token: R });
+            const rows = list.body?.applications || [];
+            const ids = rows.map((r) => r.id);
+            const programmes = ids.length
+                ? (await pool.query('SELECT DISTINCT programme_id FROM applications WHERE id = ANY($1)', [ids])).rows.map((r) => r.programme_id)
+                : [];
+            report(list.status === 200 && list.body.reviewer.id === d.reviewer.id && programmes.every((p) => p === programmeOfB),
+                "Reviewer list: only the reviewer's programme", `${rows.length} row(s), programmes ${programmes.join(',') || '-'}`);
+            if (otherProgramme) report(!ids.includes(otherProgramme), "Another programme's application is not listed", `#${otherProgramme}`);
+            report(ids.includes(open) && ids.includes(decidedNow), 'Open and current-semester decided applications are listed');
+            report(!ids.includes(withdrawn), 'Withdrawn applications are not listed');
+            report(!ids.includes(decidedPast) && !ids.includes(decidedNoSemester), 'Completed shows only the current semester (not an earlier one, not "before semesters")');
+            const completedSemesters = rows.filter((r) => r.status === 'approved' || r.status === 'rejected').map((r) => r.semester_id);
+            report(completedSemesters.every((id) => id === current.id), 'Every completed row is in the current semester', `${completedSemesters.length} completed`);
+            const openRow = rows.find((r) => r.id === open);
+            report(openRow?.other_count === 1, '"Other applications" counts only what the reviewer sees (same programme and semester, not withdrawn)', `${openRow?.other_count}`);
+            report(openRow?.resubmit_count === 1 && openRow?.waiting_days === 1, 'The reply is the last action: Resubmitted, waiting 1 day', `${openRow?.resubmit_count} / ${openRow?.waiting_days}`);
+            const decidedRow = rows.find((r) => r.id === decidedNow);
+            report(decidedRow?.decided_by_role === 'admin' && !!decidedRow?.decided_at, 'A completed row says who decided and when', `${decidedRow?.decided_by_role}`);
+            report(rows.every((r) => !('email' in r) && !('password' in r)), 'No email addresses or passwords in the list');
+
+            const asReviewer = await call('GET', `reviewer/applications?as_reviewer=${d.reviewer.id}`, { token: S });
+            report(asReviewer.status === 200 && asReviewer.body.reviewer.id === d.reviewer.id
+                && JSON.stringify(asReviewer.body.applications.map((r) => r.id)) === JSON.stringify(ids),
+            "Admin impersonating the reviewer gets exactly the reviewer's list and header", `${asReviewer.status}`);
+            const ignored = await call('GET', `reviewer/applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
+            report(ignored.status === 200 && ignored.body.reviewer.id === d.reviewer.id, 'A reviewer cannot use as_reviewer to see another reviewer\'s list', `${ignored.body?.reviewer?.id}`);
+
+            const removedApps = await removeTempApplications();
+            const restored = await restoreSemesters();
+            console.log(`(removed ${removedApps} temporary application(s); ${restored})`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -973,6 +1297,12 @@ const finish = async (ok) => {
         await removeTempApplications();
     } catch (err) {
         console.error('Could not remove the temporary applications:', err.message);
+    }
+    try {
+        const restored = await restoreReviewerAccess();
+        if (restored !== 'nothing to put back') console.log(`(${restored})`);
+    } catch (err) {
+        console.error('Could not put back the reviewer access test data:', err.message);
     }
     try {
         await restoreSemesters();

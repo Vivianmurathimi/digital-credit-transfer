@@ -56,19 +56,25 @@ const STUDENT_APPLICATION_QUERY = `
         ORDER BY e.created_at DESC, e.id DESC LIMIT 1
     ) d ON true`;
 
-const listStudentApplications = async (db, studentId) => (await db.query(
-    `${STUDENT_APPLICATION_QUERY} WHERE a.student_id = $1 ORDER BY a.created_at DESC, a.id DESC`, [studentId]
+// programmeId: only that programme's applications (a reviewer's view); null = all of them
+const listStudentApplications = async (db, studentId, programmeId = null) => (await db.query(
+    `${STUDENT_APPLICATION_QUERY} WHERE a.student_id = $1 AND ($2::int IS NULL OR a.programme_id = $2)
+     ORDER BY a.created_at DESC, a.id DESC`, [studentId, programmeId]
 )).rows;
 
 /**
  * One application with everything the student may see, or null when it isn't this student's
  * (another student's application and an id that doesn't exist give the same answer).
+ * programmeId: null unless it's in that programme (a reviewer's view); null = any programme.
  */
-const getStudentApplication = async (db, studentId, applicationId) => {
+const getStudentApplication = async (db, studentId, applicationId, programmeId = null) => {
     const id = Number(applicationId);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
 
-    const found = await db.query(`${STUDENT_APPLICATION_QUERY} WHERE a.id = $1 AND a.student_id = $2`, [id, studentId]);
+    const found = await db.query(
+        `${STUDENT_APPLICATION_QUERY} WHERE a.id = $1 AND a.student_id = $2 AND ($3::int IS NULL OR a.programme_id = $3)`,
+        [id, studentId, programmeId]
+    );
     if (found.rows.length === 0) return null;
     const application = found.rows[0];
 

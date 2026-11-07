@@ -18,10 +18,11 @@ const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLim
 const NEPTUN_PATTERN = /^[A-Z0-9]{6}$/;
 const normalizeNeptun = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '');
 
-// The role comes from the university email domain
+// The role comes from the university email domain.
+// Staff (@mik.pte.hu) can't register: reviewers are invited by the superadmin (reviewer Group 2).
+const STAFF_DOMAIN = '@mik.pte.hu';
 const roleForEmail = (lowerEmail) => {
     if (lowerEmail.endsWith('@tr.pte.hu')) return 'student';
-    if (lowerEmail.endsWith('@mik.pte.hu')) return 'reviewer';
     if (lowerEmail.endsWith('@adminisztracio.pte.hu')) return 'superadmin';
     return null;
 };
@@ -46,11 +47,14 @@ router.post('/register', async (req, res) => {
 
     try {
         const lowerEmail = email.toLowerCase();
+        if (lowerEmail.trim().endsWith(STAFF_DOMAIN)) {
+            return sendError(res, 403, 'STAFF_BY_INVITATION', 'Staff accounts are created by invitation', { field: 'email' });
+        }
         const assignedRole = roleForEmail(lowerEmail);
         if (!assignedRole) return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
 
         // Students also give their Neptun code and study programme.
-        // Reviewer and admin registration is unchanged: anything sent in these fields is ignored.
+        // Admin registration is unchanged: anything sent in these fields is ignored.
         let neptunCode = null;
         let programmeId = null;
         if (assignedRole === 'student') {
@@ -167,6 +171,12 @@ router.post('/login', async (req, res) => {
 
         const match = await bcrypt.compare(password, user.password);
         if (!match) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
+
+        // A removed reviewer keeps the account (their name stays on their decisions) but can't log in.
+        // Checked after the password, so it tells nothing to someone who doesn't know it.
+        if (user.role === 'reviewer' && user.reviewer_deactivated_at) {
+            return sendError(res, 403, 'REVIEWER_REMOVED', 'Your reviewer access has been removed');
+        }
 
         // 30-minute token, renewed by /refresh-token while the user is active
         const token = signSessionToken(user);

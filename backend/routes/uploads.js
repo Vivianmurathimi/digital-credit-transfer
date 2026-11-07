@@ -5,7 +5,8 @@ const multer = require('multer');
 const minioClient = require('../minio');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
-const { getFileOwner } = require('../utils/fileOwner');
+const { getFileOwner, isFileInProgramme } = require('../utils/fileOwner');
+const pool = require('../db');
 const crypto = require('crypto');
 const sendError = require('../utils/sendError');
 const {
@@ -135,8 +136,9 @@ router.delete('/:filename', verifyToken, requireRole('student'), async (req, res
 
 
 /**
- * VIEW ROUTE — must be logged in. The student who uploaded the file can view it,
- * and so can reviewers and the superadmin (they review every application for now).
+ * VIEW ROUTE — must be logged in. The student who uploaded the file can view it, and so can
+ * the superadmin. A reviewer only when an application of their own programme refers to it
+ * (reviewer Group 2); for any other file they get "not found", the same as for a missing one.
  */
 router.get('/:filename', verifyToken, async (req, res) => {
     try {
@@ -146,8 +148,11 @@ router.get('/:filename', verifyToken, async (req, res) => {
         }
 
         const isOwner = ownerId === req.user.id;
-        const isStaff = req.user.role === 'reviewer' || req.user.role === 'superadmin';
-        if (!isOwner && !isStaff) {
+        if (!isOwner && req.user.role === 'reviewer') {
+            if (!(await isFileInProgramme(pool, req.params.filename, req.user.programmeId))) {
+                return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+            }
+        } else if (!isOwner && req.user.role !== 'superadmin') {
             return sendError(res, 403, 'NOT_OWNER', 'You can only view your own files');
         }
 

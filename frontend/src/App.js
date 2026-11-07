@@ -10,6 +10,7 @@ import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import LanguageSwitcher from './components/LanguageSwitcher'; // 🆕 Import the flag UI
 import EmailLink from './components/EmailLink';
+import AcceptInvite from './components/AcceptInvite';
 import Notice from './components/Notice';
 import { GuestOnly, RequireAuth } from './components/RouteGuards';
 import { startSessionKeeper, stopSessionKeeper } from './sessionKeeper';
@@ -43,6 +44,7 @@ return (
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />
             <Route path="/email-link/:token" element={<EmailLink />} />
+            <Route path="/invite/:token" element={<AcceptInvite />} />
             <Route path="/" element={<Navigate to="/login" />} />
             {/* Unknown address: to the login page (which forwards logged-in users to the dashboard) */}
             <Route path="*" element={<Navigate to="/login" replace />} />

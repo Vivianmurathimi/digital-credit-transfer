@@ -16,7 +16,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are five parts:
 
-1. **Automated API check** (`npm run security-check`): 213 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 298 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Background job tests** (`npm test` in `backend/`): reminders, automatic rejections and the semester end with a fake clock (section 1c).
 4. **Translation check** (`npm run check:translations` in `frontend/`): missing, unused and inconsistent texts, hard-coded English, emails (section 1d).
@@ -65,6 +65,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 - **Drafts of students A and B are put back.** The drafts checks (section 4c) save and delete drafts of A and B. Their real drafts are copied first and restored afterwards, also after a crash; the script prints how many it put back. Without migration 006, or against a backend that doesn't know the drafts routes yet, the drafts checks are skipped and the reason is printed.
 - **Temporary applications of student A are deleted again.** Section 4d needs a rejected and a withdrawn application to try forbidden changes on. It adds one of each for student A (neither blocks anything), checks that every request was refused and nothing changed, and deletes both with their history, also after a crash. Every withdraw request the script sends is one the server must refuse.
 - **The current semester's days and the admin toggle are put back.** Section 4e moves the current semester's days (relative to today) to produce each state of the application period, closes submissions once, and adds a temporary past semester with two applications of student A. Afterwards the days and the toggle are put back and the temporary semester and applications deleted, also after a crash; the script prints what it put back. The current semester is never made to end, so a running background job can never close anything meanwhile. Without a current semester, a temporary one is used.
+- **Reviewer access is put back (reviewer Group 2).** Section 4f adds temporary applications of student A, invites and one test reviewer account (all addresses end in `@security-check.invalid`), and an accepted test invite deactivates the real reviewer of student B's programme for a moment. Afterwards the temporary applications, invites and test account are deleted, the real reviewer is active again and every application of that programme gets its earlier `assigned_reviewer_id` back, also after a crash; the script prints what it put back. The invite and resend checks send a few emails, only to `@security-check.invalid` addresses (caught by Mailtrap).
 - **Refuses to run when `NODE_ENV=production`.**
 - **Never prints `JWT_SECRET` or any token.** Test tokens are signed locally with the secret from `backend/.env` and only sent to the server.
 - **Picks its test users from the database** (read-only):
@@ -179,8 +180,29 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A applies for a course rejected in an earlier semester | passes the duplicate check (stopped at the file check, `403 FILES_NOT_OWNED`: nothing saved) |
 | | | A's earlier-semester application in A's list | listed with its semester, not as current |
 | | | B opens or withdraws A's earlier-semester application | `404 APPLICATION_NOT_FOUND` |
+| 4f | **Reviewer access (reviewer Group 2)** | Register with an `@mik.pte.hu` address | `403 STAFF_BY_INVITATION` |
+| | | Reviewer's list; another programme's student's applications | only the reviewer's own programme |
+| | | Reviewer opens or changes another programme's application | `404 APPLICATION_NOT_FOUND`; nothing changed |
+| | | Reviewer opens a file that only another programme's application names, as transcript, syllabus, grading document, old reply file (`supplemental_files`) and reply file (history) | `404 FILE_NOT_FOUND` each; `200` once the same application is in the reviewer's programme |
+| | | Admin viewing the list as a reviewer (`?as_reviewer=`); a reviewer trying it | only that reviewer's programme; ignored for reviewers |
+| | | Admin changes a decision | stored with `decided_by_role = 'admin'`, the admin's id and the date |
+| | | Invite: programme has a reviewer (no `replace`), a student's or an active reviewer's email, bad email, unknown programme | `409 PROGRAMME_HAS_REVIEWER` / `409 EMAIL_TAKEN` / `400 INVALID_EMAIL` / `400 INVALID_PROGRAMME` |
+| | | Role route: make someone a reviewer, or change a reviewer's role | `400 USE_REVIEWER_INVITE` |
+| | | Invite with `replace` | link returned to the admin; only a SHA-256 hash stored; the old reviewer keeps access until acceptance |
+| | | Accept: short password, no name | `400 PASSWORD_TOO_SHORT` / `400 MISSING_FIELDS` |
+| | | Accept | verified reviewer of the programme; old reviewer `401 REVIEWER_REMOVED`; the open application moves (reply deadline unchanged), the decided one keeps the original reviewer |
+| | | Used, unknown, expired, replaced-by-resend and cancelled links | `410 INVITE_INVALID` / `410 INVITE_EXPIRED` |
+| | | Remove a reviewer | `401 REVIEWER_REMOVED` on the next request, `403 REVIEWER_REMOVED` at login, open applications unassigned; again: no change; a student: `400 NOT_A_REVIEWER` |
+| | | Re-invite the removed reviewer's email | the same account is reactivated, name unchanged, open applications theirs again |
+| 4g | **Reviewer dashboard list (reviewer Group 3)** | A student; the superadmin without `as_reviewer`; with a non-reviewer's id | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` / `404 USER_NOT_FOUND` |
+| | | `GET /reviewer/applications` with temporary applications of student A: open and decided (current semester), withdrawn, decided in an earlier semester and before semesters, open in another programme | only the reviewer's programme; open and current-semester decided ones listed; withdrawn, earlier-semester, before-semesters and other-programme ones not |
+| | | "Other applications from this student" | counts only the same programme and semester, without withdrawn (1) |
+| | | Submitted 3 days ago, replied yesterday | `resubmit_count` 1, waiting 1 day (the reply is the last action) |
+| | | Decided row; field list | who decided and when; no email or password fields |
+| | | Admin impersonating the reviewer; the reviewer sending `as_reviewer` | exactly the reviewer's list and header; ignored for reviewers |
+| | | Decided applications without decision columns | printed as a count (0 in the development data) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
-| | | Reviewer reads the application list and opens a student's file | `200` |
+| | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
 | 6 | **Public routes** (no token) | Login with an unknown email, and with a real email + wrong password (same answer, so accounts cannot be guessed) | `401 INVALID_CREDENTIALS` |
 | | | Register with empty fields | `400 MISSING_FIELDS` |
@@ -229,6 +251,8 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
 | 2026-10-30 | throwaway copy with migration 008, semesters (Group 3) and the translation sweep (Group 10) | **212 passed, 0 failed, 1 skipped** (213 checks); the skip is the duplicate check, because in the development data student B's only application is withdrawn. Semester days, admin toggle, applications and drafts compared before and after: unchanged |
+| 2026-11-07 | throwaway copy, reviewer dashboard list (reviewer Group 3) | **297 passed, 0 failed, 1 skipped** (298 checks); same skip as before; temporary applications and the temporary past semester removed |
+| 2026-11-07 | throwaway copy with migrations 009 and 010, reviewer data model and access (reviewer Groups 1 and 2) | **281 passed, 0 failed, 1 skipped** (282 checks); the skip is the duplicate check (student B's only application is withdrawn). Temporary applications, invites and the test reviewer removed; the real reviewer active again |
 | 2026-10-30 | throwaway copy with migration 007, My Status, withdrawing, deadline (Groups 8 and 9) | **195 passed, 0 failed, 0 skipped**; the 2 temporary applications deleted. With student B's only application withdrawn (after a browser test), the duplicate check is skipped with "student B has no open application": submit a new one for B to run it |
 
 **One-time tests on throwaway copies of the database (Groups 6 and 7):**
@@ -566,7 +590,7 @@ Every application now records its programme (Group 2), so the data supports thes
 
 | Test | Expected | Status |
 |---|---|---|
-| A reviewer cannot see another programme's applications (list, single application, evidence files) | `403` / filtered list | **Pending (reviewer round).** Today every reviewer can see every application. |
+| A reviewer cannot see another programme's applications (list, single application, evidence files) | `404` / filtered list | **Done (reviewer Group 2)**, section 4f. |
 | The reviewer screen shows institution, country, credit system and grading document | shown, files opened only by staff | **Pending (reviewer round).** The data is stored since Group 4. |
 | The term book includes institutions, countries and grading documents | included | **Pending (admin round).** |
 

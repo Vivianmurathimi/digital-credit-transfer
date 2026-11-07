@@ -29,13 +29,19 @@ async function verifyToken(req, res, next) {
     // 4. Re-check the user in the database, so a deleted user is refused and a
     //    role change by the admin takes effect immediately (not when the token expires)
     try {
-        const result = await pool.query('SELECT id, role FROM users WHERE id = $1', [decoded.id]);
+        const result = await pool.query('SELECT id, role, programme_id, reviewer_deactivated_at FROM users WHERE id = $1', [decoded.id]);
         if (result.rows.length === 0) {
             return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
         }
+        const user = result.rows[0];
+        // A removed reviewer (reviewer Group 2) is refused on every request, from the next one on
+        if (user.role === 'reviewer' && user.reviewer_deactivated_at) {
+            return sendError(res, 401, 'REVIEWER_REMOVED', 'Your reviewer access has been removed');
+        }
 
-        // 5. Only id and the CURRENT role are passed on to the routes
-        req.user = { id: result.rows[0].id, role: result.rows[0].role };
+        // 5. Only id, the CURRENT role and programme are passed on to the routes.
+        //    programmeId limits what a reviewer can see (utils/reviewers.js).
+        req.user = { id: user.id, role: user.role, programmeId: user.programme_id };
         req.sessionStart = decoded.sessionStart ?? decoded.iat; // used by the refresh route
 
         next(); // let the request continue to the actual route

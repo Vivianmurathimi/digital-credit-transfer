@@ -7,7 +7,8 @@ import { programmeName } from '../programmeName';
 
 // The role comes from the email domain, exactly like the backend (routes/auth.js):
 // only @tr.pte.hu addresses are students and give a Neptun code and programme.
-// NOTE: this changes in the reviewer round, when reviewers register as guests with a programme.
+// Staff (@mik.pte.hu) can't register: reviewers are invited by the superadmin, and the
+// server answers STAFF_BY_INVITATION, shown under the email field.
 const isStudentEmail = (value) => value.trim().toLowerCase().endsWith('@tr.pte.hu');
 
 // Same rule as the backend and the database: 6 letters or digits, upper case
@@ -20,6 +21,7 @@ const FIELD_FOR_CODE = {
     NEPTUN_TAKEN: 'neptun',
     INVALID_PROGRAMME: 'programme',
     EMAIL_TAKEN: 'email',
+    STAFF_BY_INVITATION: 'email',
     INVALID_EMAIL_DOMAIN: 'email',
 };
 
