@@ -33,7 +33,8 @@ const STUDENT_FILES = [
     // The reviewer dashboard (reviewer Group 3 on)
     'components/ReviewerDashboard.js', 'components/reviewer/ReviewerHeader.js', 'components/reviewer/ReviewerTabs.js',
     'components/reviewer/ReviewerSearch.js', 'components/reviewer/ApplicationRow.js', 'components/reviewer/ApplicationDetails.js',
-    'components/reviewer/DecisionModal.js',
+    'components/reviewer/DecisionModal.js', 'components/reviewer/FileLink.js', 'components/reviewer/CreditComparison.js',
+    'components/reviewer/NotesConversation.js', 'components/reviewer/HistoryTable.js',
 ];
 
 const problems = [];

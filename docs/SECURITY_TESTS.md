@@ -16,7 +16,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are five parts:
 
-1. **Automated API check** (`npm run security-check`): 298 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 312 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Background job tests** (`npm test` in `backend/`): reminders, automatic rejections and the semester end with a fake clock (section 1c).
 4. **Translation check** (`npm run check:translations` in `frontend/`): missing, unused and inconsistent texts, hard-coded English, emails (section 1d).
@@ -194,13 +194,18 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Used, unknown, expired, replaced-by-resend and cancelled links | `410 INVITE_INVALID` / `410 INVITE_EXPIRED` |
 | | | Remove a reviewer | `401 REVIEWER_REMOVED` on the next request, `403 REVIEWER_REMOVED` at login, open applications unassigned; again: no change; a student: `400 NOT_A_REVIEWER` |
 | | | Re-invite the removed reviewer's email | the same account is reactivated, name unchanged, open applications theirs again |
-| 4g | **Reviewer dashboard list (reviewer Group 3)** | A student; the superadmin without `as_reviewer`; with a non-reviewer's id | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` / `404 USER_NOT_FOUND` |
+| 4g | **Reviewer dashboard (reviewer Groups 3 and 4)** | A student; the superadmin without `as_reviewer`; with a non-reviewer's id | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` / `404 USER_NOT_FOUND` |
 | | | `GET /reviewer/applications` with temporary applications of student A: open and decided (current semester), withdrawn, decided in an earlier semester and before semesters, open in another programme | only the reviewer's programme; open and current-semester decided ones listed; withdrawn, earlier-semester, before-semesters and other-programme ones not |
 | | | "Other applications from this student" | counts only the same programme and semester, without withdrawn (1) |
 | | | Submitted 3 days ago, replied yesterday | `resubmit_count` 1, waiting 1 day (the reply is the last action) |
 | | | Decided row; field list | who decided and when; no email or password fields |
 | | | Admin impersonating the reviewer; the reviewer sending `as_reviewer` | exactly the reviewer's list and header; ignored for reviewers |
 | | | Decided applications without decision columns | printed as a count (0 in the development data) |
+| | | List rows | no details in the list (no courses, institutions, notes or files) |
+| | | `GET /reviewer/applications/:id` (reviewer Group 4), own programme | `200`: student with programme, target course, fulfilled courses, institutions; every named file listed, a missing one marked missing; no email addresses |
+| | | Details of another programme's, a withdrawn or a non-existent application; also as the superadmin viewing as the reviewer | `404 APPLICATION_NOT_FOUND` |
+| | | History in the details (reviewer Group 5) | every step from `application_events` with the note type from `application_notes` and the student's or reviewer's name; no user ids; an admin's step shows as Admin without the admin's name |
+| | | Details as a student; as the superadmin without `as_reviewer` | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -251,6 +256,8 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
 | 2026-10-30 | throwaway copy with migration 008, semesters (Group 3) and the translation sweep (Group 10) | **212 passed, 0 failed, 1 skipped** (213 checks); the skip is the duplicate check, because in the development data student B's only application is withdrawn. Semester days, admin toggle, applications and drafts compared before and after: unchanged |
+| 2026-11-07 | throwaway copy, reviewer notes and history (reviewer Group 5) | **311 passed, 0 failed, 1 skipped** (312 checks); same skip as before; temporary applications and the temporary past semester removed |
+| 2026-11-07 | throwaway copy, reviewer application details (reviewer Group 4) | **309 passed, 0 failed, 1 skipped** (310 checks); same skip as before; temporary applications and the temporary past semester removed |
 | 2026-11-07 | throwaway copy, reviewer dashboard list (reviewer Group 3) | **297 passed, 0 failed, 1 skipped** (298 checks); same skip as before; temporary applications and the temporary past semester removed |
 | 2026-11-07 | throwaway copy with migrations 009 and 010, reviewer data model and access (reviewer Groups 1 and 2) | **281 passed, 0 failed, 1 skipped** (282 checks); the skip is the duplicate check (student B's only application is withdrawn). Temporary applications, invites and the test reviewer removed; the real reviewer active again |
 | 2026-10-30 | throwaway copy with migration 007, My Status, withdrawing, deadline (Groups 8 and 9) | **195 passed, 0 failed, 0 skipped**; the 2 temporary applications deleted. With student B's only application withdrawn (after a browser test), the duplicate check is skipped with "student B has no open application": submit a new one for B to run it |
@@ -591,7 +598,7 @@ Every application now records its programme (Group 2), so the data supports thes
 | Test | Expected | Status |
 |---|---|---|
 | A reviewer cannot see another programme's applications (list, single application, evidence files) | `404` / filtered list | **Done (reviewer Group 2)**, section 4f. |
-| The reviewer screen shows institution, country, credit system and grading document | shown, files opened only by staff | **Pending (reviewer round).** The data is stored since Group 4. |
+| The reviewer screen shows institution, country, credit system and grading document | shown, files opened only by staff | **Done (reviewer Group 4).** Files open with the token (programme-checked, section 4f); missing files are marked. |
 | The term book includes institutions, countries and grading documents | included | **Pending (admin round).** |
 
 ---

@@ -9,7 +9,7 @@ import ReviewerSearch from './reviewer/ReviewerSearch';
 import ApplicationRow from './reviewer/ApplicationRow';
 import DecisionModal from './reviewer/DecisionModal';
 
-// The reviewer dashboard (reviewer Group 3): header, tabs, search and the list.
+// The reviewer dashboard (reviewer Groups 3 and 4): header, tabs, search, the list and, per opened row, the details.
 // The backend sends only the reviewer's own programme (completed ones of the current semester
 // only); search and the student filter run here, on that list.
 // userId / isImpersonating: set while the superadmin looks at a reviewer's dashboard: the
@@ -27,15 +27,18 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
     const [openId, setOpenId] = useState(null);
     const [decision, setDecision] = useState(null); // { appId, type }
 
+    // While the superadmin impersonates, every request is for that reviewer (one object, so the
+    // details don't load again on every render)
+    const searchParams = useMemo(() => (isImpersonating ? { as_reviewer: userId } : undefined), [isImpersonating, userId]);
+
     const load = useCallback(async () => {
         try {
-            const searchParams = isImpersonating ? { as_reviewer: userId } : undefined;
             setData(await http.get('reviewer/applications', { searchParams }).json());
             setLoadError('');
         } catch (err) {
             setLoadError(getErrorMessage(err, t, 'reviewer_load_failed'));
         }
-    }, [isImpersonating, userId, t]);
+    }, [searchParams, t]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -75,6 +78,7 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
                             onToggle={() => setOpenId(openId === app.id ? null : app.id)}
                             onShowStudent={() => showStudent(app)}
                             onDecide={(appId, type) => setDecision({ appId, type })}
+                            searchParams={searchParams}
                         />
                     ))}
                 </ul>

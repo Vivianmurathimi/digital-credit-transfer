@@ -2,7 +2,8 @@ import axios from 'axios';
 import { API_ORIGIN } from './http';
 import { getToken, handleAuthFailure } from './session';
 
-// The older axios client, still used by the reviewer and admin dashboards.
+// The older axios client, still used by the admin dashboard and the term archive
+// (the reviewer dashboard moved to the shared ky client in reviewer Group 3).
 // It behaves like the shared ky client (src/http.js) until those dashboards move over.
 // Same backend address as ky; the paths keep their /api/... prefix.
 const api = axios.create({ baseURL: API_ORIGIN });

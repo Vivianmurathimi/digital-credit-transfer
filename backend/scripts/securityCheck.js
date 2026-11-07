@@ -306,7 +306,7 @@ const run = async () => {
         ['POST', 'refresh-token'], ['GET', 'me'],
         ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
         ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`],
-        ['GET', 'reviewer/applications'],
+        ['GET', 'reviewer/applications'], ['GET', 'reviewer/applications/1'],
     ];
     for (const [method, path] of protectedRoutes) {
         await expect(`${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
@@ -1102,7 +1102,7 @@ const run = async () => {
         await expect('The original reviewer has access again', call('GET', 'applications', { token: R }), 200);
     }
 
-    section('4g. Reviewer dashboard list (reviewer Group 3): own programme, current semester, no withdrawn');
+    section('4g. Reviewer dashboard (reviewer Groups 3 and 4): list and details, own programme, current semester, no withdrawn');
     {
         const programmeOfB = d.studentB.programme_id;
         const programmeOfA = d.studentA.programme_id;
@@ -1178,6 +1178,47 @@ const run = async () => {
             "Admin impersonating the reviewer gets exactly the reviewer's list and header", `${asReviewer.status}`);
             const ignored = await call('GET', `reviewer/applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
             report(ignored.status === 200 && ignored.body.reviewer.id === d.reviewer.id, 'A reviewer cannot use as_reviewer to see another reviewer\'s list', `${ignored.body?.reviewer?.id}`);
+
+            // The list carries no details (they come from the details route, reviewer Group 4)
+            report(rows.every((r) => !('fulfilled_courses_json' in r) && !('student_note' in r) && !('supplemental_files' in r) && !('institutions' in r)),
+                'The list rows carry no details (courses, notes, files)', Object.keys(rows[0] || {}).length + ' fields');
+
+            // --- Details (reviewer Group 4): own programme only, files marked as missing or not
+            const missingFile = `security-check-missing-${Date.now()}.pdf`;
+            await pool.query(
+                `UPDATE applications SET fulfilled_courses_json = $2, institutions = $3, supplemental_files = $4 WHERE id = $1`,
+                [open, JSON.stringify([{ course_name: 'Security check course', course_code: 'SC1', credits: 2.5, credit_system: 'ECTS', grade: 'A', institution: 0, file: d.fileOfA, syllabus_file: missingFile }]),
+                    JSON.stringify([{ name: 'Security Check University', country: 'AT', grading_file: d.fileOfA }]), `${missingFile},`]
+            );
+            const details = await call('GET', `reviewer/applications/${open}`, { token: R });
+            const app = details.body?.application;
+            report(details.status === 200 && app?.student?.id === d.studentA.id && app.fulfilled_courses.length === 1 && app.institutions.length === 1
+                && app.target_course?.course_code && app.student.programme?.code,
+            'Details of an own-programme application: student, programme, target course, courses, institutions', `${details.status}`);
+            report(app?.files?.[d.fileOfA]?.exists === true && app?.files?.[missingFile]?.exists === false && app?.extra_files?.includes(missingFile),
+                'Every named file is listed; a missing one is marked missing', app ? Object.keys(app.files).length + ' file(s)' : '-');
+            report(!JSON.stringify(details.body || {}).includes('@'), 'No email addresses in the details');
+            // The history (reviewer Group 5): from application_events, with the note type from application_notes
+            const reply = (app?.events || []).find((e) => e.kind === 'replied');
+            report(reply?.note_type === 'resubmit' && reply?.actor_name && reply?.note === 'Security check' && !('actor_id' in reply),
+                "Details carry the history: the reply with its note type and the student's name, no user ids", app ? `${app.events.length} event(s)` : '-');
+            const adminEvent = await pool.query(
+                "INSERT INTO application_events (application_id, kind, actor_role, actor_id, status, note) VALUES ($1, 'info_requested', 'admin', $2, 'needs_info', 'Admin question') RETURNING id",
+                [open, d.admin.id]
+            );
+            const again = await call('GET', `reviewer/applications/${open}`, { token: R });
+            const adminRow = (again.body?.application?.events || []).find((e) => String(e.id) === String(adminEvent.rows[0].id));
+            report(adminRow?.actor_role === 'admin' && adminRow?.actor_name === null && adminRow?.note_type === 'reviewer',
+                "An admin's step shows as Admin, without the admin's name", `${adminRow?.actor_name}`);
+            if (otherProgramme) await expect("Details of another programme's application", call('GET', `reviewer/applications/${otherProgramme}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('Details of a withdrawn application', call('GET', `reviewer/applications/${withdrawn}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('Details of an application that does not exist', call('GET', 'reviewer/applications/999999999', { token: R }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('Student opens reviewer details', call('GET', `reviewer/applications/${open}`, { token: A }), 403, 'FORBIDDEN_ROLE');
+            await expect('Superadmin opens details without as_reviewer', call('GET', `reviewer/applications/${open}`, { token: S }), 400, 'AS_REVIEWER_REQUIRED');
+            await expect('Superadmin opens details as the reviewer', call('GET', `reviewer/applications/${open}?as_reviewer=${d.reviewer.id}`, { token: S }), 200);
+            if (otherProgramme) {
+                await expect("Superadmin as the reviewer: another programme's details", call('GET', `reviewer/applications/${otherProgramme}?as_reviewer=${d.reviewer.id}`, { token: S }), 404, 'APPLICATION_NOT_FOUND');
+            }
 
             const removedApps = await removeTempApplications();
             const restored = await restoreSemesters();
