@@ -56,3 +56,18 @@ test('reviewer emails: new application and student reply, in every language, esc
     }
     assert.equal(buildReviewerEmail('nothing', 'en', { name: 'x' }), null);
 });
+
+test('reviewer semester-end reminders: both numbers, the last day as a date, in every language, escaped', () => {
+    for (const lang of LANGUAGES) {
+        for (const type of ['semesterEndsSoon', 'semesterEndsToday']) {
+            const email = buildReviewerEmail(type, lang, { name: 'Dr. Nagy', programme: 'Civil <Engineering>', endsOn: '2027-01-31', pending: 4, needsInfo: 1 });
+            assert.ok(email && email.subject, `${lang} ${type}: subject`);
+            assert.ok(email.html.includes('Civil &lt;Engineering&gt;'), `${lang} ${type}: programme escaped`);
+            assert.ok(email.html.includes('<strong>4</strong>') && email.html.includes('<strong>1</strong>'), `${lang} ${type}: both numbers`);
+            assert.ok(/31/.test(email.html) && /2027/.test(email.html), `${lang} ${type}: the date`);
+        }
+    }
+    assert.ok(buildReviewerEmail('semesterEndsSoon', 'en', { name: 'x', programme: 'P', endsOn: '2027-01-31', pending: 0, needsInfo: 0 }).html.includes('31 January 2027'));
+    assert.notEqual(buildReviewerEmail('semesterEndsSoon', 'en', { name: 'x' }).subject, buildReviewerEmail('semesterEndsToday', 'en', { name: 'x' }).subject);
+    assert.equal(buildReviewerEmail('counts', 'en', { name: 'x' }), null, 'a word list is not an email');
+});

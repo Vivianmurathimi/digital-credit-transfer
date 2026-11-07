@@ -1,7 +1,7 @@
 /**
  * Empties the development data (never in production):
  *   - applications, users, reviewer invitations, PTE courses, rate-limit counts
- *   - every evidence file in the "transcripts" bucket
+ *   - every evidence file in the evidence bucket ("transcripts", or MINIO_BUCKET)
  *
  *   npm run reset:dev -- --yes
  *
@@ -28,7 +28,7 @@ if (!process.argv.includes('--yes')) {
 const pool = require('../db');
 const minioClient = require('../minio');
 
-const EVIDENCE_BUCKET = 'transcripts';
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 
 const listEvidenceFiles = () => new Promise((resolve, reject) => {
     const names = [];

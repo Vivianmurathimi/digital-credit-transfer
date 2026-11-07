@@ -35,6 +35,8 @@ const STUDENT_FILES = [
     'components/reviewer/ReviewerSearch.js', 'components/reviewer/ApplicationRow.js', 'components/reviewer/ApplicationDetails.js',
     'components/reviewer/DecisionModal.js', 'components/reviewer/FileLink.js', 'components/reviewer/CreditComparison.js',
     'components/reviewer/NotesConversation.js', 'components/reviewer/HistoryTable.js',
+    // The admin's banner per programme (reviewer Group 7)
+    'components/ReviewerOverview.js',
 ];
 
 const problems = [];

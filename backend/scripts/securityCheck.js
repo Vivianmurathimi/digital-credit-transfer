@@ -30,6 +30,7 @@ const { JWT_SECRET, ALGORITHM, signSessionToken } = require('../config/jwt');
 const { CORS_ORIGINS } = require('../config/urls');
 const pool = require('../db');
 const minioClient = require('../minio');
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
@@ -220,7 +221,7 @@ const unsignedToken = (user) => {
 const listFileOwners = async () => {
     const names = await new Promise((resolve, reject) => {
         const found = [];
-        const stream = minioClient.listObjects('transcripts', '', true);
+        const stream = minioClient.listObjects(EVIDENCE_BUCKET, '', true);
         stream.on('data', (obj) => found.push(obj.name));
         stream.on('end', () => resolve(found));
         stream.on('error', reject);
@@ -611,7 +612,7 @@ const run = async () => {
     section('4b. File uploads (Group 5): type, size, names');
     const objectCount = async () => new Promise((resolve, reject) => {
         let n = 0;
-        const stream = minioClient.listObjects('transcripts', '', true);
+        const stream = minioClient.listObjects(EVIDENCE_BUCKET, '', true);
         stream.on('data', () => { n += 1; });
         stream.on('end', () => resolve(n));
         stream.on('error', reject);
@@ -1355,6 +1356,33 @@ const run = async () => {
 
         const removed = await removeTestStudents();
         console.log(`(removed the temporary student (${removed}) with their applications and history)`);
+    }
+
+    section('4i. Admin overview per programme (reviewer Group 7): superadmin only, no email addresses');
+    {
+        await expect('Overview without a token', call('GET', 'admin/reviewer-overview'), 401, 'NO_TOKEN');
+        await expect('Student: admin overview', call('GET', 'admin/reviewer-overview', { token: A }), 403, 'FORBIDDEN_ROLE');
+        await expect('Reviewer: admin overview', call('GET', 'admin/reviewer-overview', { token: R }), 403, 'FORBIDDEN_ROLE');
+        const overview = await call('GET', 'admin/reviewer-overview', { token: S });
+        const rows = overview.body?.programmes || [];
+        const allowed = ['code', 'name_en', 'name_hu', 'name_de', 'reviewer', 'pending', 'needs_info'];
+        const extra = [...new Set(rows.flatMap((p) => Object.keys(p).filter((k) => !allowed.includes(k))
+            .concat(p.reviewer ? Object.keys(p.reviewer).filter((k) => k !== 'name').map((k) => `reviewer.${k}`) : [])))];
+        report(overview.status === 200 && rows.length > 0 && extra.length === 0 && !JSON.stringify(overview.body).includes('@'),
+            'Superadmin: overview with names and numbers only (no email addresses, no ids)', extra.length ? `extra: ${extra.join(', ')}` : `${rows.length} programme(s)`);
+        const counts = (await pool.query(
+            `SELECT p.code, count(a.id) FILTER (WHERE a.status = 'pending')::int AS pending, count(a.id) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
+             FROM programmes p LEFT JOIN applications a ON a.programme_id = p.id GROUP BY p.code`
+        )).rows;
+        const differ = counts.filter((c) => {
+            const row = rows.find((p) => p.code === c.code);
+            return !row || row.pending !== c.pending || row.needs_info !== c.needs_info;
+        });
+        report(differ.length === 0, 'The overview counts match the database for every programme', differ.length ? `differ: ${differ.map((c) => c.code).join(', ')}` : '');
+        const withoutReviewer = (await pool.query(
+            `SELECT code FROM programmes p WHERE NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.reviewer_deactivated_at IS NULL AND r.programme_id = p.id)`
+        )).rows.map((r) => r.code);
+        report(rows.every((p) => (p.reviewer === null) === withoutReviewer.includes(p.code)), 'Programmes without an active reviewer are shown without one', withoutReviewer.join(', ') || 'none');
     }
 
     section('5. Allowed reads still work -> 200');

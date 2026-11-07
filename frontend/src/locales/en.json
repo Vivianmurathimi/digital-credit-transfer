@@ -543,5 +543,12 @@
   "student_period_none": "No open application period.",
   "student_period_over": "No open application period. The last day to apply was {{date}}.",
   "student_period_last_days": "The application period ends on {{closes}}. Applications not reviewed by {{ends}} are closed automatically.",
-  "student_draft_paused_closed": "Autosave is off while applications cannot be submitted."
+  "student_draft_paused_closed": "Autosave is off while applications cannot be submitted.",
+  "admin_overview_title": "Applications by programme",
+  "admin_overview_line": "{{programme}}: {{pending}} pending, {{needsInfo}} waiting for the student's reply, semester ends {{date}}",
+  "admin_overview_line_no_semester": "{{programme}}: {{pending}} pending, {{needsInfo}} waiting for the student's reply",
+  "admin_overview_no_semester": "No semester is running.",
+  "admin_overview_reviewer": "Reviewer: {{name}}",
+  "admin_overview_no_reviewer": "No active reviewer: new applications are not assigned and nobody is notified. Invite a reviewer for this programme.",
+  "admin_overview_failed": "The overview of the programmes could not be loaded."
 }

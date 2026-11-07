@@ -120,7 +120,9 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
         // only for students and reviewers; an admin is shown as "Admin", the system as "System"
         const events = (await pool.query(
             `SELECT e.id, e.kind, e.actor_role, CASE WHEN e.actor_role IN ('student', 'reviewer') THEN u.name END AS actor_name,
-                    e.status, e.note, n.note_type, e.reason_code,
+                    e.status, e.note, e.reason_code,
+                    -- an automatic rejection has no text, only its reason code: still a "system" note
+                    COALESCE(n.note_type, CASE WHEN e.kind = 'auto_rejected' AND e.reason_code IS NOT NULL THEN 'system' END) AS note_type,
                     e.files, e.backfilled, e.created_at
              FROM application_events e
              LEFT JOIN application_notes n ON n.id = e.id
@@ -173,6 +175,10 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
                     decided_by_name: found.decided_by_role === 'reviewer' ? found.decided_by_name : null,
                     decided_at: found.decided_at,
                     rationale: found.decision_rationale,
+                    // An automatic rejection's reason (reviewer Group 7): a code, translated by the screen
+                    reason_code: found.decided_by_role === 'system'
+                        ? [...events].reverse().find((e) => e.kind === 'auto_rejected')?.reason_code || null
+                        : null,
                 },
                 respond_by: found.respond_by,
             },

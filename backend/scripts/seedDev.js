@@ -55,7 +55,7 @@ const ensureDevSemester = async () => {
 
 // One password for every test account (development only)
 const DEV_PASSWORD = 'Test1234!';
-const EVIDENCE_BUCKET = 'transcripts';
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 
 const COURSES = {
     CS: [

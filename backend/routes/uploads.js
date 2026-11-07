@@ -13,7 +13,7 @@ const {
     MAX_UPLOAD_BYTES, detectFileType, maxBytesFor, megabytes, cleanOriginalName, encodeForMetadata, contentDisposition,
 } = require('../utils/fileRules');
 
-const BUCKET_NAME = 'transcripts';
+const { EVIDENCE_BUCKET: BUCKET_NAME } = require('../config/buckets');
 // Files stay in memory until every check has passed, so a refused upload never reaches storage.
 // The size limit makes multer stop reading as soon as a file is larger than the highest limit.
 const upload = multer({

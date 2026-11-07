@@ -543,5 +543,12 @@
   "student_period_none": "Kein offener Antragszeitraum.",
   "student_period_over": "Kein offener Antragszeitraum. Der letzte Tag für Anträge war der {{date}}.",
   "student_period_last_days": "Der Antragszeitraum endet am {{closes}}. Anträge, die bis zum {{ends}} nicht geprüft sind, werden automatisch geschlossen.",
-  "student_draft_paused_closed": "Die automatische Speicherung ist aus, solange keine Anträge eingereicht werden können."
+  "student_draft_paused_closed": "Die automatische Speicherung ist aus, solange keine Anträge eingereicht werden können.",
+  "admin_overview_title": "Anträge nach Studiengang",
+  "admin_overview_line": "{{programme}}: {{pending}} ausstehend, {{needsInfo}} warten auf die Antwort der Studierenden, letzter Semestertag: {{date}}",
+  "admin_overview_line_no_semester": "{{programme}}: {{pending}} ausstehend, {{needsInfo}} warten auf die Antwort der Studierenden",
+  "admin_overview_no_semester": "Derzeit läuft kein Semester.",
+  "admin_overview_reviewer": "Gutachter/in: {{name}}",
+  "admin_overview_no_reviewer": "Kein aktiver Gutachter: Neue Anträge werden niemandem zugewiesen und niemand wird benachrichtigt. Laden Sie einen Gutachter für diesen Studiengang ein.",
+  "admin_overview_failed": "Die Übersicht der Studiengänge konnte nicht geladen werden."
 }

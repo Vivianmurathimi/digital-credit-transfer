@@ -1,7 +1,7 @@
 const minioClient = require('../minio');
 const { decodeFromMetadata } = require('./fileRules');
 
-const EVIDENCE_BUCKET = 'transcripts';
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 
 /**
  * Who uploaded an evidence file (the uploads route tags every file with the uploader's id).

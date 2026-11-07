@@ -1,4 +1,4 @@
-const { gradeLabel } = require('./emailTemplates');
+const { gradeLabel, reasons } = require('./emailTemplates');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const fetchEvidence = require('./fetchEvidence');
@@ -171,9 +171,11 @@ const drawApplication = (doc, app, evidenceResults) => {
         ['Decided on', decision ? formatDateTime(decision.decidedAt) : '—'],
         ['Last change by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email}), ${formatDateTime(app.reviewedAt)}` : '—'],
     ]);
-    if (decision && decision.rationale) {
+    // An automatic rejection stores only its reason code: written here in English, like the whole book
+    const reasonText = decision && ((decision.reasonCode && reasons.en[decision.reasonCode]) || decision.rationale);
+    if (reasonText) {
         doc.font('Bold').fontSize(9).fillColor(COLORS.muted).text('Reason / note', MARGIN);
-        doc.font('Body').fontSize(10).fillColor(COLORS.text).text(decision.rationale, MARGIN, doc.y, { width: doc.page.width - 2 * MARGIN });
+        doc.font('Body').fontSize(10).fillColor(COLORS.text).text(reasonText, MARGIN, doc.y, { width: doc.page.width - 2 * MARGIN });
         doc.moveDown(0.3);
     }
 

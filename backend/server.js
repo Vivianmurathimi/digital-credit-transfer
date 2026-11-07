@@ -18,6 +18,7 @@ const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const reviewerInviteRoutes = require('./routes/reviewerInvites');
 const reviewerRoutes = require('./routes/reviewer');
+const adminOverviewRoutes = require('./routes/adminOverview');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
@@ -53,7 +54,7 @@ app.use(cors({
 }));
 
 // MinIO Bucket Initialization
-const BUCKET_NAME = 'transcripts';
+const { EVIDENCE_BUCKET: BUCKET_NAME } = require('./config/buckets');
 minioClient.bucketExists(BUCKET_NAME, (err, exists) => {
     if (err) return console.error('❌ MinIO Connection Error:', err);
     if (!exists) {
@@ -72,6 +73,7 @@ app.use('/api', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', reviewerInviteRoutes); // reviewer invites and removal (reviewer Group 2)
 app.use('/api', reviewerRoutes); // the reviewer dashboard (reviewer Groups 3 and 4)
+app.use('/api', adminOverviewRoutes); // the admin's per-programme overview (reviewer Group 7)
 app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);

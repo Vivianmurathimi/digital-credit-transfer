@@ -3,6 +3,7 @@ import api from '../api';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import TermArchive from './TermArchive';
+import ReviewerOverview from './ReviewerOverview';
 
 const SuperAdminDashboard = () => {
     const { t } = useTranslation();
@@ -156,6 +157,9 @@ const SuperAdminDashboard = () => {
                     {isSystemOpen ? t('superadmin_lock_system') : t('superadmin_unlock_system')}
                 </button>
             </div>
+
+            {/* Pending applications and reviewers per programme (reviewer Group 7) */}
+            <ReviewerOverview />
 
             {/* Impersonation Engine */}
             <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>

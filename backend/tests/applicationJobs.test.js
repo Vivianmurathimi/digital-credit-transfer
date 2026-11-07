@@ -53,6 +53,8 @@ const read = async (id) => (await pool.query(
             decided_by, decided_by_role, decided_at, decision_rationale, final_grade
      FROM applications WHERE id = $1`, [id])).rows[0];
 const eventsOf = async (id) => (await pool.query('SELECT kind, actor_role, actor_id, status, note, reason_code, created_at FROM application_events WHERE application_id = $1 ORDER BY id', [id])).rows;
+// Reviewer reminders are tested in reviewerReminders.test.js; here they must never send anything
+const noReminders = async () => { throw new Error('no reviewer reminder expected in this test'); };
 const emailsFor = (sent, id, type) => sent.filter((e) => e.data.applicationId === id && (!type || e.type === type));
 
 before(async () => {
@@ -109,19 +111,19 @@ test('rejected at the deadline as "System", with the reason code, history entry 
     await rejectOverdueInfoRequests({ now: deadline, notify, only });
     const row = await read(id);
     assert.equal(row.status, 'rejected');
-    assert.equal(row.reviewer_note, 'No response to information request.');
+    assert.equal(row.reviewer_note, null, 'no English text stored: only the reason code (reviewer Group 7)');
     assert.equal(row.reviewed_by, null, 'decided by nobody: the system');
     assert.equal(row.info_deadline, null, 'deadline cleared');
     // The decision (reviewer Group 1): by the system, at the run's time, with the reason
     assert.deepEqual(
         { by: row.decided_by, role: row.decided_by_role, at: row.decided_at?.toISOString(), why: row.decision_rationale, grade: row.final_grade },
-        { by: null, role: 'system', at: deadline.toISOString(), why: 'No response to information request.', grade: null }
+        { by: null, role: 'system', at: deadline.toISOString(), why: null, grade: null }
     );
 
     const last = (await eventsOf(id)).at(-1);
     assert.deepEqual(
-        { kind: last.kind, actor_role: last.actor_role, actor_id: last.actor_id, status: last.status, reason_code: last.reason_code },
-        { kind: 'auto_rejected', actor_role: 'system', actor_id: null, status: 'rejected', reason_code: 'NO_INFO_RESPONSE' }
+        { kind: last.kind, actor_role: last.actor_role, actor_id: last.actor_id, status: last.status, note: last.note, reason_code: last.reason_code },
+        { kind: 'auto_rejected', actor_role: 'system', actor_id: null, status: 'rejected', note: null, reason_code: 'NO_INFO_RESPONSE' }
     );
     assert.equal(last.created_at.toISOString(), deadline.toISOString(), 'recorded at the (fake) time of the run');
 
@@ -138,7 +140,7 @@ test('nothing happens after the student replied', async () => {
     // A reply sets the status back to pending and clears the deadline
     const id = await waitingApplication({ status: 'pending' });
     const { sent, notify } = recorder();
-    await runApplicationJobs({ now: at(10 * 24 * HOUR), notify, only: [id], onlyDraftsOf: [] });
+    await runApplicationJobs({ now: at(10 * 24 * HOUR), notify, remind: noReminders, only: [id], onlyDraftsOf: [] });
     assert.equal((await read(id)).status, 'pending');
     assert.equal((await eventsOf(id)).length, 0);
     assert.equal(sent.length, 0);
@@ -178,8 +180,8 @@ test('a full run does the reminder and the rejection steps together', async () =
     const soon = await waitingApplication({ deadline: at(80 * HOUR) });
     const overdue = await waitingApplication({ deadline: at(50 * HOUR) });
     const { notify } = recorder();
-    const results = await runApplicationJobs({ now: at(60 * HOUR), notify, only: [soon, overdue], onlyDraftsOf: [] });
-    assert.deepEqual(results, { 'semester end': 0, 'deadline reminders': 1, 'overdue information requests': 1 });
+    const results = await runApplicationJobs({ now: at(60 * HOUR), notify, remind: noReminders, only: [soon, overdue], onlyDraftsOf: [] });
+    assert.deepEqual(results, { 'semester end': 0, 'reviewer reminders': 0, 'deadline reminders': 1, 'overdue information requests': 1 });
     assert.ok((await read(soon)).info_reminder_sent_at);
     assert.equal((await read(overdue)).status, 'rejected');
 });

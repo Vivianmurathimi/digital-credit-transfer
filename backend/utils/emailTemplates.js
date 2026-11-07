@@ -27,6 +27,11 @@ const formatDeadline = (date, language) => new Intl.DateTimeFormat(DATE_LOCALES[
     timeZone: 'Europe/Budapest', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(new Date(date));
 
+// A calendar day ('YYYY-MM-DD', e.g. a semester's last day) as "31 January 2027" in the language
+const formatDay = (day, language) => new Intl.DateTimeFormat(DATE_LOCALES[language], {
+    timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric',
+}).format(new Date(`${day}T00:00:00Z`));
+
 // Reviewer's message exactly as written: escaped, with line breaks kept
 const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
@@ -330,6 +335,12 @@ const buildAccountEmail = (type, lang, { url, programme = '' }) => {
     return { subject: words.subject, html };
 };
 
+// The programme and the two numbers of a semester-end reminder, as a list (no plural forms needed)
+const reminderCounts = (language, { programme, pending, needsInfo }) => {
+    const words = reviewerTemplates[language].counts;
+    return `<p>${words.programme}: <strong>${programme}</strong></p><ul><li>${words.pending}: <strong>${pending}</strong></li><li>${words.needsInfo}: <strong>${needsInfo}</strong></li></ul>`;
+};
+
 // Emails to the programme's reviewer (reviewer Group 6): a new application, and a student's reply
 // to a request for information. In the reviewer's saved language; the button opens the login page.
 const reviewerTemplates = {
@@ -345,6 +356,16 @@ const reviewerTemplates = {
             subject: 'Egy hallgató válaszolt a kiegészítési kérésére',
             body: ({ student, course }) => `<p><strong>${student}</strong> válaszolt a kiegészítési kérésére: ${course}.</p><p>A kérelem ismét az Elbírálásra vár fülön található.</p>`,
         },
+        // Before the semester ends (reviewer Group 7): 7 days before, and on the last day
+        semesterEndsSoon: {
+            subject: 'Hamarosan véget ér a félév: kérelmek várnak az elbírálására',
+            body: (data) => `<p>A félév utolsó napja: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A félév végéig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+        },
+        semesterEndsToday: {
+            subject: 'Ma van a félév utolsó napja: kérelmek várnak az elbírálására',
+            body: (data) => `<p>Ma van a félév utolsó napja (<strong>${data.date}</strong>).</p>${reminderCounts('hu', data)}<p>Az éjfélig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+        },
+        counts: { programme: 'Szak', pending: 'Elbírálásra vár', needsInfo: 'A hallgató válaszára vár' },
     },
     en: {
         greeting: (name) => `Dear ${name},`,
@@ -357,7 +378,15 @@ const reviewerTemplates = {
         studentReplied: {
             subject: 'A student replied to your request for information',
             body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
+        },        semesterEndsSoon: {
+            subject: 'The semester ends soon: applications are waiting for your decision',
+            body: (data) => `<p>The last day of the semester is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Applications not decided by the end of the semester are rejected automatically.</p>`,
         },
+        semesterEndsToday: {
+            subject: 'Today is the last day of the semester: applications are waiting for your decision',
+            body: (data) => `<p>Today (<strong>${data.date}</strong>) is the last day of the semester.</p>${reminderCounts('en', data)}<p>Applications not decided by midnight are rejected automatically.</p>`,
+        },
+        counts: { programme: 'Programme', pending: 'Waiting for your decision', needsInfo: "Waiting for the student's reply" },
     },
     de: {
         greeting: (name) => `Liebe/r ${name},`,
@@ -370,25 +399,38 @@ const reviewerTemplates = {
         studentReplied: {
             subject: 'Ein Studierender hat auf Ihre Informationsanfrage geantwortet',
             body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
+        },        semesterEndsSoon: {
+            subject: 'Das Semester endet bald: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Der letzte Tag des Semesters ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Anträge, die bis zum Semesterende nicht entschieden sind, werden automatisch abgelehnt.</p>`,
         },
+        semesterEndsToday: {
+            subject: 'Heute ist der letzte Tag des Semesters: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Heute (<strong>${data.date}</strong>) ist der letzte Tag des Semesters.</p>${reminderCounts('de', data)}<p>Anträge, die bis Mitternacht nicht entschieden sind, werden automatisch abgelehnt.</p>`,
+        },
+        counts: { programme: 'Studiengang', pending: 'Warten auf Ihre Entscheidung', needsInfo: 'Warten auf die Antwort der Studierenden' },
     },
 };
 
 /**
  * An email to a reviewer.
- * @param {'newApplication'|'studentReplied'} type
- * @param {{ name: string, student: string, course: string }} data  everything is escaped here
+ * @param {'newApplication'|'studentReplied'|'semesterEndsSoon'|'semesterEndsToday'} type
+ * @param {{ name: string, student?: string, course?: string, programme?: string, endsOn?: string, pending?: number, needsInfo?: number }} data
+ *   every text is escaped here; endsOn ('YYYY-MM-DD', the semester's last day) is written as a date in the language
  */
-const buildReviewerEmail = (type, lang, { name, student, course }) => {
+const buildReviewerEmail = (type, lang, { name, student = '', course = '', programme = '', endsOn = null, pending = 0, needsInfo = 0 }) => {
     const language = normalizeLanguage(lang);
     const words = reviewerTemplates[language];
-    const template = words[type];
+    const template = typeof words[type]?.body === 'function' ? words[type] : null;
     if (!template) return null;
+    const body = template.body({
+        student: escapeHtml(student), course: escapeHtml(course), programme: escapeHtml(programme),
+        date: endsOn ? escapeHtml(formatDay(endsOn, language)) : '', pending: Number(pending) || 0, needsInfo: Number(needsInfo) || 0,
+    });
     const html = `
         <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
             <h2 style="color: #004085;">${escapeHtml(words.signature)}</h2>
             <p>${escapeHtml(words.greeting(name || ''))}</p>
-            ${template.body({ student: escapeHtml(student || ''), course: escapeHtml(course || '') })}
+            ${body}
             <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
             <p style="color: #666; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
         </div>`;
@@ -398,4 +440,4 @@ const buildReviewerEmail = (type, lang, { name, student, course }) => {
 // Every text table by language, for the translation check (frontend: npm run check:translations)
 const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates };
 
-module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, translatedTables };
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, translatedTables };

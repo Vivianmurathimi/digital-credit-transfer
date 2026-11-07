@@ -129,9 +129,9 @@ test('at the semester end: unreviewed applications rejected as System, decided o
     for (const id of [pending, waiting]) {
         const row = await statusOf(id);
         assert.equal(row.status, 'rejected');
-        assert.equal(row.reviewer_note, 'Not reviewed before the semester closed.');
+        assert.equal(row.reviewer_note, null, 'no English text stored (reviewer Group 7)');
         assert.equal(row.info_deadline, null);
-        assert.deepEqual([row.decided_by, row.decided_by_role, row.decision_rationale], [null, 'system', 'Not reviewed before the semester closed.']);
+        assert.deepEqual([row.decided_by, row.decided_by_role, row.decision_rationale], [null, 'system', null]);
         assert.deepEqual(await historyOf(id), [{ kind: 'auto_rejected', actor_role: 'system', reason_code: 'SEMESTER_ENDED' }]);
     }
     assert.equal((await statusOf(approved)).status, 'approved', 'a decided application is kept as it is');
@@ -152,8 +152,8 @@ test('running again, and again after a restart, changes nothing', async () => {
     // A restart: the job module is loaded fresh; everything it needs is in the database
     delete require.cache[require.resolve(jobsModule)];
     ({ closeEndedSemesters, runApplicationJobs } = require(jobsModule));
-    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, only, onlyDraftsOf: draftStudents() });
-    assert.deepEqual(results, { 'semester end': 0, 'deadline reminders': 0, 'overdue information requests': 0 });
+    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, remind: async () => {}, only, onlyDraftsOf: draftStudents() });
+    assert.deepEqual(results, { 'semester end': 0, 'reviewer reminders': 0, 'deadline reminders': 0, 'overdue information requests': 0 });
     assert.equal((await historyOf(id)).length, 1, 'one history entry');
     assert.equal(sent.length, 1, 'one email');
 });

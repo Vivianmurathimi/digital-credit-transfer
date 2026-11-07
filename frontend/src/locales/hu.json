@@ -543,5 +543,12 @@
   "student_period_none": "Nincs nyitott jelentkezési időszak.",
   "student_period_over": "Nincs nyitott jelentkezési időszak. A kérelembeadás utolsó napja: {{date}}.",
   "student_period_last_days": "A jelentkezési időszak utolsó napja: {{closes}}. A bírálat határideje: {{ends}}; az addig el nem bírált kérelmeket a rendszer automatikusan lezárja.",
-  "student_draft_paused_closed": "Az automatikus mentés ki van kapcsolva, amíg nem lehet kérelmet beadni."
+  "student_draft_paused_closed": "Az automatikus mentés ki van kapcsolva, amíg nem lehet kérelmet beadni.",
+  "admin_overview_title": "Kérelmek szakonként",
+  "admin_overview_line": "{{programme}}: {{pending}} elbírálásra vár, {{needsInfo}} a hallgató válaszára vár, a félév utolsó napja: {{date}}",
+  "admin_overview_line_no_semester": "{{programme}}: {{pending}} elbírálásra vár, {{needsInfo}} a hallgató válaszára vár",
+  "admin_overview_no_semester": "Jelenleg nincs futó félév.",
+  "admin_overview_reviewer": "Bíráló: {{name}}",
+  "admin_overview_no_reviewer": "Nincs aktív bíráló: az új kérelmeket senki nem kapja meg, és senki nem kap értesítést. Hívjon meg bírálót ehhez a szakhoz.",
+  "admin_overview_failed": "A szakok áttekintése nem tölthető be."
 }

@@ -1,7 +1,7 @@
 const path = require('path');
 const minioClient = require('../minio');
 
-const EVIDENCE_BUCKET = 'transcripts';
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 // pdfkit can only embed PNG and JPEG images
 const EMBEDDABLE = { '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg' };
 const MAX_BYTES = 15 * 1024 * 1024; // skip anything unexpectedly large

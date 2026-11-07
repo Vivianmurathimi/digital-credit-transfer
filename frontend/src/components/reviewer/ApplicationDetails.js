@@ -146,9 +146,13 @@ const ApplicationDetails = ({ appId, searchParams, onDecide }) => {
                                     : details.decision.decided_by_name || '—',
                         })}
                     </div>
-                    {details.decision.rationale && (
+                    {/* An automatic rejection has only a reason code (reviewer Group 7), shown in the reader's language */}
+                    {(details.decision.reason_code || details.decision.rationale) && (
                         <div style={{ marginTop: '6px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                            <strong>{t(details.status === 'approved' ? 'reviewer_decision_note_label' : 'reviewer_decision_reason_label')}</strong> {details.decision.rationale}
+                            <strong>{t(details.status === 'approved' ? 'reviewer_decision_note_label' : 'reviewer_decision_reason_label')}</strong>{' '}
+                            {details.decision.reason_code
+                                ? t(`student_reason_${details.decision.reason_code}`, { defaultValue: details.decision.rationale || '' })
+                                : details.decision.rationale}
                         </div>
                     )}
                 </section>

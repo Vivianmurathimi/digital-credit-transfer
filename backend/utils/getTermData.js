@@ -81,6 +81,8 @@ const getTermData = async (from, to) => {
                         : row.decided_by_role === 'reviewer' ? (row.decider_name || 'Reviewer') : null,
                 decidedAt: row.decided_at,
                 rationale: row.decision_rationale,
+                // An automatic rejection's reason code (reviewer Group 7); the PDF writes it in English
+                reasonCode: row.decided_by_role === 'system' ? row.auto_reason : null,
             } : null,
             courses,
             pteCourses: splitList(row.pte_course_names, ' + '),
