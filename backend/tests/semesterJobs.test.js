@@ -53,7 +53,8 @@ const application = async (status, student = students[0]) => {
     created.push(rows[0].id);
     return rows[0].id;
 };
-const statusOf = async (id) => (await pool.query('SELECT status, reviewer_note, info_deadline FROM applications WHERE id = $1', [id])).rows[0];
+const statusOf = async (id) => (await pool.query(
+    'SELECT status, reviewer_note, info_deadline, decided_by, decided_by_role, decision_rationale FROM applications WHERE id = $1', [id])).rows[0];
 const historyOf = async (id) => (await pool.query("SELECT kind, actor_role, reason_code FROM application_events WHERE application_id = $1 AND kind = 'auto_rejected'", [id])).rows;
 const draftStudents = () => students.map((s) => s.id);
 const saveDraft = (student, updatedAt) => pool.query(
@@ -129,6 +130,7 @@ test('at the semester end: unreviewed applications rejected as System, decided o
         assert.equal(row.status, 'rejected');
         assert.equal(row.reviewer_note, 'Not reviewed before the semester closed.');
         assert.equal(row.info_deadline, null);
+        assert.deepEqual([row.decided_by, row.decided_by_role, row.decision_rationale], [null, 'system', 'Not reviewed before the semester closed.']);
         assert.deepEqual(await historyOf(id), [{ kind: 'auto_rejected', actor_role: 'system', reason_code: 'SEMESTER_ENDED' }]);
     }
     assert.equal((await statusOf(approved)).status, 'approved', 'a decided application is kept as it is');

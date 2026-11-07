@@ -48,7 +48,10 @@ const waitingApplication = async ({ deadline = at(72 * HOUR), status = 'needs_in
     created.push(rows[0].id);
     return rows[0].id;
 };
-const read = async (id) => (await pool.query('SELECT status, reviewer_note, info_deadline, info_reminder_sent_at, reviewed_by FROM applications WHERE id = $1', [id])).rows[0];
+const read = async (id) => (await pool.query(
+    `SELECT status, reviewer_note, info_deadline, info_reminder_sent_at, reviewed_by,
+            decided_by, decided_by_role, decided_at, decision_rationale, final_grade
+     FROM applications WHERE id = $1`, [id])).rows[0];
 const eventsOf = async (id) => (await pool.query('SELECT kind, actor_role, actor_id, status, note, reason_code, created_at FROM application_events WHERE application_id = $1 ORDER BY id', [id])).rows;
 const emailsFor = (sent, id, type) => sent.filter((e) => e.data.applicationId === id && (!type || e.type === type));
 
@@ -109,6 +112,11 @@ test('rejected at the deadline as "System", with the reason code, history entry 
     assert.equal(row.reviewer_note, 'No response to information request.');
     assert.equal(row.reviewed_by, null, 'decided by nobody: the system');
     assert.equal(row.info_deadline, null, 'deadline cleared');
+    // The decision (reviewer Group 1): by the system, at the run's time, with the reason
+    assert.deepEqual(
+        { by: row.decided_by, role: row.decided_by_role, at: row.decided_at?.toISOString(), why: row.decision_rationale, grade: row.final_grade },
+        { by: null, role: 'system', at: deadline.toISOString(), why: 'No response to information request.', grade: null }
+    );
 
     const last = (await eventsOf(id)).at(-1);
     assert.deepEqual(

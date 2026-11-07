@@ -218,21 +218,32 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                 // The student withdrew it: it is closed for good
                 if (previous.status === 'withdrawn') return { withdrawn: true };
 
+                // Saving the same status and note again changes nothing (no history entry, same decision)
+                const changed = status !== previous.status || (newNote !== null && newNote !== previous.reviewer_note);
+                const isDecision = status === 'approved' || status === 'rejected';
+
                 // Record who made the decision and when (the logged-in reviewer or superadmin).
                 // Reply deadline (Group 9): set when the application is newly sent back for information,
                 // kept when it is asked again while already waiting, cleared by any other status.
+                // The decision (reviewer Group 1): who, as which role, when and why, set only when it is
+                // approved or rejected; back to review clears it, and the final grade belongs to an approval
+                // only (it is given on the decision screen, later). The history keeps every earlier decision.
                 // Reopening an old rejected application while the student has a newer active one for the
                 // same PTE course would break the one-active-application rule: the database refuses it.
                 const { rows } = await client.query(
                     `UPDATE applications SET status=$1, reviewer_note=COALESCE($2, reviewer_note), reviewed_by=$3, reviewed_at=NOW(),
                         info_requested_at     = CASE WHEN $5 THEN COALESCE(info_requested_at, now()) END,
                         info_deadline         = CASE WHEN $5 THEN COALESCE(info_deadline, info_reply_deadline(now())) END,
-                        info_reminder_sent_at = CASE WHEN $5 THEN info_reminder_sent_at END
+                        info_reminder_sent_at = CASE WHEN $5 THEN info_reminder_sent_at END,
+                        final_grade           = CASE WHEN $8 THEN final_grade END,
+                        decided_by            = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $3 ELSE decided_by END,
+                        decided_by_role       = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $9 ELSE decided_by_role END,
+                        decided_at            = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN now() ELSE decided_at END,
+                        decision_rationale    = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $2 ELSE decision_rationale END
                      WHERE id=$4 RETURNING student_id, reviewer_note, info_deadline`,
-                    [status, newNote, req.user.id, id, status === 'needs_info']
+                    [status, newNote, req.user.id, id, status === 'needs_info', isDecision, changed, status === 'approved', actorRoleOf(req.user)]
                 );
-                // Saving the same status and note again adds nothing to the history
-                if (status !== previous.status || (newNote !== null && newNote !== previous.reviewer_note)) {
+                if (changed) {
                     await addEvent(client, {
                         applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
                         actorRole: actorRoleOf(req.user), actorId: req.user.id, status, note: newNote,

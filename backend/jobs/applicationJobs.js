@@ -67,11 +67,13 @@ const rejectAutomatically = async ({ now, notify = notifyStudent, only = null, c
     if (!note) throw new Error(`Unknown rejection reason ${reasonCode}`);
 
     const rows = await inTransaction(async (client) => {
-        // reviewed_at is stored as UTC without a time zone; reviewed_by NULL = nobody, the system
+        // reviewed_at is stored as UTC without a time zone; reviewed_by NULL = nobody, the system.
+        // The decision (reviewer Group 1): by the system, now, with the reason as its rationale.
         const updated = await client.query(
             `UPDATE applications
              SET status = 'rejected', reviewer_note = $2, reviewed_by = NULL, reviewed_at = $1::timestamptz AT TIME ZONE 'UTC',
-                 info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
+                 info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL,
+                 final_grade = NULL, decided_by = NULL, decided_by_role = 'system', decided_at = $1, decision_rationale = $2
              WHERE (${condition}) AND ($3::int[] IS NULL OR id = ANY($3))
              RETURNING id, student_id`,
             [now, note, only]
