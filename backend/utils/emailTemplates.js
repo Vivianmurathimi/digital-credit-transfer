@@ -45,10 +45,24 @@ const reasons = {
 };
 
 // Words shared by every template in a language
+// The PTE final grades (reviewer Group 6): always with the Hungarian name, translated next to it
+const gradeNames = {
+    hu: { 5: 'jeles', 4: 'jó', 3: 'közepes', 2: 'elégséges' },
+    en: { 5: 'excellent', 4: 'good', 3: 'satisfactory', 2: 'pass' },
+    de: { 5: 'sehr gut', 4: 'gut', 3: 'befriedigend', 2: 'ausreichend' },
+};
+// "4 (jó)" in Hungarian, "4 (jó – good)" in English and German
+const gradeLabel = (grade, language) => {
+    const hu = gradeNames.hu[grade];
+    if (!hu) return String(grade);
+    const local = (gradeNames[language] || {})[grade];
+    return language === 'hu' || !local ? `${grade} (${hu})` : `${grade} (${hu} – ${local})`;
+};
+
 const common = {
-    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', signature: 'PTE Kreditátvitel' },
-    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', signature: 'PTE Credit Transfer' },
-    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', signature: 'PTE Kreditübertragung' },
+    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', gradeTitle: 'Végső jegy:', signature: 'PTE Kreditátvitel' },
+    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', gradeTitle: 'Final grade:', signature: 'PTE Credit Transfer' },
+    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', gradeTitle: 'Endnote:', signature: 'PTE Kreditübertragung' },
 };
 
 const templates = {
@@ -166,7 +180,7 @@ const noteBlock = (title, note) => `
  * Builds a notification email.
  * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
- * @param {{ name: string, status?: string, note?: string, reasonCode?: string, deadline?: Date|string, linkUrl?: string }} data
+ * @param {{ name: string, status?: string, note?: string, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send
  */
 const buildEmail = (type, lang, data) => {
@@ -183,10 +197,13 @@ const buildEmail = (type, lang, data) => {
         const label = (statusLabels[language] || statusLabels[DEFAULT_LANGUAGE])[data.status];
         if (!label) return null; // unknown status: add its label above to start sending it
         content += template.body({ label });
-        // An automatic decision shows its reason in the student's language instead of a reviewer's message
+        // An approval carries its final grade (reviewer Group 6)
+        if (data.status === 'approved' && data.finalGrade) content += noteBlock(words.gradeTitle, gradeLabel(data.finalGrade, language));
+        // An automatic decision shows its reason in the student's language instead of a reviewer's message;
+        // a rejection's rationale is shown as the reason, an approval's note as the reviewer's message
         const reason = data.reasonCode && (reasons[language] || {})[data.reasonCode];
         if (reason) content += noteBlock(words.reasonTitle, reason);
-        else if (hasNote) content += noteBlock(words.noteTitle, data.note);
+        else if (hasNote) content += noteBlock(data.status === 'rejected' ? words.reasonTitle : words.noteTitle, data.note);
         if (data.status === 'rejected') content += template.rejectedExtra;
     } else {
         content += template.body();
@@ -313,7 +330,72 @@ const buildAccountEmail = (type, lang, { url, programme = '' }) => {
     return { subject: words.subject, html };
 };
 
-// Every text table by language, for the translation check (frontend: npm run check:translations)
-const translatedTables = { templates, statusLabels, reasons, common, accountTemplates };
+// Emails to the programme's reviewer (reviewer Group 6): a new application, and a student's reply
+// to a request for information. In the reviewer's saved language; the button opens the login page.
+const reviewerTemplates = {
+    hu: {
+        greeting: (name) => `Kedves ${name}!`,
+        button: 'Bejelentkezés',
+        signature: 'PTE Kreditátvitel',
+        newApplication: {
+            subject: 'Új kreditátviteli kérelem érkezett',
+            body: ({ student, course }) => `<p>Új kérelem érkezett a szakjára: <strong>${student}</strong>, ${course}.</p><p>A kérelem az Elbírálásra vár fülön található.</p>`,
+        },
+        studentReplied: {
+            subject: 'Egy hallgató válaszolt a kiegészítési kérésére',
+            body: ({ student, course }) => `<p><strong>${student}</strong> válaszolt a kiegészítési kérésére: ${course}.</p><p>A kérelem ismét az Elbírálásra vár fülön található.</p>`,
+        },
+    },
+    en: {
+        greeting: (name) => `Dear ${name},`,
+        button: 'Log in',
+        signature: 'PTE Credit Transfer',
+        newApplication: {
+            subject: 'New credit transfer application',
+            body: ({ student, course }) => `<p>A new application has arrived in your programme: <strong>${student}</strong>, ${course}.</p><p>You will find it under Pending.</p>`,
+        },
+        studentReplied: {
+            subject: 'A student replied to your request for information',
+            body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
+        },
+    },
+    de: {
+        greeting: (name) => `Liebe/r ${name},`,
+        button: 'Anmelden',
+        signature: 'PTE-Kreditübertragung',
+        newApplication: {
+            subject: 'Neuer Antrag auf Kreditübertragung',
+            body: ({ student, course }) => `<p>In Ihrem Studiengang ist ein neuer Antrag eingegangen: <strong>${student}</strong>, ${course}.</p><p>Sie finden ihn unter „Ausstehend“.</p>`,
+        },
+        studentReplied: {
+            subject: 'Ein Studierender hat auf Ihre Informationsanfrage geantwortet',
+            body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
+        },
+    },
+};
 
-module.exports = { buildEmail, buildAccountEmail, normalizeLanguage, escapeHtml, statusLabels, templates, translatedTables };
+/**
+ * An email to a reviewer.
+ * @param {'newApplication'|'studentReplied'} type
+ * @param {{ name: string, student: string, course: string }} data  everything is escaped here
+ */
+const buildReviewerEmail = (type, lang, { name, student, course }) => {
+    const language = normalizeLanguage(lang);
+    const words = reviewerTemplates[language];
+    const template = words[type];
+    if (!template) return null;
+    const html = `
+        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
+            <h2 style="color: #004085;">${escapeHtml(words.signature)}</h2>
+            <p>${escapeHtml(words.greeting(name || ''))}</p>
+            ${template.body({ student: escapeHtml(student || ''), course: escapeHtml(course || '') })}
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: #666; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+        </div>`;
+    return { subject: template.subject, html };
+};
+
+// Every text table by language, for the translation check (frontend: npm run check:translations)
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates };
+
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, translatedTables };

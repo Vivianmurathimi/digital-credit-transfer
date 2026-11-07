@@ -307,8 +307,16 @@ const SuperAdminDashboard = () => {
                                     </span>
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
+                                    {/* Reset and force approve break the decision rules (reviewer Group 6: approvals need a
+                                        grade, decided applications are final). Disabled until the admin round rebuilds them
+                                        as admin overrides; handleUpdateStatus is kept for that. The tooltip sits on a wrapper,
+                                        because disabled buttons don't show one in every browser. */}
+                                    <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block' }}>
+                                        <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_reset_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_reset_button')}</button>
+                                    </span>
+                                    <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block', marginLeft: '8px' }}>
+                                        <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_force_approve_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_force_approve_button')}</button>
+                                    </span>
                                 </td>
                             </tr>
                         )})}

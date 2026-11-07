@@ -6,6 +6,7 @@
  * No server, database or browser is needed.
  */
 import * as list from '../src/reviewerList.js';
+import * as grades from '../src/grades.js';
 
 let failed = 0;
 const report = (ok, name, detail = '') => {
@@ -101,6 +102,22 @@ report(!list.needsCollapse('1\n2\n3\n4\n5'), '"Show more": 5 short lines stay op
 report(list.needsCollapse('1\n2\n3\n4\n5\n6'), '"Show more": 6 lines collapse');
 report(list.needsCollapse(`https://example.com/${'x'.repeat(420)}`), '"Show more": one very long line (e.g. a URL) collapses');
 report(!list.needsCollapse('') && !list.needsCollapse(null), '"Show more": no text, nothing to collapse');
+
+// Decisions (reviewer Group 6)
+report(list.replyDeadlineDay(new Date('2026-11-07T10:00:00Z')) === '2026-11-10', 'Reply deadline: the third day after today (Budapest)');
+report(list.replyDeadlineDay(new Date('2026-11-07T23:30:00Z')) === '2026-11-11', 'Reply deadline: after midnight in Budapest it is already the next day', list.replyDeadlineDay(new Date('2026-11-07T23:30:00Z')));
+report(list.replyDeadlineDay(new Date('2026-10-23T10:00:00Z')) === '2026-10-26', 'Reply deadline across the clock change (winter time starts 25 Oct)');
+report(list.replyDeadlineDay(new Date('2026-12-30T12:00:00Z')) === '2027-01-02', 'Reply deadline across the new year');
+report(same(list.decisionProblems({ type: 'approved', grade: null }), { grade: 'GRADE_REQUIRED' }), 'Approve without a grade is refused');
+report(same(list.decisionProblems({ type: 'approved', grade: 6 }), { grade: 'GRADE_REQUIRED' }) && same(list.decisionProblems({ type: 'approved', grade: 1 }), { grade: 'GRADE_REQUIRED' }), 'Approve with 1 or 6 is refused');
+report(same(list.decisionProblems({ type: 'approved', grade: 4, note: '' }), {}), 'Approve with grade 4 and no note is fine');
+report(same(list.decisionProblems({ type: 'rejected', note: '   ' }), { note: 'RATIONALE_REQUIRED' }), 'Reject needs a rationale (spaces only do not count)');
+report(same(list.decisionProblems({ type: 'needs_info', note: '' }), { note: 'MESSAGE_REQUIRED' }), 'Request info needs a message');
+report(same(list.decisionProblems({ type: 'rejected', note: 'é'.repeat(2000) }), {}) && same(list.decisionProblems({ type: 'rejected', note: 'x'.repeat(2001) }), { note: 'NOTE_TOO_LONG' }),
+    'Text limit: 2000 characters (accented letters count as one)');
+const fakeT = (key) => ({ grade_name_4: 'good', grade_name_2: 'pass' })[key];
+report(grades.gradeText(4, fakeT, 'hu') === '4 (jó)' && grades.gradeText(4, fakeT, 'en') === '4 (jó – good)' && grades.gradeText(null, fakeT, 'en') === '—',
+    'Grade labels: the Hungarian name always, the local one next to it', grades.gradeText(4, fakeT, 'en'));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll checks passed');
 process.exit(failed ? 1 : 0);

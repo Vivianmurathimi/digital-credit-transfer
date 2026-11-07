@@ -25,7 +25,8 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
     const [query, setQuery] = useState('');
     const [student, setStudent] = useState(null); // { studentId, semesterId, name }
     const [openId, setOpenId] = useState(null);
-    const [decision, setDecision] = useState(null); // { appId, type }
+    const [decision, setDecision] = useState(null); // { app, type }
+    const [notice, setNotice] = useState(''); // "Decision saved." after the panel closes
 
     // While the superadmin impersonates, every request is for that reviewer (one object, so the
     // details don't load again on every render)
@@ -63,6 +64,7 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
             <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} />
             {loadError && <div role="alert" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--danger-border)' }}>{loadError}</div>}
 
+            {notice && <div role="status" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--success-border)' }}>{notice}</div>}
             <ReviewerTabs tab={tab} counts={counts} onChange={(name) => { setTab(name); setOpenId(null); }} />
             <ReviewerSearch query={query} onQueryChange={setQuery} student={student} onClearStudent={() => setStudent(null)} />
 
@@ -77,7 +79,7 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
                             key={app.id} app={app} open={openId === app.id}
                             onToggle={() => setOpenId(openId === app.id ? null : app.id)}
                             onShowStudent={() => showStudent(app)}
-                            onDecide={(appId, type) => setDecision({ appId, type })}
+                            onDecide={(type) => { setNotice(''); setDecision({ app, type }); }}
                             searchParams={searchParams}
                         />
                     ))}
@@ -86,9 +88,14 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
 
             {decision && (
                 <DecisionModal
-                    appId={decision.appId} type={decision.type}
+                    app={decision.app} type={decision.type}
                     onClose={() => setDecision(null)}
-                    onDone={() => { setDecision(null); load(); }}
+                    onDone={(saved) => {
+                        setDecision(null);
+                        setNotice(saved ? t('reviewer_decision_saved') : '');
+                        setOpenId(null);
+                        load();
+                    }}
                 />
             )}
         </div>

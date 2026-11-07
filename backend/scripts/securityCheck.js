@@ -10,7 +10,8 @@
  * current semester's days, adds a temporary past semester with two applications of A, and puts
  * everything back. Section 4f (reviewer access) adds temporary applications, invites and reviewer
  * accounts, deactivates the test reviewer for a moment, and puts everything back; its few invite
- * emails go only to @security-check.invalid addresses (caught by Mailtrap). Otherwise
+ * emails go only to @security-check.invalid addresses (caught by Mailtrap). Section 4h (decisions)
+ * uses a temporary student with such an address, so its decision emails reach nobody real. Otherwise
  * the check changes no data and sends no emails. The only exception: the rate-limit
  * checks add rows to rate_limit_hits, and the script deletes exactly those rows at the end
  * (otherwise this computer would stay rate-limited for an hour). Test tokens are signed locally with
@@ -141,6 +142,18 @@ const restoreReviewerAccess = async () => {
     await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [testUsers]);
     const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [testUsers]);
     return `reviewer #${b.reviewerId} active again, ${rowCount} test account(s) and the test invites removed`;
+};
+
+// ---------- section 4h: a temporary student for decisions (deleted at the end, also after a crash) ----------
+// Decisions email the student, so section 4h decides only on applications of a temporary student
+// whose address ends in @security-check.invalid (Mailtrap catches it; no real student is emailed).
+const removeTestStudents = async () => {
+    const { rows } = await pool.query("SELECT id FROM users WHERE role = 'student' AND email LIKE $1", [`%${TEST_DOMAIN}`]);
+    if (rows.length === 0) return 0;
+    const ids = rows.map((r) => r.id);
+    await pool.query('DELETE FROM applications WHERE student_id = ANY($1)', [ids]);
+    const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [ids]);
+    return rowCount;
 };
 
 // ---------- small helpers ----------
@@ -733,7 +746,9 @@ const run = async () => {
         // Only the fields a student may see: an explicit list, never internal columns
         const STUDENT_FIELDS = ['decided_at', 'decided_by', 'decision_reason', 'fulfilled_courses_json', 'id', 'info_deadline', 'last_resubmitted_at',
             'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
-            'semester_name', 'current_semester'];
+            'semester_name', 'current_semester',
+            // reviewer Group 6: the final grade and the reason given with a decision (never who decided)
+            'final_grade', 'decision_rationale'];
         const listB = await call('GET', 'applications/mine', { token: B });
         const extraFields = [...new Set((listB.body?.applications || []).flatMap((app) => Object.keys(app)))].filter((k) => !STUDENT_FIELDS.includes(k));
         report(listB.status === 200 && extraFields.length === 0, 'My applications list has no internal fields (reviewed_by, student_id, ...)', extraFields.join(', ') || 'none extra');
@@ -779,7 +794,7 @@ const run = async () => {
         await expect('A withdraws own application a second time', call('PUT', `applications/${withdrawnOfA}/withdraw`, { token: A }), 409, 'CANNOT_WITHDRAW');
         // Student A's application: its own programme's reviewer (the admin if that programme has none)
         await expect(`${d.reviewerOfA ? 'Reviewer' : 'Admin'} changes a withdrawn application`,
-            call('PUT', `applications/${withdrawnOfA}/status`, { token: d.reviewerOfA ? tokenFor(d.reviewerOfA) : S, json: { status: 'approved', note: 'x' } }), 409, 'APPLICATION_WITHDRAWN');
+            call('PUT', `applications/${withdrawnOfA}/status`, { token: d.reviewerOfA ? tokenFor(d.reviewerOfA) : S, json: { status: 'approved', final_grade: 4, note: 'x' } }), 409, 'APPLICATION_WITHDRAWN');
         const tempStatuses = (await pool.query('SELECT status FROM applications WHERE id = ANY($1) ORDER BY id', [[rejectedOfA, withdrawnOfA]])).rows.map((r) => r.status);
         report(tempStatuses.join() === 'rejected,withdrawn', 'The refused requests changed nothing', tempStatuses.join(', '));
         const removedTemp = await removeTempApplications();
@@ -863,8 +878,9 @@ const run = async () => {
         )).rows.filter((c) => !appliedCodes.has(c.course_code.replace(/\s/g, '').toUpperCase()));
         const pastApp = async (status, code) => {
             const id = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note)
-                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check') RETURNING id`,
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check',
+                         CASE WHEN $5::varchar = 'approved' THEN 4 END) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]),
                     code.replace(/\s/g, '').toUpperCase(), status, pastId]
             )).rows[0].id;
@@ -940,7 +956,7 @@ const run = async () => {
             report(ofA.status === 200 && !(ofA.body.applications || []).some((a) => a.programme_id !== programmeOfB),
                 "Reviewer reads another programme's student: none of that programme's applications", `${(ofA.body?.applications || []).length} returned`);
             await expect("Reviewer opens another programme's application", call('GET', `applications/student/${d.studentA.id}/${other}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
-            await expect("Reviewer changes another programme's application", call('PUT', `applications/${other}/status`, { token: R, json: { status: 'approved', note: 'x' } }), 404, 'APPLICATION_NOT_FOUND');
+            await expect("Reviewer changes another programme's application", call('PUT', `applications/${other}/status`, { token: R, json: { status: 'approved', final_grade: 4, note: 'x' } }), 404, 'APPLICATION_NOT_FOUND');
             const after = (await pool.query('SELECT status, decided_by FROM applications WHERE id = $1', [other])).rows[0];
             report(after.status === 'rejected' && after.decided_by === null, 'The refused change saved nothing', after.status);
 
@@ -994,13 +1010,7 @@ const run = async () => {
             await expect('as_reviewer with a non-reviewer id', call('GET', `applications?as_reviewer=${d.studentA.id}`, { token: S }), 404, 'USER_NOT_FOUND');
             const ignored = await call('GET', `applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
             report(ignored.status === 200 && !(ignored.body.applications || []).some((a) => a.programme_id !== programmeOfB), 'A reviewer cannot use as_reviewer to see another programme', `${ignored.status}`);
-
-            // --- An admin decision (also while impersonating) is stored as admin. Same status, new
-            // note: a decision is recorded but the status doesn't change, so no email is sent.
-            await expect('Admin changes the decision note', call('PUT', `applications/${other}/status`, { token: S, json: { status: 'rejected', note: 'Admin decision (security check)' } }), 200);
-            const decision = (await pool.query('SELECT decided_by, decided_by_role, decided_at FROM applications WHERE id = $1', [other])).rows[0];
-            report(decision.decided_by_role === 'admin' && decision.decided_by === d.admin.id && decision.decided_at !== null,
-                'The decision is stored as admin, with the date', `${decision.decided_by_role} #${decision.decided_by}`);
+            // (An admin decision stored as "admin": section 4h, reviewer Group 6)
         }
 
         // --- Invites and the takeover, in student B's programme (the test reviewer is put back at the end)
@@ -1123,9 +1133,10 @@ const run = async () => {
                 const decided = status === 'approved' || status === 'rejected';
                 const { rows } = await pool.query(
                     `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         decided_by_role, decided_at, info_requested_at, info_deadline)
+                         decided_by_role, decided_at, info_requested_at, info_deadline, final_grade)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 'admin' END, CASE WHEN $7 THEN now() END,
-                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END,
+                             CASE WHEN $5::varchar = 'approved' THEN 4 END)
                      RETURNING id`,
                     [d.studentA.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Security check list', credits: 1 }]), code, status, semesterId, decided]
                 );
@@ -1224,6 +1235,126 @@ const run = async () => {
             const restored = await restoreSemesters();
             console.log(`(removed ${removedApps} temporary application(s); ${restored})`);
         }
+    }
+
+    section('4h. Decisions (reviewer Group 6): allowed changes, one decision at a time, grade and reason');
+    {
+        const programmeOfB = d.studentB.programme_id;
+        const neptun = `SC${Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, 'X')}`.slice(0, 6);
+        const student = (await pool.query(
+            `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+             VALUES ('Security Check Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role, programme_id`,
+            [`student-${Date.now().toString(36)}${TEST_DOMAIN}`, neptun, programmeOfB]
+        )).rows[0];
+        const T = tokenFor(student);
+        let seq = 0;
+        const appIn = async (status, programmeId = programmeOfB) => {
+            seq += 1;
+            const code = `SECD${Date.now().toString(36)}${seq}`.toUpperCase();
+            const decided = status === 'approved' || status === 'rejected';
+            const { rows } = await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
+                     final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'approved' THEN 4 END,
+                         CASE WHEN $6 THEN 'reviewer' END, CASE WHEN $6 THEN now() END,
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                 RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Decision check', credits: 3 }]), code, status, decided]
+            );
+            return rows[0].id;
+        };
+        const decide = (id, json, token = R) => call('PUT', `applications/${id}/status`, { token, json });
+        const statusOf = async (id) => (await pool.query(
+            'SELECT status, final_grade, decided_by, decided_by_role, decided_at, decision_rationale, info_deadline, info_deadline = info_reply_deadline(info_requested_at) AS deadline_rule FROM applications WHERE id = $1', [id]
+        )).rows[0];
+
+        // Only pending -> approved / rejected / needs_info
+        const refusedFrom = { needs_info: 'WAITING_FOR_STUDENT', approved: 'ALREADY_DECIDED', rejected: 'ALREADY_DECIDED', withdrawn: 'APPLICATION_WITHDRAWN' };
+        for (const [from, code] of Object.entries(refusedFrom)) {
+            const id = await appIn(from);
+            for (const json of [{ status: 'approved', final_grade: 4 }, { status: 'rejected', note: 'x' }, { status: 'needs_info', note: 'x' }]) {
+                await expect(`From ${from} to ${json.status}`, decide(id, json), 409, code);
+            }
+            report((await statusOf(id)).status === from, `The refused changes left ${from} as it was`);
+        }
+        const pendingOne = await appIn('pending');
+        await expect('Back to pending (only the student\'s reply does that)', decide(pendingOne, { status: 'pending' }), 400, 'INVALID_STATUS');
+        await expect('Set withdrawn (only the student does that)', decide(pendingOne, { status: 'withdrawn' }), 400, 'INVALID_STATUS');
+
+        // What each decision needs
+        const invalid = [
+            ['Approve without a grade', { status: 'approved' }, 'GRADE_REQUIRED'],
+            ['Approve with grade 1', { status: 'approved', final_grade: 1 }, 'INVALID_FINAL_GRADE'],
+            ['Approve with grade 6', { status: 'approved', final_grade: 6 }, 'INVALID_FINAL_GRADE'],
+            ['Approve with grade 4.5', { status: 'approved', final_grade: 4.5 }, 'INVALID_FINAL_GRADE'],
+            ['Approve with grade "4" as text', { status: 'approved', final_grade: '4' }, 'INVALID_FINAL_GRADE'],
+            ['Reject without a reason', { status: 'rejected', note: '   ' }, 'RATIONALE_REQUIRED'],
+            ['Reject with a grade', { status: 'rejected', note: 'x', final_grade: 4 }, 'GRADE_ONLY_ON_APPROVE'],
+            ['Request information without a message', { status: 'needs_info' }, 'MESSAGE_REQUIRED'],
+            ['A note of 2001 characters', { status: 'rejected', note: 'x'.repeat(2001) }, 'NOTE_TOO_LONG'],
+        ];
+        for (const [name, json, code] of invalid) await expect(name, decide(pendingOne, json), 400, code);
+        report((await statusOf(pendingOne)).status === 'pending', 'The refused decisions left the application pending');
+
+        // Two decisions at the same moment: exactly one is saved
+        const both = await Promise.all([
+            decide(pendingOne, { status: 'approved', final_grade: 4, note: 'Security check approval' }),
+            decide(pendingOne, { status: 'approved', final_grade: 5 }, S),
+        ]);
+        const statuses = both.map((r) => `${r.status}${r.code ? ` ${r.code}` : ''}`).sort();
+        report(statuses.join(' | ') === '200 | 409 ALREADY_DECIDED', 'Two decisions at once: one saved, the other 409 ALREADY_DECIDED', statuses.join(' | '));
+        const decidedEvents = (await pool.query("SELECT count(*)::int AS n FROM application_events WHERE application_id = $1 AND kind = 'decided'", [pendingOne])).rows[0].n;
+        const approvedRow = await statusOf(pendingOne);
+        report(decidedEvents === 1 && approvedRow.status === 'approved' && [4, 5].includes(approvedRow.final_grade) && approvedRow.decided_at,
+            'One decision in the history, saved with its grade and date', `${decidedEvents} event(s), grade ${approvedRow.final_grade}`);
+
+        // A reviewer's approval with a note; the admin's rejection
+        const approved = await appIn('pending');
+        await expect('Reviewer approves with grade 4 and a note', decide(approved, { status: 'approved', final_grade: 4, note: 'Well documented.' }), 200);
+        const a = await statusOf(approved);
+        report(a.final_grade === 4 && a.decided_by === d.reviewer.id && a.decided_by_role === 'reviewer' && a.decision_rationale === 'Well documented.',
+            'Approval saved: grade, reviewer, date and note', `${a.decided_by_role} #${a.decided_by}, grade ${a.final_grade}`);
+        const rejected = await appIn('pending');
+        await expect('Admin rejects with a reason', decide(rejected, { status: 'rejected', note: 'Different content.' }, S), 200);
+        const r = await statusOf(rejected);
+        report(r.decided_by_role === 'admin' && r.decided_by === d.admin.id && r.decided_at && r.final_grade === null && r.decision_rationale === 'Different content.',
+            'An admin decision is stored as admin, with the date and reason', `${r.decided_by_role} #${r.decided_by}`);
+
+        // Request information: the deadline, and no decision fields
+        const asked = await appIn('pending');
+        await expect('Reviewer requests information', decide(asked, { status: 'needs_info', note: 'Please send the syllabus.' }), 200);
+        const q = await statusOf(asked);
+        report(q.status === 'needs_info' && q.deadline_rule === true && q.decided_at === null && q.decided_by_role === null && q.final_grade === null,
+            'Request for information: reply deadline by the rule, no decision fields', `${q.info_deadline?.toISOString?.()}`);
+
+        // Another programme: 404 (not 409), whatever its status
+        if (d.studentA.programme_id !== programmeOfB) {
+            const elsewhere = await appIn('pending', d.studentA.programme_id);
+            await expect("Reviewer decides another programme's application", decide(elsewhere, { status: 'approved', final_grade: 4 }), 404, 'APPLICATION_NOT_FOUND');
+            report((await statusOf(elsewhere)).status === 'pending', "Another programme's application stays pending");
+        } else skip("Reviewer decides another programme's application", 'students A and B are in the same programme');
+
+        // The student sees the grade and the reason (never who decided)
+        const mine = await call('GET', 'applications/mine', { token: T });
+        const mineApproved = (mine.body?.applications || []).find((x) => x.id === approved);
+        const mineRejected = (mine.body?.applications || []).find((x) => x.id === rejected);
+        report(mineApproved?.final_grade === 4 && mineApproved?.decision_rationale === 'Well documented.' && mineRejected?.decision_rationale === 'Different content.'
+            && !JSON.stringify(mine.body).includes(String(d.reviewer.name)),
+        "The student's list shows the grade and the reason, not the reviewer's name", `${mineApproved?.final_grade}`);
+
+        // The database itself refuses an approval without a grade (migration 011)
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const refused = await client.query("UPDATE applications SET status = 'approved', final_grade = NULL WHERE id = $1", [asked]).then(() => 'allowed', (err) => err.constraint || err.message);
+            report(refused === 'applications_approved_has_grade', 'The database refuses an approval without a grade', refused);
+        } finally {
+            await client.query('ROLLBACK').catch(() => {});
+            client.release();
+        }
+
+        const removed = await removeTestStudents();
+        console.log(`(removed the temporary student (${removed}) with their applications and history)`);
     }
 
     section('5. Allowed reads still work -> 200');
@@ -1338,6 +1469,11 @@ const finish = async (ok) => {
         await removeTempApplications();
     } catch (err) {
         console.error('Could not remove the temporary applications:', err.message);
+    }
+    try {
+        await removeTestStudents();
+    } catch (err) {
+        console.error('Could not remove the temporary test student:', err.message);
     }
     try {
         const restored = await restoreReviewerAccess();

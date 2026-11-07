@@ -14,6 +14,7 @@ import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
 import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode, statusKey,
     NOTE_MAX, noteLength, checkNote, DRAFT_VERSION, DRAFT_SAVE_DELAY_MS, draftFromForm, isEmptyDraft, formFromDraft, DRAFT_MAX_KB } from '../applicationForm';
+import { gradeText } from '../grades';
 
 
 // What the form's draft remembers when the server holds no draft (see the draft section below)
@@ -861,10 +862,13 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                             const course = target
                                 ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits })
                                 : app.pte_course_names || '';
-                            // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters
-                            const note = ['needs_info', 'rejected'].includes(app.status)
+                            // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters.
+                            // A decision shows its own rationale (reviewer Group 6); an approval also its final grade.
+                            const note = app.status === 'needs_info'
                                 ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
-                                : '';
+                                : app.status === 'rejected'
+                                    ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.decision_rationale || app.reviewer_note || '' })
+                                    : app.status === 'approved' ? app.decision_rationale || '' : '';
                             return (
                             <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
                                 <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
@@ -880,6 +884,11 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                 </td>
                                 <td data-label={t('student_column_submitted')} style={{ padding: '12px', verticalAlign: 'top' }}>{formatDate(app.submitted_at, language)}</td>
                                 <td data-label={t('student_column_next')} style={{ padding: '12px', verticalAlign: 'top' }}>
+                                    {app.status === 'approved' && app.final_grade && (
+                                        <p style={{ margin: '0 0 8px 0' }}>
+                                            <strong>{t('student_final_grade')}</strong> {gradeText(app.final_grade, t, language)}
+                                        </p>
+                                    )}
                                     {note && (
                                         <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                                             <strong>{t('student_reviewer_note')}</strong> {note}

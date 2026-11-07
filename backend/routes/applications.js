@@ -4,12 +4,14 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const notifyStudent = require('../utils/notifyStudent');
+const notifyReviewer = require('../utils/notifyReviewer');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { programmeScopeOf, lockProgramme, resolveReviewerView } = require('../utils/reviewers');
+const { DECIDABLE_STATUS, checkDecision, refusalFor } = require('../utils/decisions');
 const { sendValidationErrors } = sendError;
 const {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
@@ -21,9 +23,8 @@ const isDuplicateApplication = (err) => err.code === '23505' && err.constraint =
 const alreadyApplied = (res) => sendError(res, 409, 'ALREADY_APPLIED', 'There is already an active or approved application for this PTE course', { field: 'target_course_ids' });
 
 
-// The statuses a reviewer or the superadmin may set. "withdrawn" is set only by the student
-// (the withdraw route below), and a withdrawn application can't be changed by anyone.
-const VALID_STATUSES = ['pending', 'needs_info', 'approved', 'rejected'];
+// The statuses a reviewer or the superadmin may set, and when: utils/decisions.js (reviewer Group 6).
+// "withdrawn" is set only by the student (the withdraw route below).
 
 // A student may withdraw an application while it is waiting: under review or waiting for their reply
 const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
@@ -126,6 +127,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
         // Respond first, then email in the background (never blocks or fails the request)
         notifyStudent(student_id, 'submitted');
+        notifyReviewer(inserted.id, 'newApplication'); // the programme's active reviewer (if any)
     } catch (err) {
         console.error('❌ Submission error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Submission failed');
@@ -210,83 +212,60 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
     }
 });
 
+// A reviewer's (or the superadmin's) decision (reviewer Group 6). The rules are in
+// utils/decisions.js: only a pending application can be approved (with a final grade 2-5),
+// rejected (with a reason) or sent back for information (with a message). The update only
+// happens while the application is still pending, so of two people deciding at the same moment
+// one succeeds and the other gets 409 ALREADY_DECIDED. The decision and its history entry are
+// saved together. Reviewers only reach their own programme's applications (others: 404).
 router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
-    const { status, note } = req.body;
-
-    if (!VALID_STATUSES.includes(status)) {
-        return sendError(res, 400, 'INVALID_STATUS', 'This status is not valid');
-    }
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
-    // No note (the admin's override sends none) keeps the reviewer's note that is already there
-    const newNote = typeof note === 'string' ? note : null;
+
+    const { errors, decision } = checkDecision(req.body);
+    if (errors) return sendValidationErrors(res, errors);
+    const { status, note, finalGrade } = decision;
+    const isDecision = status === 'approved' || status === 'rejected';
+    const actorRole = actorRoleOf(req.user); // 'reviewer', or 'admin' for the superadmin
 
     try {
-        // The status change and its history entry are saved together. The row is locked while
-        // this runs, so the previous status (used for the email) can't change underneath.
-        let updated;
-        try {
-            updated = await inTransaction(async (client) => {
-                // A reviewer can only change their own programme's applications; any other id is
-                // "not found", exactly like one that doesn't exist (reviewer Group 2)
+        const result = await inTransaction(async (client) => {
+            const { rows } = await client.query(
+                `UPDATE applications SET status = $1, reviewer_note = $2::text, reviewed_by = $3::int, reviewed_at = NOW(),
+                    info_requested_at     = CASE WHEN $5::boolean THEN now() END,
+                    info_deadline         = CASE WHEN $5::boolean THEN info_reply_deadline(now()) END,
+                    info_reminder_sent_at = NULL,
+                    final_grade           = $6::smallint,
+                    decided_by            = CASE WHEN $7::boolean THEN $3::int END,
+                    decided_by_role       = CASE WHEN $7::boolean THEN $8::varchar END,
+                    decided_at            = CASE WHEN $7::boolean THEN now() END,
+                    decision_rationale    = CASE WHEN $7::boolean THEN $2::text END
+                 WHERE id = $4 AND status = $9 AND ($10::int IS NULL OR programme_id = $10)
+                 RETURNING student_id, info_deadline`,
+                [status, note, req.user.id, id, status === 'needs_info', finalGrade, isDecision, actorRole, DECIDABLE_STATUS, programmeScopeOf(req.user)]
+            );
+            if (rows.length === 0) {
+                // Not changed: not found (or another programme's), or no longer pending
                 const current = await client.query(
-                    'SELECT status, reviewer_note FROM applications WHERE id=$1 AND ($2::int IS NULL OR programme_id = $2) FOR UPDATE',
-                    [id, programmeScopeOf(req.user)]
+                    'SELECT status FROM applications WHERE id = $1 AND ($2::int IS NULL OR programme_id = $2)', [id, programmeScopeOf(req.user)]
                 );
-                if (current.rows.length === 0) return null;
-                const previous = current.rows[0];
-                // The student withdrew it: it is closed for good
-                if (previous.status === 'withdrawn') return { withdrawn: true };
-
-                // Saving the same status and note again changes nothing (no history entry, same decision)
-                const changed = status !== previous.status || (newNote !== null && newNote !== previous.reviewer_note);
-                const isDecision = status === 'approved' || status === 'rejected';
-
-                // Record who made the decision and when (the logged-in reviewer or superadmin).
-                // Reply deadline (Group 9): set when the application is newly sent back for information,
-                // kept when it is asked again while already waiting, cleared by any other status.
-                // The decision (reviewer Group 1): who, as which role, when and why, set only when it is
-                // approved or rejected; back to review clears it, and the final grade belongs to an approval
-                // only (it is given on the decision screen, later). The history keeps every earlier decision.
-                // Reopening an old rejected application while the student has a newer active one for the
-                // same PTE course would break the one-active-application rule: the database refuses it.
-                const { rows } = await client.query(
-                    `UPDATE applications SET status=$1, reviewer_note=COALESCE($2, reviewer_note), reviewed_by=$3, reviewed_at=NOW(),
-                        info_requested_at     = CASE WHEN $5 THEN COALESCE(info_requested_at, now()) END,
-                        info_deadline         = CASE WHEN $5 THEN COALESCE(info_deadline, info_reply_deadline(now())) END,
-                        info_reminder_sent_at = CASE WHEN $5 THEN info_reminder_sent_at END,
-                        final_grade           = CASE WHEN $8 THEN final_grade END,
-                        decided_by            = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $3 ELSE decided_by END,
-                        decided_by_role       = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $9 ELSE decided_by_role END,
-                        decided_at            = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN now() ELSE decided_at END,
-                        decision_rationale    = CASE WHEN NOT $6 THEN NULL WHEN $7 THEN $2 ELSE decision_rationale END
-                     WHERE id=$4 RETURNING student_id, reviewer_note, info_deadline`,
-                    [status, newNote, req.user.id, id, status === 'needs_info', isDecision, changed, status === 'approved', actorRoleOf(req.user)]
-                );
-                if (changed) {
-                    await addEvent(client, {
-                        applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
-                        actorRole: actorRoleOf(req.user), actorId: req.user.id, status, note: newNote,
-                    });
-                }
-                return { previousStatus: previous.status, ...rows[0] };
+                return current.rows.length === 0 ? { notFound: true } : { refused: refusalFor(current.rows[0].status) };
+            }
+            await addEvent(client, {
+                applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
+                actorRole, actorId: req.user.id, status, note,
             });
-        } catch (err) {
-            if (isDuplicateApplication(err)) return alreadyApplied(res);
-            throw err;
-        }
-        if (!updated) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
-        if (updated.withdrawn) return sendError(res, 409, 'APPLICATION_WITHDRAWN', 'The student has withdrawn this application');
+            return rows[0];
+        });
+        if (result.notFound) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (result.refused) return sendError(res, 409, result.refused[0], result.refused[1]);
         res.json({ success: true });
 
         // Respond first, then email in the background (never blocks or fails the request)
-        if (status !== updated.previousStatus) {
-            const { student_id, reviewer_note, info_deadline } = updated;
-            const type = status === 'needs_info' ? 'needsInfo' : 'statusUpdate';
-            notifyStudent(student_id, type, { status, note: reviewer_note, deadline: info_deadline });
-        }
+        if (status === 'needs_info') notifyStudent(result.student_id, 'needsInfo', { note, deadline: result.info_deadline });
+        else notifyStudent(result.student_id, 'statusUpdate', { status, note, finalGrade });
     } catch (err) {
-       console.error("❌ Status update error:", err.message);
+        console.error('❌ Status update error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Update failed');
     }
 });
@@ -400,6 +379,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
 
         // Respond first, then email in the background (never blocks or fails the request)
         notifyStudent(req.user.id, 'resubmitted');
+        notifyReviewer(id, 'studentReplied'); // the programme's active reviewer (if any)
     } catch (err) {
         console.error('❌ Resubmit error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Resubmit failed');

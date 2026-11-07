@@ -139,3 +139,33 @@ export const needsCollapse = (text, { maxLines = NOTE_PREVIEW_LINES, charsPerLin
     const screenLines = lines.reduce((total, line) => total + Math.max(1, Math.ceil([...line].length / charsPerLine)), 0);
     return screenLines > maxLines;
 };
+
+// ---------- decisions (reviewer Group 6) ----------
+
+// The longest note, message or rationale (the backend's NOTE_MAX), counted in characters like the backend
+export const DECISION_TEXT_MAX = 2000;
+export const textLength = (text) => [...String(text ?? '').normalize('NFC')].length;
+
+/**
+ * The day a student must reply by when information is requested now: the third day after today,
+ * in Budapest, until 23:59:59 (the database's info_reply_deadline). Returned as 'YYYY-MM-DD'.
+ */
+export const replyDeadlineDay = (now = new Date()) => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+    const [y, m, d] = today.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + 3)).toISOString().slice(0, 10);
+};
+
+/**
+ * The decision panel's own checks before saving (the backend checks the same again).
+ * @returns {{ grade?: string, note?: string }} error codes per field; empty when fine
+ */
+export const decisionProblems = ({ type, grade, note }) => {
+    const problems = {};
+    const length = textLength(String(note ?? '').trim());
+    if (type === 'approved' && ![2, 3, 4, 5].includes(grade)) problems.grade = 'GRADE_REQUIRED';
+    if (type === 'rejected' && length === 0) problems.note = 'RATIONALE_REQUIRED';
+    if (type === 'needs_info' && length === 0) problems.note = 'MESSAGE_REQUIRED';
+    if (length > DECISION_TEXT_MAX) problems.note = 'NOTE_TOO_LONG';
+    return problems;
+};

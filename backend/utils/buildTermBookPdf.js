@@ -1,3 +1,4 @@
+const { gradeLabel } = require('./emailTemplates');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const fetchEvidence = require('./fetchEvidence');
@@ -159,12 +160,22 @@ const drawApplication = (doc, app, evidenceResults) => {
         ['Submitted', formatDateTime(app.submittedAt)],
     ]);
 
+    // The decision (reviewer Group 6): grade, who decided (name, Admin or System) and when, from the
+    // decision columns. "Last change by" is the latest status change of any kind (e.g. an information request).
     heading(doc, 'Decision');
+    const decision = app.decision;
     detailRows(doc, [
         ['Status', appStatusLabel(app), statusColor(app.status)],
-        ['Reviewed by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email})` : '—'],
-        ['Decision date', formatDateTime(app.reviewedAt)],
+        ['Final grade', decision && decision.finalGrade ? gradeLabel(decision.finalGrade, 'en') : '—'],
+        ['Decided by', decision && decision.decidedBy ? decision.decidedBy : '—'],
+        ['Decided on', decision ? formatDateTime(decision.decidedAt) : '—'],
+        ['Last change by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email}), ${formatDateTime(app.reviewedAt)}` : '—'],
     ]);
+    if (decision && decision.rationale) {
+        doc.font('Bold').fontSize(9).fillColor(COLORS.muted).text('Reason / note', MARGIN);
+        doc.font('Body').fontSize(10).fillColor(COLORS.text).text(decision.rationale, MARGIN, doc.y, { width: doc.page.width - 2 * MARGIN });
+        doc.moveDown(0.3);
+    }
 
     heading(doc, 'Fulfilled courses');
     if (app.courses.length === 0) {

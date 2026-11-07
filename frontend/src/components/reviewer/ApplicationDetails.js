@@ -5,20 +5,22 @@ import { getErrorMessage } from '../../errorMessage';
 import { programmeName } from '../../programmeName';
 import FileLink from './FileLink';
 import CreditComparison from './CreditComparison';
+import { formatDate } from '../../dates';
+import { gradeText } from '../../grades';
 import NotesConversation from './NotesConversation';
 import HistoryTable from './HistoryTable';
 
 // An opened row (reviewer Group 4): the student, the target course, every fulfilled course with
 // its institution and files, each institution's grading system, and the credit comparison.
 // Loaded when the row is opened, from the reviewer's own programme only.
-// Below them, the notes as one conversation and the history (reviewer Group 5). The decision
-// buttons are kept as they were (redone in reviewer Group 6).
+// Below them, the notes as one conversation and the history (reviewer Group 5), and the decision
+// (reviewer Group 6): the outcome once decided, the decision buttons while it is pending.
 
 const sectionTitle = { margin: '0 0 8px', fontSize: '15px', color: 'var(--text-strong)' };
 const box = { padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '6px', backgroundColor: 'var(--surface-2)' };
 const muted = { color: 'var(--text-secondary)', fontSize: '14px' };
 
-const ApplicationDetails = ({ appId, status, searchParams, onDecide }) => {
+const ApplicationDetails = ({ appId, searchParams, onDecide }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -129,11 +131,41 @@ const ApplicationDetails = ({ appId, status, searchParams, onDecide }) => {
                 </div>
             </section>
 
-            {(status === 'pending' || status === 'needs_info') && (
+            {(details.status === 'approved' || details.status === 'rejected') && (
+                <section style={box}>
+                    <h4 style={sectionTitle}>{t('reviewer_decision_heading')}</h4>
+                    <div>
+                        <strong style={{ color: details.status === 'approved' ? 'var(--ok-text)' : 'var(--error-text)' }}>{t(`status_${details.status}`)}</strong>
+                        {details.status === 'approved' && <> · {t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</>}
+                    </div>
+                    <div style={muted}>
+                        {t('reviewer_decided_line', {
+                            date: details.decision.decided_at ? formatDate(details.decision.decided_at, language) : '—',
+                            who: details.decision.decided_by_role === 'admin' ? t('reviewer_decided_by_admin')
+                                : details.decision.decided_by_role === 'system' ? t('reviewer_decided_by_system')
+                                    : details.decision.decided_by_name || '—',
+                        })}
+                    </div>
+                    {details.decision.rationale && (
+                        <div style={{ marginTop: '6px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                            <strong>{t(details.status === 'approved' ? 'reviewer_decision_note_label' : 'reviewer_decision_reason_label')}</strong> {details.decision.rationale}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {details.status === 'needs_info' && details.respond_by && (
+                <p role="note" style={{ margin: 0, padding: '8px 10px', borderRadius: '5px', backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)' }}>
+                    {t('reviewer_waiting_for_student', { date: formatDate(details.respond_by, language) })}
+                </p>
+            )}
+
+            {/* Only a pending application can be decided (utils/decisions.js on the server) */}
+            {details.status === 'pending' && (
                 <section style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    <button type="button" onClick={() => onDecide(appId, 'approved')} style={{ backgroundColor: 'var(--brand)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--brand)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_approve')}</button>
-                    <button type="button" onClick={() => onDecide(appId, 'needs_info')} style={{ backgroundColor: 'var(--request)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--request)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_request_info')}</button>
-                    <button type="button" onClick={() => onDecide(appId, 'rejected')} style={{ backgroundColor: 'var(--surface)', color: 'var(--link)', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--link)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_reject')}</button>
+                    <button type="button" onClick={() => onDecide('approved')} style={{ backgroundColor: 'var(--brand)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--brand)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_approve')}</button>
+                    <button type="button" onClick={() => onDecide('needs_info')} style={{ backgroundColor: 'var(--request)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--request)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_request_info')}</button>
+                    <button type="button" onClick={() => onDecide('rejected')} style={{ backgroundColor: 'var(--surface)', color: 'var(--link)', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--link)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_reject')}</button>
                 </section>
             )}
         </div>

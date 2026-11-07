@@ -16,7 +16,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are five parts:
 
-1. **Automated API check** (`npm run security-check`): 312 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 350 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Background job tests** (`npm test` in `backend/`): reminders, automatic rejections and the semester end with a fake clock (section 1c).
 4. **Translation check** (`npm run check:translations` in `frontend/`): missing, unused and inconsistent texts, hard-coded English, emails (section 1d).
@@ -206,6 +206,16 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Details of another programme's, a withdrawn or a non-existent application; also as the superadmin viewing as the reviewer | `404 APPLICATION_NOT_FOUND` |
 | | | History in the details (reviewer Group 5) | every step from `application_events` with the note type from `application_notes` and the student's or reviewer's name; no user ids; an admin's step shows as Admin without the admin's name |
 | | | Details as a student; as the superadmin without `as_reviewer` | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` |
+| 4h | **Decisions (reviewer Group 6)**, on applications of a temporary student (`@security-check.invalid`, deleted afterwards) | From `needs_info`, `approved`, `rejected`, `withdrawn` to any decision | `409 WAITING_FOR_STUDENT` / `ALREADY_DECIDED` / `ALREADY_DECIDED` / `APPLICATION_WITHDRAWN`; nothing changed |
+| | | Setting `pending` or `withdrawn` | `400 INVALID_STATUS` |
+| | | Approve without a grade; with 1, 6, 4.5 or "4" | `400 GRADE_REQUIRED` / `400 INVALID_FINAL_GRADE` |
+| | | Reject without a reason (also only spaces); reject with a grade; request information without a message; a 2001-character note | `400 RATIONALE_REQUIRED` / `GRADE_ONLY_ON_APPROVE` / `MESSAGE_REQUIRED` / `NOTE_TOO_LONG`; still pending |
+| | | Two approvals at the same moment (reviewer and admin) | one `200`, one `409 ALREADY_DECIDED`; one `decided` history entry |
+| | | Reviewer approves with grade and note; admin rejects with a reason | saved with grade, `decided_by`, `decided_by_role` (`reviewer` / `admin`), date and rationale |
+| | | Request for information | reply deadline by `info_reply_deadline`; no decision fields |
+| | | Another programme's application | `404 APPLICATION_NOT_FOUND`; still pending |
+| | | The student's own list | final grade and reason, never the reviewer's name |
+| | | An approval without a grade written straight to the database | refused by `applications_approved_has_grade` (migration 011) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -256,6 +266,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
 | 2026-10-30 | throwaway copy with migration 008, semesters (Group 3) and the translation sweep (Group 10) | **212 passed, 0 failed, 1 skipped** (213 checks); the skip is the duplicate check, because in the development data student B's only application is withdrawn. Semester days, admin toggle, applications and drafts compared before and after: unchanged |
+| 2026-11-07 | throwaway copy with migration 011, decisions and emails (reviewer Group 6) | **349 passed, 0 failed, 1 skipped** (350 checks); same skip as before; the temporary student, applications and semester removed |
 | 2026-11-07 | throwaway copy, reviewer notes and history (reviewer Group 5) | **311 passed, 0 failed, 1 skipped** (312 checks); same skip as before; temporary applications and the temporary past semester removed |
 | 2026-11-07 | throwaway copy, reviewer application details (reviewer Group 4) | **309 passed, 0 failed, 1 skipped** (310 checks); same skip as before; temporary applications and the temporary past semester removed |
 | 2026-11-07 | throwaway copy, reviewer dashboard list (reviewer Group 3) | **297 passed, 0 failed, 1 skipped** (298 checks); same skip as before; temporary applications and the temporary past semester removed |

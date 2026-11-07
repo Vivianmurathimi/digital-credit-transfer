@@ -7,6 +7,7 @@ import { getErrorMessage } from '../errorMessage';
 import { statusKey } from '../applicationForm';
 import { formatDate, formatDateTime } from '../dates';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
+import { gradeText } from '../grades';
 
 const sectionTitle = { fontSize: '15px', margin: '18px 0 6px 0', color: 'var(--link)' };
 const fileButton = { background: 'none', border: 'none', padding: 0, color: 'var(--link)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', textAlign: 'left', overflowWrap: 'anywhere' };
@@ -125,6 +126,16 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
                     {application.decided_by && statusKey(application.status) !== 'pending' && (
                         <p style={{ margin: '0 0 4px 0', color: 'var(--text-muted)' }}>
                             {t('student_detail_last_change', { who: t(`student_actor_${application.decided_by}`), date: formatDateTime(application.decided_at, language) })}
+                        </p>
+                    )}
+                    {/* The decision (reviewer Group 6): the final grade of an approval, and the reason or note given with it */}
+                    {application.status === 'approved' && application.final_grade && (
+                        <p style={{ margin: '8px 0 4px 0' }}><strong>{t('student_final_grade')}</strong> {gradeText(application.final_grade, t, language)}</p>
+                    )}
+                    {['approved', 'rejected'].includes(application.status) && (application.decision_reason || application.decision_rationale) && (
+                        <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                            <strong>{t('student_reviewer_note')}</strong>{' '}
+                            {t(`student_reason_${application.decision_reason}`, { defaultValue: application.decision_rationale || '' })}
                         </p>
                     )}
                     {application.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={application.info_deadline} style={{ marginTop: '8px' }} />}

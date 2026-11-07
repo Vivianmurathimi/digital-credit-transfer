@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDate } from '../../dates';
 import { targetCourse } from '../../reviewerList';
+import { gradeText } from '../../grades';
 import ApplicationDetails from './ApplicationDetails';
 
 // One application: a summary line that opens into the details
@@ -52,6 +53,7 @@ const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchPa
                 {(app.status === 'approved' || app.status === 'rejected') && (
                     <div style={{ marginTop: '4px', fontSize: '13px' }}>
                         <strong style={{ color: DECISION_COLORS[app.status] }}>{t(`status_${app.status}`)}</strong>
+                        {app.status === 'approved' && <>{' · '}{t('reviewer_grade_line', { grade: gradeText(app.final_grade, t, language) })}</>}
                         {' · '}
                         {t('reviewer_decided_line', { date: app.decided_at ? formatDate(app.decided_at, language) : '—', who: decidedBy })}
                     </div>
@@ -70,7 +72,7 @@ const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchPa
                             <span style={{ color: 'var(--text-secondary)' }}>{t('reviewer_other_applications', { count: 0 })}</span>
                         )}
                     </div>
-                    <ApplicationDetails appId={app.id} status={app.status} searchParams={searchParams} onDecide={onDecide} />
+                    <ApplicationDetails appId={app.id} searchParams={searchParams} onDecide={onDecide} />
                 </div>
             )}
         </li>

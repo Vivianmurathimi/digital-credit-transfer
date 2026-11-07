@@ -47,7 +47,7 @@ const LIST_QUERY = `
            l.created_at AT TIME ZONE 'UTC' AS submitted_at, l.last_action_at, l.resubmit_count,
            ((now() AT TIME ZONE 'Europe/Budapest')::date - (l.last_action_at AT TIME ZONE 'Europe/Budapest')::date) AS waiting_days,
            l.info_deadline AS respond_by,
-           l.decided_by_role, decider.name AS decided_by_name, l.decided_at,
+           l.decided_by_role, decider.name AS decided_by_name, l.decided_at, l.final_grade,
            (SELECT count(*)::int FROM listed o
             WHERE o.student_id = l.student_id AND o.id <> l.id AND o.semester_id IS NOT DISTINCT FROM l.semester_id) AS other_count
     FROM listed l
@@ -102,11 +102,13 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
 
         const found = (await pool.query(
             `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
-                    a.supplemental_files,
+                    a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
+                    a.decision_rationale, a.info_deadline AS respond_by,
                     u.name AS student_name, u.neptun_code, p.code AS programme_code, p.name_en, p.name_hu, p.name_de
              FROM applications a
              JOIN users u ON u.id = a.student_id
              JOIN programmes p ON p.id = a.programme_id
+             LEFT JOIN users decider ON decider.id = a.decided_by
              WHERE a.id = $1 AND a.programme_id = $2 AND a.status <> 'withdrawn'`,
             [id, view.reviewer.programme_id]
         )).rows[0];
@@ -164,6 +166,15 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
                 extra_files: extraFiles,
                 files,
                 events,
+                // The decision (reviewer Group 6); the decider's name only for a reviewer
+                decision: {
+                    final_grade: found.final_grade,
+                    decided_by_role: found.decided_by_role,
+                    decided_by_name: found.decided_by_role === 'reviewer' ? found.decided_by_name : null,
+                    decided_at: found.decided_at,
+                    rationale: found.decision_rationale,
+                },
+                respond_by: found.respond_by,
             },
         });
     } catch (err) {
