@@ -235,7 +235,8 @@ const buildEmail = (type, lang, data) => {
 
 // Account emails (Group 10): the verification link after registering and the password reset link.
 // Sent in the language chosen when registering / the account's saved language.
-// reviewerInvite (reviewer Group 2): the superadmin's invitation, in the language chosen for it.
+// reviewerInvite (reviewer Group 2) and adminInvite (admin round Group 2): the superadmin's
+// invitation, in the language chosen for it.
 const accountTemplates = {
     hu: {
         verifyAccount: {
@@ -256,6 +257,13 @@ const accountTemplates = {
             subject: 'Meghívó bírálónak – PTE Kreditátvitel',
             heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
             text: (programme) => `Meghívást kapott a(z) ${programme} szak bírálójának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
+            button: 'Meghívó elfogadása',
+            footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
+        },
+        adminInvite: {
+            subject: 'Meghívó adminisztrátornak – PTE Kreditátvitel',
+            heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
+            text: 'Meghívást kapott a PTE Kreditátviteli rendszer adminisztrátorának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.',
             button: 'Meghívó elfogadása',
             footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
@@ -282,6 +290,13 @@ const accountTemplates = {
             button: 'Accept invitation',
             footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
         },
+        adminInvite: {
+            subject: 'Administrator invitation – PTE Credit Transfer',
+            heading: 'Invitation to the PTE Credit Transfer System',
+            text: 'You have been invited to be an administrator of the PTE Credit Transfer System. Click the button below to set your password and activate your account.',
+            button: 'Accept invitation',
+            footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
     },
     de: {
         verifyAccount: {
@@ -305,12 +320,19 @@ const accountTemplates = {
             button: 'Einladung annehmen',
             footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
         },
+        adminInvite: {
+            subject: 'Einladung als Administrator – PTE-Kreditübertragung',
+            heading: 'Einladung zum PTE-Kreditübertragungssystem',
+            text: 'Sie wurden als Administrator des PTE-Kreditübertragungssystems eingeladen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.',
+            button: 'Einladung annehmen',
+            footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
     },
 };
 
 /**
  * Builds an account email with its link button.
- * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'} type
+ * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'adminInvite'} type
  * @param {string} lang  falls back to Hungarian
  * @param {{ url: string, programme?: string }} data  programme: the programme's name (reviewer invite)
  * @returns {{ subject: string, html: string }}

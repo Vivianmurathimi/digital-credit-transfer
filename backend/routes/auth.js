@@ -18,14 +18,12 @@ const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLim
 const NEPTUN_PATTERN = /^[A-Z0-9]{6}$/;
 const normalizeNeptun = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '');
 
-// The role comes from the university email domain.
-// Staff (@mik.pte.hu) can't register: reviewers are invited by the superadmin (reviewer Group 2).
-const STAFF_DOMAIN = '@mik.pte.hu';
-const roleForEmail = (lowerEmail) => {
-    if (lowerEmail.endsWith('@tr.pte.hu')) return 'student';
-    if (lowerEmail.endsWith('@adminisztracio.pte.hu')) return 'superadmin';
-    return null;
-};
+// Registration only ever creates students (admin round Group 2). Staff addresses can't register:
+// reviewers and admins get in only by invitation (routes/staffInvites.js).
+// The domains are still written here until the admin's allowed-domains list (admin round Group 3).
+const STAFF_DOMAINS = ['@mik.pte.hu', '@adminisztracio.pte.hu'];
+const STUDENT_DOMAIN = '@tr.pte.hu';
+const roleForEmail = (lowerEmail) => (lowerEmail.endsWith(STUDENT_DOMAIN) ? 'student' : null);
 
 router.post('/register', async (req, res) => {
     const { name, email, password, language, neptun_code, programme_code } = req.body;
@@ -47,14 +45,14 @@ router.post('/register', async (req, res) => {
 
     try {
         const lowerEmail = email.toLowerCase();
-        if (lowerEmail.trim().endsWith(STAFF_DOMAIN)) {
+        if (STAFF_DOMAINS.some((domain) => lowerEmail.trim().endsWith(domain))) {
             return sendError(res, 403, 'STAFF_BY_INVITATION', 'Staff accounts are created by invitation', { field: 'email' });
         }
         const assignedRole = roleForEmail(lowerEmail);
         if (!assignedRole) return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
 
-        // Students also give their Neptun code and study programme.
-        // Admin registration is unchanged: anything sent in these fields is ignored.
+        // Students also give their Neptun code and study programme. A "role" sent in the request is
+        // never read: registration always creates a student.
         let neptunCode = null;
         let programmeId = null;
         if (assignedRole === 'student') {
@@ -172,10 +170,13 @@ router.post('/login', async (req, res) => {
         const match = await bcrypt.compare(password, user.password);
         if (!match) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
-        // A removed reviewer keeps the account (their name stays on their decisions) but can't log in.
-        // Checked after the password, so it tells nothing to someone who doesn't know it.
-        if (user.role === 'reviewer' && user.reviewer_deactivated_at) {
-            return sendError(res, 403, 'REVIEWER_REMOVED', 'Your reviewer access has been removed');
+        // A removed reviewer or deactivated admin keeps the account (their name stays on their
+        // decisions) but can't log in. Checked after the password, so it tells nothing to someone
+        // who doesn't know it.
+        if (user.deactivated_at) {
+            return user.role === 'reviewer'
+                ? sendError(res, 403, 'REVIEWER_REMOVED', 'Your reviewer access has been removed')
+                : sendError(res, 403, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated');
         }
 
         // 30-minute token, renewed by /refresh-token while the user is active

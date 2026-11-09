@@ -7,10 +7,11 @@ import PasswordInput from './PasswordInput';
 import { programmeName } from '../programmeName';
 import { MIN_PASSWORD_LENGTH, isPasswordLongEnough } from '../passwordRules';
 
-// The reviewer invite page (reviewer Group 2), opened from the invite email: /invite/:token.
-// The invited person sets their name and a password; the account becomes the programme's
-// reviewer and counts as email-verified. A removed reviewer invited again keeps their name
-// (it stays on their old decisions), so it is shown read-only and only the password is set.
+// The invite page (reviewer Group 2, admin round Group 2), opened from the invite email:
+// /invite/:token. The invited person sets their name and a password; the account becomes the
+// programme's reviewer, or an admin, and counts as email-verified. A deactivated account invited
+// again keeps its name (it stays on its old decisions), so it is shown read-only and only the
+// password is set.
 
 const boxStyle = { maxWidth: '420px', margin: '50px auto', padding: '20px', border: '1px solid var(--border-strong)', borderRadius: '8px', backgroundColor: 'var(--surface-2)' };
 const inputStyle = { width: '100%', padding: '10px', boxSizing: 'border-box', marginTop: '5px', border: '1px solid var(--border-strong)', borderRadius: '4px' };
@@ -32,6 +33,8 @@ const AcceptInvite = () => {
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
     const [done, setDone] = useState(false);
+    // Admin invites have their own texts (no programme)
+    const isAdmin = invite?.role === 'superadmin';
 
     useEffect(() => {
         http.get(`invites/${token}`).json()
@@ -70,7 +73,7 @@ const AcceptInvite = () => {
             <div style={boxStyle}>
                 <div role="status" style={successBox}>
                     <h2 style={{ marginTop: 0 }}>{t('invite_success_title')}</h2>
-                    <p>{t('invite_success_message')}</p>
+                    <p>{t(isAdmin ? 'invite_success_message_admin' : 'invite_success_message')}</p>
                     <a href="/login" style={{ color: 'var(--link)', fontWeight: 'bold' }}>{t('invite_go_to_login')}</a>
                 </div>
             </div>
@@ -93,8 +96,8 @@ const AcceptInvite = () => {
 
     return (
         <div style={boxStyle}>
-            <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t('invite_title')}</h2>
-            <p>{t('invite_intro', { programme: programmeName(invite.programme, i18n) })}</p>
+            <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t(isAdmin ? 'invite_title_admin' : 'invite_title')}</h2>
+            <p>{isAdmin ? t('invite_intro_admin') : t('invite_intro', { programme: programmeName(invite.programme, i18n) })}</p>
 
             {error && <div role="alert" style={dangerBox}>{error}</div>}
 

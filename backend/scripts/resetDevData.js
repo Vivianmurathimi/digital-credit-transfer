@@ -46,8 +46,8 @@ const reset = async () => {
         // Children first: applications point to users
         const apps = await client.query('DELETE FROM applications');
         // Reviewer invitations belong to the accounts (the table exists from migration 010)
-        if ((await client.query("SELECT to_regclass('public.reviewer_invites') AS t")).rows[0].t) {
-            await client.query('DELETE FROM reviewer_invites');
+        if ((await client.query("SELECT to_regclass('public.staff_invites') AS t")).rows[0].t) {
+            await client.query('DELETE FROM staff_invites');
         }
         const users = await client.query('DELETE FROM users');
         const courses = await client.query('DELETE FROM courses');

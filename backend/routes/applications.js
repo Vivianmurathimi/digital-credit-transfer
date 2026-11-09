@@ -111,7 +111,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
                 `INSERT INTO applications 
                 (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id) 
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11,
-                        (SELECT id FROM users WHERE role = 'reviewer' AND reviewer_deactivated_at IS NULL AND programme_id = $2)) RETURNING id`,
+                        (SELECT id FROM users WHERE role = 'reviewer' AND deactivated_at IS NULL AND programme_id = $2)) RETURNING id`,
                 [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: studentNote });
@@ -196,13 +196,17 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
 // Every application a reviewer may see: only their own programme's (reviewer Group 2).
 // The superadmin sees every programme. decided_by_name: the deciding reviewer's name (admin round
 // Group 1); "Admin" and "System" are shown without a name, and old rows without a record as "—".
+// programme_has_reviewer (admin round Group 2): false = nobody reviews this programme now, so the
+// admin decides its applications directly (recorded as admin).
 router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     try {
         const view = await resolveReviewerView(pool, req);
         const programmeId = view.all ? null : view.reviewer.programme_id;
         const result = await pool.query(
             `SELECT a.*, u.name as student_name,
-                    CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name
+                    CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name,
+                    EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL
+                            AND r.programme_id = a.programme_id) AS programme_has_reviewer
              FROM applications a JOIN users u ON a.student_id=u.id
              LEFT JOIN users d ON d.id = a.decided_by
              WHERE ($1::int IS NULL OR a.programme_id = $1)

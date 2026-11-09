@@ -15,7 +15,7 @@ const notifyReviewer = async (applicationId, type) => {
                     s.name AS student_name, a.target_course_code, a.target_courses->0->>'course_name' AS course_name
              FROM applications a
              JOIN users s ON s.id = a.student_id
-             LEFT JOIN users r ON r.role = 'reviewer' AND r.reviewer_deactivated_at IS NULL AND r.programme_id = a.programme_id
+             LEFT JOIN users r ON r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = a.programme_id
              WHERE a.id = $1`,
             [applicationId]
         );

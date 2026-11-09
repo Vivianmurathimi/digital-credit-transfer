@@ -11,7 +11,7 @@ const sendError = require('../utils/sendError');
 async function checkActingSession(acting, person) {
     const { rows } = await pool.query(
         `SELECT s.admin_id, s.person_id, s.person_role, s.ended_at,
-                s.started_at < now() - make_interval(secs => $2) AS too_old, a.role AS admin_role
+                s.started_at < now() - make_interval(secs => $2) AS too_old, a.role AS admin_role, a.deactivated_at AS admin_deactivated_at
          FROM acting_sessions s JOIN users a ON a.id = s.admin_id
          WHERE s.id = $1`,
         [Number(acting.sessionId) || 0, MAX_ACTING_SECONDS]
@@ -26,7 +26,7 @@ async function checkActingSession(acting, person) {
     }
     if (!session || session.ended_at || session.too_old) return 'ACTING_ENDED';
     if (session.admin_id !== acting.actorId || session.person_id !== person.id || session.person_role !== person.role) return 'ACTING_ENDED';
-    if (session.admin_role !== 'superadmin') return 'ACTING_ENDED';
+    if (session.admin_role !== 'superadmin' || session.admin_deactivated_at) return 'ACTING_ENDED';
     return null;
 }
 
@@ -57,14 +57,19 @@ async function verifyToken(req, res, next) {
     // 4. Re-check the user in the database, so a deleted user is refused and a
     //    role change by the admin takes effect immediately (not when the token expires)
     try {
-        const result = await pool.query('SELECT id, role, programme_id, reviewer_deactivated_at FROM users WHERE id = $1', [decoded.id]);
+        const result = await pool.query('SELECT id, role, programme_id, deactivated_at FROM users WHERE id = $1', [decoded.id]);
         if (result.rows.length === 0) {
             return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
         }
         const user = result.rows[0];
-        // A removed reviewer (reviewer Group 2) is refused on every request, from the next one on
-        if (user.role === 'reviewer' && user.reviewer_deactivated_at) {
-            return sendError(res, 401, 'REVIEWER_REMOVED', 'Your reviewer access has been removed');
+        // A removed reviewer (reviewer Group 2) or deactivated admin (admin round Group 2) is
+        // refused on every request, from the next one on. While the admin acts as that person,
+        // it is the acting session that ends (the admin is not told "your access was removed").
+        if (user.deactivated_at) {
+            if (decoded.acting) return sendError(res, 401, 'ACTING_ENDED', 'The acting session has ended');
+            return user.role === 'reviewer'
+                ? sendError(res, 401, 'REVIEWER_REMOVED', 'Your reviewer access has been removed')
+                : sendError(res, 401, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated');
         }
 
         // 5. Only id, the CURRENT role and programme are passed on to the routes.

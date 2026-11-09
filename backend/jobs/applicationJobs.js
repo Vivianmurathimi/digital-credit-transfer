@@ -161,7 +161,7 @@ const remindReviewersBeforeSemesterEnd = async ({ now, remind = remindReviewer, 
                     count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info_count
              FROM semester_bounds sb
              JOIN applications a ON a.semester_id = sb.id AND a.status IN ('pending', 'needs_info')
-             JOIN users r ON r.role = 'reviewer' AND r.reviewer_deactivated_at IS NULL AND r.programme_id = a.programme_id
+             JOIN users r ON r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = a.programme_id
              WHERE (sb.ends_on - 6)::timestamp AT TIME ZONE 'Europe/Budapest' <= $1 AND sb.ends_at > $1
                AND ($2::int[] IS NULL OR a.id = ANY($2))
              GROUP BY 1, 2, 3, 4

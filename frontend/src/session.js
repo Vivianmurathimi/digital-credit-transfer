@@ -16,7 +16,7 @@ export const VALID_ROLES = ['student', 'reviewer', 'superadmin'];
 
 // Reasons the login page may show after ?reason=. Anything else in the address is ignored,
 // because anyone can type a ?reason= value into the URL.
-export const SESSION_END_CODES = ['NO_TOKEN', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'SESSION_TOO_OLD', 'ACCOUNT_GONE', 'REVIEWER_REMOVED', 'ACTING_ENDED'];
+export const SESSION_END_CODES = ['NO_TOKEN', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'SESSION_TOO_OLD', 'ACCOUNT_GONE', 'REVIEWER_REMOVED', 'ACTING_ENDED', 'ACCOUNT_DEACTIVATED'];
 
 // Pages anyone can open, logged in or not. Links from emails (verify, reset, email link)
 // must keep working even with an old session in the browser. Kept in this one place

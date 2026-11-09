@@ -9,11 +9,11 @@ Each part names the file where it lives.
 - **One active reviewer per programme** (Computer Science Engineering, Civil Engineering…). The database enforces it: a unique index allows only one reviewer per programme who is not deactivated (migration 010).
 - **Reviewers only ever see their own programme.** Applications, students and files of other programmes don't exist for them: they get the same "not found" as for something that really doesn't exist.
 
-## 1. Getting access: invites (`routes/reviewerInvites.js`)
+## 1. Getting access: invites (`routes/staffInvites.js`)
 
-Reviewers never register themselves (registering with a staff address is refused). The superadmin invites them:
+Reviewers and admins never register themselves (registration only ever creates students; staff addresses are refused). The superadmin invites them on the dashboard (**Staff access**); admins are invited the same way, without a programme (admin round Group 2):
 
-1. **Invite.** The superadmin sends an email address and a programme (`POST /api/users/invite-reviewer`). The address is checked and lowercased; an address that already belongs to a student or an active reviewer is refused. If the programme already has a reviewer, the superadmin must say `replace: true`.
+1. **Invite.** The superadmin sends an email address, a role and, for a reviewer, a programme (`POST /api/users/invites`). The address is checked and lowercased; an address that already belongs to an ACTIVE account (student, reviewer or admin) is refused. If the programme already has a reviewer, the superadmin must say `replace: true`. Each invite's status (sent, accepted, expired, cancelled) is worked out from its dates when it is read.
 2. **The link.** The invite email (in Hungarian, English or German) contains a link that works **once** and for **7 days**. Only a SHA-256 hash of the link's secret is stored, so even someone reading the database can't use it. A new invite to the same address, or "resend", makes the old link stop working; an invite can also be cancelled.
 3. **Accepting.** The person opens the link, chooses a password (at least 8 characters; the same rule everywhere, `utils/passwordRules.js`) and, for a new account, gives their name. The accept page is rate-limited.
 4. **Takeover, in one database transaction:**
@@ -22,7 +22,9 @@ Reviewers never register themselves (registering with a staff address is refused
    - the programme's **open** applications (pending, needs info) move to the new reviewer. Decided applications keep the reviewer who decided them.
 
    Until the moment of acceptance the old reviewer keeps full access, so there is never a programme without anyone.
-5. **Removing a reviewer** (`PUT /api/users/:id/remove-reviewer`): the account is deactivated, not deleted (their name must stay on their past decisions). They are refused from their very next request and can't log in. Their open applications have no reviewer until a new one accepts an invite.
+5. **Removing a reviewer** (`PUT /api/users/:id/remove-reviewer`; admins: `PUT /api/users/:id/deactivate-admin`, never yourself or the last active admin): the account is deactivated, not deleted (their name must stay on their past decisions). They are refused from their very next request and can't log in. Their open applications have no reviewer until a new one accepts an invite.
+
+Inviting a deactivated account's address again reactivates the same account (same id, new password). The very first admin is created with `npm run make-superadmin -- <email>` (or `FIRST_ADMIN_EMAIL`), which only works while no active admin exists and prints an admin invite link.
 
 A deactivated reviewer keeps the role "reviewer" but does not count as the programme's reviewer and is refused everywhere. Every request re-reads the role, programme and deactivation from the database (`middleware/verifyToken.js`), so a change takes effect immediately, not when a login token expires.
 

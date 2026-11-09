@@ -42,19 +42,10 @@ Emails go to the Mailtrap inbox from `backend/.env`. Start again from a clean st
 
 ## 2. Invite, accept, replace, remove
 
-There is no invite screen yet (it comes in the admin round), so the admin steps use the API. In a terminal:
+As the admin, use **Staff access** on the admin dashboard (admin round Group 2):
 
-```
-TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d '{"email":"demo.admin@adminisztracio.pte.hu","password":"Demo1234!"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
-```
-(Use the PORT from `backend/.env` if it is not 5050.)
-
-- [ ] **Invite without replace is refused:**
-  ```
-  curl -s -X POST localhost:5050/api/users/invite-reviewer -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"email":"new.reviewer@mik.pte.hu","programme_code":"CS","language":"en"}'
-  ```
-  Expected: `PROGRAMME_HAS_REVIEWER`.
-- [ ] **Invite with replace:** the same command, with `"replace":true` added. The answer contains a `link`, and the invite email arrives in Mailtrap.
+- [ ] **Invite without replace is refused:** email `new.reviewer@mik.pte.hu`, role Reviewer, programme Computer Science Engineering, language English, "Replace the current reviewer" not ticked. Expected: "This programme already has a reviewer".
+- [ ] **Invite with replace:** the same, with "Replace the current reviewer" ticked. The screen shows the link, the invite is listed as **Sent**, and the invite email arrives in Mailtrap.
 - [ ] **Before accepting,** Dr. Szabó can still log in and work.
 - [ ] **The accept page:** open the link. The page shows the programme. Check it in EN, HU and DE, and that a 7-character password is refused.
 - [ ] **Accept:** enter a name and a password.

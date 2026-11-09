@@ -134,11 +134,11 @@ const restoreReviewerAccess = async () => {
     if (!reviewerBackup) return 'nothing to put back';
     const b = reviewerBackup;
     reviewerBackup = null;
-    await pool.query('DELETE FROM reviewer_invites WHERE email LIKE $1', [`%${TEST_DOMAIN}`]);
+    await pool.query('DELETE FROM staff_invites WHERE email LIKE $1', [`%${TEST_DOMAIN}`]);
     const testUsers = (await pool.query('SELECT id FROM users WHERE email LIKE $1', [`%${TEST_DOMAIN}`])).rows.map((r) => r.id);
     // Test reviewers off first (one active reviewer per programme), then the real one back
-    await pool.query("UPDATE users SET reviewer_deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
-    await pool.query('UPDATE users SET reviewer_deactivated_at = $2, programme_id = $3 WHERE id = $1', [b.reviewerId, b.deactivatedAt, b.programmeId]);
+    await pool.query("UPDATE users SET deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
+    await pool.query('UPDATE users SET deactivated_at = $2, programme_id = $3 WHERE id = $1', [b.reviewerId, b.deactivatedAt, b.programmeId]);
     for (const a of b.assignments) await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [a.id, a.assigned]);
     await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1)', [testUsers]);
     await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [testUsers]);
@@ -157,6 +157,23 @@ const removeTestStudents = async () => {
     await pool.query('DELETE FROM applications WHERE student_id = ANY($1)', [ids]);
     const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [ids]);
     return rowCount;
+};
+
+// ---------- section 4l: temporary admins (deleted at the end, also after a crash) ----------
+const removeTestAdmins = async () => {
+    const { rows } = await pool.query("SELECT id FROM users WHERE role = 'superadmin' AND email LIKE $1", [`%${TEST_DOMAIN}`]);
+    await pool.query('DELETE FROM staff_invites WHERE email LIKE $1', [`%${TEST_DOMAIN}`]);
+    if (rows.length === 0) return 0;
+    const ids = rows.map((r) => r.id);
+    await pool.query('DELETE FROM acting_sessions WHERE admin_id = ANY($1)', [ids]);
+    const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [ids]);
+    return rowCount;
+};
+let adminBackup = null; // { ids } of real admins that section 4l deactivates for a moment
+const restoreAdmin = async () => {
+    if (!adminBackup) return;
+    await pool.query('UPDATE users SET deactivated_at = NULL WHERE id = ANY($1)', [adminBackup.ids]);
+    adminBackup = null;
 };
 
 // ---------- small helpers ----------
@@ -239,12 +256,12 @@ const listFileOwners = async () => {
 };
 
 const loadTestData = async () => {
-    const users = (await pool.query('SELECT id, role, email, name, neptun_code, programme_id, reviewer_deactivated_at FROM users ORDER BY id')).rows;
+    const users = (await pool.query('SELECT id, role, email, name, neptun_code, programme_id, deactivated_at FROM users ORDER BY id')).rows;
     const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
-    const activeReviewers = users.filter((u) => u.role === 'reviewer' && !u.reviewer_deactivated_at);
+    const activeReviewers = users.filter((u) => u.role === 'reviewer' && !u.deactivated_at);
     const admin = users.find((u) => u.role === 'superadmin');
     // Student B: has an application and a tagged file. Student A: another student with a tagged file,
     // preferably in a DIFFERENT programme, so the cross-programme checks can run.
@@ -318,12 +335,12 @@ const run = async () => {
         ['GET', 'applications/mine'], ['GET', 'applications'], ['GET', `applications/student/${d.studentB.id}`],
         ['POST', 'applications'], ['PUT', `applications/${d.appOfB.id}/status`], ['PUT', `applications/${d.appOfB.id}/resubmit`],
         ['POST', 'uploads'], ['GET', `uploads/${fileB}`], ['DELETE', `uploads/${fileB}`],
-        ['GET', 'users'], ['GET', 'users/all'], ['PUT', `users/${d.studentB.id}/language`], ['PUT', `users/${d.studentB.id}/role`],
+        ['GET', 'users'], ['GET', 'users/staff'], ['PUT', `users/${d.studentB.id}/language`],
         ['GET', 'pte-courses'], ['GET', 'settings/status'], ['PUT', 'settings/toggle'],
         ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'],
         ['POST', 'refresh-token'], ['GET', 'me'],
-        ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
-        ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`],
+        ['POST', 'users/invites'], ['GET', 'users/invites'], ['POST', 'users/invites/1/resend'],
+        ['DELETE', 'users/invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`], ['PUT', `users/${d.admin.id}/deactivate-admin`],
         ['GET', 'reviewer/applications'], ['GET', 'reviewer/applications/1'],
         ['POST', 'acting/start'], ['POST', 'acting/exit'], ['GET', 'admin/reviewer-overview'],
     ];
@@ -343,18 +360,16 @@ const run = async () => {
     await expect('Student: all applications', call('GET', 'applications', { token: A }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: change an application status', call('PUT', `applications/${d.appOfB.id}/status`, { token: A, json: { status: 'approved' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: user list', call('GET', 'users', { token: A }), 403, 'FORBIDDEN_ROLE');
-    await expect('Student: change a role', call('PUT', `users/${d.studentA.id}/role`, { token: A, json: { newRole: 'superadmin' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: open/close submissions', call('PUT', 'settings/toggle', { token: A, json: { isOpen: false } }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: term archive', call('GET', 'archive', { token: A }), 403, 'FORBIDDEN_ROLE');
-    await expect('Reviewer: user list', call('GET', 'users/all', { token: R }), 403, 'FORBIDDEN_ROLE');
-    await expect('Reviewer: change a role', call('PUT', `users/${d.reviewer.id}/role`, { token: R, json: { newRole: 'superadmin' } }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: staff list', call('GET', 'users/staff', { token: R }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: open/close submissions', call('PUT', 'settings/toggle', { token: R, json: { isOpen: false } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: generate a term book', call('POST', 'archive/generate', { token: R, json: { from: '2025-01-01', to: '2025-06-30' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: upload as a student', call('POST', 'uploads', { token: R }), 403, 'FORBIDDEN_ROLE');
-    await expect('Reviewer: invite a reviewer', call('POST', 'users/invite-reviewer', { token: R, json: { email: 'x@security-check.invalid', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
-    await expect('Reviewer: list invites', call('GET', 'users/reviewer-invites', { token: R }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: invite a reviewer', call('POST', 'users/invites', { token: R, json: { email: 'x@security-check.invalid', role: 'reviewer', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
+    await expect('Reviewer: list invites', call('GET', 'users/invites', { token: R }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: remove a reviewer', call('PUT', `users/${d.reviewer.id}/remove-reviewer`, { token: R }), 403, 'FORBIDDEN_ROLE');
-    await expect('Student: invite a reviewer', call('POST', 'users/invite-reviewer', { token: A, json: { email: 'x@security-check.invalid', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
+    await expect('Student: invite a reviewer', call('POST', 'users/invites', { token: A, json: { email: 'x@security-check.invalid', role: 'reviewer', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
     await expect('Superadmin: student-only "my applications"', call('GET', 'applications/mine', { token: S }), 403, 'FORBIDDEN_ROLE');
     await expect('Superadmin: submit an application', call('POST', 'applications', { token: S, json: {} }), 403, 'FORBIDDEN_ROLE');
 
@@ -1023,12 +1038,12 @@ const run = async () => {
 
         // --- Invites and the takeover, in student B's programme (the test reviewer is put back at the end)
         reviewerBackup = {
-            reviewerId: d.reviewer.id, deactivatedAt: d.reviewer.reviewer_deactivated_at, programmeId: d.reviewer.programme_id,
+            reviewerId: d.reviewer.id, deactivatedAt: d.reviewer.deactivated_at, programmeId: d.reviewer.programme_id,
             assignments: (await pool.query('SELECT id, assigned_reviewer_id AS assigned FROM applications WHERE programme_id = $1', [programmeOfB])).rows,
         };
         const stamp = Date.now().toString(36);
         const newEmail = `invited-${stamp}${TEST_DOMAIN}`;
-        const invite = (json) => call('POST', 'users/invite-reviewer', { token: S, json });
+        const invite = (json) => call('POST', 'users/invites', { token: S, json: { role: 'reviewer', ...json } });
         const tokenOf = (link) => String(link || '').split('/invite/')[1] || '';
 
         await expect('Invite: programme already has a reviewer, no replace', invite({ email: newEmail, programme_code: codeOfB }), 409, 'PROGRAMME_HAS_REVIEWER');
@@ -1036,8 +1051,9 @@ const run = async () => {
         await expect("Invite: an active reviewer's email", invite({ email: d.reviewer.email, programme_code: codeOfB, replace: true }), 409, 'EMAIL_TAKEN');
         await expect('Invite: not an email address', invite({ email: 'not an email', programme_code: codeOfB }), 400, 'INVALID_EMAIL');
         await expect('Invite: unknown programme', invite({ email: newEmail, programme_code: 'NOPE' }), 400, 'INVALID_PROGRAMME');
-        await expect('Role route: make someone a reviewer', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'reviewer' } }), 400, 'USE_REVIEWER_INVITE');
-        await expect('Role route: change a reviewer\'s role', call('PUT', `users/${d.reviewer.id}/role`, { token: S, json: { newRole: 'student' } }), 400, 'USE_REVIEWER_INVITE');
+        // Roles come only from invites (admin round Group 2): the role-change route is gone
+        await expect('Role route: make someone a reviewer (route removed)', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'reviewer' } }), 404);
+        await expect('Role route: make someone an admin (route removed)', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'superadmin' } }), 404);
 
         const openApp = await tempApp(programmeOfB, 'needs_info');
         const decidedApp = await tempApp(programmeOfB, 'rejected');
@@ -1048,19 +1064,19 @@ const run = async () => {
         const created = await invite({ email: ` ${newEmail.toUpperCase()} `, programme_code: codeOfB, replace: true, language: 'en' });
         const token1 = tokenOf(created.body?.link);
         report(created.status === 201 && created.body.invite.email === newEmail && token1.length === 64, 'Invite with replace: created, email lowercased, link returned to the admin', `${created.status}`);
-        const stored = (await pool.query('SELECT row_to_json(i)::text AS row, token_hash FROM reviewer_invites i WHERE email = $1', [newEmail])).rows[0];
+        const stored = (await pool.query('SELECT row_to_json(i)::text AS row, token_hash FROM staff_invites i WHERE email = $1', [newEmail])).rows[0];
         report(!!stored && !stored.row.includes(token1) && stored.token_hash !== token1 && stored.token_hash.length === 64, 'The invite token is not stored in plain text', 'hash only');
-        const listed = await call('GET', 'users/reviewer-invites', { token: S });
-        report(listed.status === 200 && listed.body.invites.some((i) => i.email === newEmail) && !JSON.stringify(listed.body).includes(stored.token_hash),
-            'Open invites are listed, without token or hash', `${listed.body?.invites?.length} open`);
+        const listed = await call('GET', 'users/invites?status=sent', { token: S });
+        report(listed.status === 200 && listed.body.invites.some((i) => i.email === newEmail && i.status === 'sent' && i.role === 'reviewer') && !JSON.stringify(listed.body).includes(stored.token_hash),
+            'Sent invites are listed with their status, without token or hash', `${listed.body?.invites?.length} sent`);
 
         await expect('Before acceptance the old reviewer keeps full access', call('GET', 'applications', { token: R }), 200);
         await expect('The invite link opens', call('GET', `invites/${token1}`), 200);
         await expect('Accept: password shorter than 8 characters', call('POST', `invites/${token1}/accept`, { json: { name: 'Invited Reviewer', password: 'short' } }), 400, 'PASSWORD_TOO_SHORT');
         await expect('Accept: no name for a new account', call('POST', `invites/${token1}/accept`, { json: { password: 'LongEnough1' } }), 400, 'MISSING_FIELDS');
         await expect('Accept the invite', call('POST', `invites/${token1}/accept`, { json: { name: 'Invited Reviewer', password: 'LongEnough1' } }), 200);
-        const newReviewer = (await pool.query('SELECT id, role, programme_id, is_verified, reviewer_deactivated_at FROM users WHERE email = $1', [newEmail])).rows[0];
-        report(newReviewer && newReviewer.role === 'reviewer' && newReviewer.programme_id === programmeOfB && newReviewer.is_verified && !newReviewer.reviewer_deactivated_at,
+        const newReviewer = (await pool.query('SELECT id, role, programme_id, is_verified, deactivated_at FROM users WHERE email = $1', [newEmail])).rows[0];
+        report(newReviewer && newReviewer.role === 'reviewer' && newReviewer.programme_id === programmeOfB && newReviewer.is_verified && !newReviewer.deactivated_at,
             'The new account is an active, verified reviewer of the programme', newReviewer ? `#${newReviewer.id}` : 'missing');
         await expect('The old reviewer is refused from the next request on', call('GET', 'applications', { token: R }), 401, 'REVIEWER_REMOVED');
         const moved = (await pool.query('SELECT id, assigned_reviewer_id, decided_by, info_deadline FROM applications WHERE id = ANY($1)', [[openApp, decidedApp]])).rows;
@@ -1078,17 +1094,17 @@ const run = async () => {
         // Expired, resent and cancelled links
         const second = await invite({ email: `second-${stamp}${TEST_DOMAIN}`, programme_code: codeOfB, replace: true });
         const token2 = tokenOf(second.body?.link);
-        await pool.query("UPDATE reviewer_invites SET expires_at = now() - interval '1 minute' WHERE id = $1", [second.body?.invite?.id]);
+        await pool.query("UPDATE staff_invites SET expires_at = now() - interval '1 minute' WHERE id = $1", [second.body?.invite?.id]);
         await expect('An expired invite link', call('GET', `invites/${token2}`), 410, 'INVITE_EXPIRED');
         await expect('Accepting an expired invite', call('POST', `invites/${token2}/accept`, { json: { name: 'Late', password: 'LongEnough1' } }), 410, 'INVITE_EXPIRED');
-        const resent = await call('POST', `users/reviewer-invites/${second.body?.invite?.id}/resend`, { token: S });
+        const resent = await call('POST', `users/invites/${second.body?.invite?.id}/resend`, { token: S });
         const token3 = tokenOf(resent.body?.link);
         report(resent.status === 200 && token3 && token3 !== token2, 'Resend gives a new link', `${resent.status}`);
         await expect('The link from before the resend is refused', call('GET', `invites/${token2}`), 410, 'INVITE_INVALID');
         await expect('The resent link opens', call('GET', `invites/${token3}`), 200);
-        await expect('Cancel the invite', call('DELETE', `users/reviewer-invites/${second.body?.invite?.id}`, { token: S }), 200);
+        await expect('Cancel the invite', call('DELETE', `users/invites/${second.body?.invite?.id}`, { token: S }), 200);
         await expect('A cancelled invite link is refused', call('GET', `invites/${token3}`), 410, 'INVITE_INVALID');
-        await expect('Cancelling it again', call('DELETE', `users/reviewer-invites/${second.body?.invite?.id}`, { token: S }), 404, 'INVITE_NOT_FOUND');
+        await expect('Cancelling it again', call('DELETE', `users/invites/${second.body?.invite?.id}`, { token: S }), 404, 'INVITE_NOT_FOUND');
 
         // Removing the new reviewer, then inviting the same email again
         await expect('Remove-reviewer on a student', call('PUT', `users/${d.studentA.id}/remove-reviewer`, { token: S }), 400, 'NOT_A_REVIEWER');
@@ -1106,9 +1122,9 @@ const run = async () => {
         const shown = await call('GET', `invites/${token4}`);
         report(shown.status === 200 && shown.body.invite.existingName === 'Invited Reviewer', 'The accept page gets the existing name (read-only)', `${shown.body?.invite?.existingName}`);
         const reaccepted = await call('POST', `invites/${token4}/accept`, { json: { name: 'A Different Name', password: 'AnotherPass2' } });
-        const back = (await pool.query('SELECT id, name, reviewer_deactivated_at FROM users WHERE email = $1', [newEmail])).rows;
+        const back = (await pool.query('SELECT id, name, deactivated_at FROM users WHERE email = $1', [newEmail])).rows;
         report(reaccepted.status === 200 && reaccepted.body.reactivated === true && back.length === 1 && back[0].id === newReviewer.id
-            && back[0].name === 'Invited Reviewer' && !back[0].reviewer_deactivated_at,
+            && back[0].name === 'Invited Reviewer' && !back[0].deactivated_at,
         'Re-invite reactivates the same account, name unchanged', `#${back[0]?.id} "${back[0]?.name}"`);
         await expect('The reactivated reviewer has access again', call('GET', 'applications', { token: NR }), 200);
         const reassigned = (await pool.query('SELECT assigned_reviewer_id FROM applications WHERE id = $1', [openApp])).rows[0].assigned_reviewer_id;
@@ -1390,7 +1406,7 @@ const run = async () => {
         });
         report(differ.length === 0, 'The overview counts match the database for every programme', differ.length ? `differ: ${differ.map((c) => c.code).join(', ')}` : '');
         const withoutReviewer = (await pool.query(
-            `SELECT code FROM programmes p WHERE NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.reviewer_deactivated_at IS NULL AND r.programme_id = p.id)`
+            `SELECT code FROM programmes p WHERE NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id)`
         )).rows.map((r) => r.code);
         report(rows.every((p) => (p.reviewer === null) === withoutReviewer.includes(p.code)), 'Programmes without an active reviewer are shown without one', withoutReviewer.join(', ') || 'none');
     }
@@ -1512,10 +1528,10 @@ const run = async () => {
         const programmeOfB = d.studentB.programme_id;
         // 403 for students and reviewers on every admin-only route (401 without a token: section 1)
         const adminOnly = [
-            ['GET', 'users'], ['GET', 'users/all'], ['PUT', `users/${d.studentA.id}/role`], ['PUT', 'settings/toggle'],
+            ['GET', 'users'], ['GET', 'users/staff'], ['PUT', `users/${d.admin.id}/deactivate-admin`], ['PUT', 'settings/toggle'],
             ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'], ['GET', 'admin/reviewer-overview'],
-            ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
-            ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`], ['POST', 'acting/start'],
+            ['POST', 'users/invites'], ['GET', 'users/invites'], ['POST', 'users/invites/1/resend'],
+            ['DELETE', 'users/invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`], ['POST', 'acting/start'],
         ];
         for (const [method, path] of adminOnly) {
             const json = method === 'GET' ? undefined : {};
@@ -1524,17 +1540,17 @@ const run = async () => {
         }
 
         // 400 for bad input
-        await expect('Role change with id "abc"', call('PUT', 'users/abc/role', { token: S, json: { newRole: 'student' } }), 400, 'INVALID_ID');
-        await expect('Role change with id "0"', call('PUT', 'users/0/role', { token: S, json: { newRole: 'student' } }), 400, 'INVALID_ID');
-        await expect('Role change to an unknown role', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'owner' } }), 400, 'INVALID_ROLE');
+        await expect('Deactivate an admin with id "abc"', call('PUT', 'users/abc/deactivate-admin', { token: S }), 400, 'INVALID_ID');
+        await expect('Deactivate an admin with id "0"', call('PUT', 'users/0/deactivate-admin', { token: S }), 400, 'INVALID_ID');
+        await expect('Invite with an unknown role', call('POST', 'users/invites', { token: S, json: { email: 'x@security-check.invalid', role: 'owner' } }), 400, 'INVALID_ROLE');
         await expect('Open/close with "yes" instead of true/false', call('PUT', 'settings/toggle', { token: S, json: { isOpen: 'yes' } }), 400, 'INVALID_IS_OPEN');
         await expect('Open/close without a value', call('PUT', 'settings/toggle', { token: S, json: {} }), 400, 'INVALID_IS_OPEN');
         await expect('Term book with a broken date', call('POST', 'archive/generate', { token: S, json: { from: '2026-13-01', to: '2026-12-31' } }), 400, 'INVALID_DATES');
         await expect('Term book download with a strange name', call('GET', 'archive/..%2Fsecret/download', { token: S }), 400, 'INVALID_ARCHIVE_NAME');
-        await expect('Resend an invite with id "abc"', call('POST', 'users/reviewer-invites/abc/resend', { token: S }), 400, 'INVALID_ID');
-        await expect('Cancel an invite with id "abc"', call('DELETE', 'users/reviewer-invites/abc', { token: S }), 400, 'INVALID_ID');
+        await expect('Resend an invite with id "abc"', call('POST', 'users/invites/abc/resend', { token: S }), 400, 'INVALID_ID');
+        await expect('Cancel an invite with id "abc"', call('DELETE', 'users/invites/abc', { token: S }), 400, 'INVALID_ID');
         await expect('Remove a reviewer with id "1.5"', call('PUT', 'users/1.5/remove-reviewer', { token: S }), 400, 'INVALID_ID');
-        await expect('Invite with a broken email', call('POST', 'users/invite-reviewer', { token: S, json: { email: 'not-an-email', programme_code: d.programmeCodes[0] } }), 400);
+        await expect('Invite with a broken email', call('POST', 'users/invites', { token: S, json: { email: 'not-an-email', role: 'reviewer', programme_code: d.programmeCodes[0] } }), 400);
         await expect('Act as: userId "abc"', call('POST', 'acting/start', { token: S, json: { userId: 'abc' } }), 400, 'INVALID_USER_ID');
         await expect('Act as: no userId', call('POST', 'acting/start', { token: S, json: {} }), 400, 'INVALID_USER_ID');
         await expect('Act as: a user that does not exist', call('POST', 'acting/start', { token: S, json: { userId: d.goneUser.id } }), 404, 'USER_NOT_FOUND');
@@ -1582,7 +1598,7 @@ const run = async () => {
         const header = await call('GET', 'reviewer/applications', { token: AR });
         report(header.status === 200 && header.body?.reviewer?.id === d.reviewer.id, 'Acting as the reviewer opens the reviewer\'s own dashboard', `${header.status}`);
         await expect('Acting as the reviewer: start acting again from inside', call('POST', 'acting/start', { token: AR, json: { userId: student.id } }), 403, 'FORBIDDEN_ROLE');
-        await expect('Acting as the reviewer: admin-only route', call('GET', 'users/all', { token: AR }), 403, 'FORBIDDEN_ROLE');
+        await expect('Acting as the reviewer: admin-only route', call('GET', 'users/staff', { token: AR }), 403, 'FORBIDDEN_ROLE');
         const actingApproval = await pendingApp();
         await expect('Acting as the reviewer: approve (grade 5)', call('PUT', `applications/${actingApproval}/status`, { token: AR, json: { status: 'approved', final_grade: 5 } }), 200);
         const r3 = await decision(actingApproval);
@@ -1628,7 +1644,7 @@ const run = async () => {
 
         // Nobody can act as a removed reviewer
         const removedReviewer = (await pool.query(
-            `INSERT INTO users (name, email, password, role, is_verified, programme_id, reviewer_deactivated_at)
+            `INSERT INTO users (name, email, password, role, is_verified, programme_id, deactivated_at)
              VALUES ('Security Check Removed Reviewer', $1, 'not-a-password-hash', 'reviewer', true, $2, now()) RETURNING id`,
             [`removed-${Date.now().toString(36)}${TEST_DOMAIN}`, programmeOfB]
         )).rows[0];
@@ -1637,6 +1653,128 @@ const run = async () => {
 
         const removed = await removeTestStudents();
         console.log(`(removed the temporary student (${removed}) with their applications, history and acting sessions)`);
+    }
+
+    section('4l. Admins and reviewers (admin round Group 2): invites only, admin invites, deactivation, last admin');
+    {
+        const { spawnSync } = require('child_process');
+        const stamp = Date.now().toString(36);
+        const adminEmail = `admin-${stamp}${TEST_DOMAIN}`;
+        const tokenOf = (link) => String(link || '').split('/invite/')[1] || '';
+        const invite = (json) => call('POST', 'users/invites', { token: S, json });
+
+        // Nobody becomes staff by registering
+        await expect('Register with an admin-domain address', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@adminisztracio.pte.hu`, password: 'LongEnough1' } }), 403, 'STAFF_BY_INVITATION');
+        await expect('Register with a staff-domain address', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@mik.pte.hu`, password: 'LongEnough1' } }), 403, 'STAFF_BY_INVITATION');
+        report((await pool.query('SELECT count(*)::int AS n FROM users WHERE email LIKE $1', [`x-${stamp}@%`])).rows[0].n === 0, 'No account was created by those registrations');
+        await expect('The role-change route is gone', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'superadmin' } }), 404);
+
+        // Invite input
+        await expect('Admin invite with a programme', invite({ email: adminEmail, role: 'superadmin', programme_code: d.programmeCodes[0] }), 400, 'PROGRAMME_ONLY_FOR_REVIEWERS');
+        await expect('Admin invite with replace', invite({ email: adminEmail, role: 'superadmin', replace: true }), 400, 'PROGRAMME_ONLY_FOR_REVIEWERS');
+        await expect('Reviewer invite without a programme', invite({ email: adminEmail, role: 'reviewer' }), 400, 'INVALID_PROGRAMME');
+        await expect('Invite without a role', invite({ email: adminEmail }), 400, 'INVALID_ROLE');
+        await expect('Invite with an unknown language', invite({ email: adminEmail, role: 'superadmin', language: 'fr' }), 400, 'UNSUPPORTED_LANGUAGE');
+        await expect("Admin invite to an active admin's email", invite({ email: d.admin.email, role: 'superadmin' }), 409, 'EMAIL_TAKEN');
+        await expect("Admin invite to a student's email", invite({ email: d.studentA.email, role: 'superadmin' }), 409, 'EMAIL_TAKEN');
+        await expect('Invite list with an unknown status', call('GET', 'users/invites?status=open', { token: S }), 400, 'INVALID_STATUS');
+
+        // An admin invite
+        const created = await invite({ email: adminEmail, role: 'superadmin', language: 'en' });
+        const token1 = tokenOf(created.body?.link);
+        report(created.status === 201 && created.body.invite.role === 'superadmin' && created.body.invite.programme === null && created.body.invite.status === 'sent',
+            'Admin invite: created, no programme, status sent', `${created.status} ${created.code || ''}`);
+        const page = await call('GET', `invites/${token1}`);
+        report(page.status === 200 && page.body.invite.role === 'superadmin' && page.body.invite.programme === null, 'The accept page shows an admin invite without a programme', `${page.status}`);
+        await expect('Accept the admin invite', call('POST', `invites/${token1}/accept`, { json: { name: 'Security Check Admin', password: 'LongEnough1' } }), 200);
+        const newAdmin = (await pool.query('SELECT id, role, programme_id, is_verified, deactivated_at FROM users WHERE email = $1', [adminEmail])).rows[0];
+        report(newAdmin?.role === 'superadmin' && newAdmin.programme_id === null && newAdmin.is_verified && !newAdmin.deactivated_at,
+            'The new account is an active, verified admin', newAdmin ? `#${newAdmin.id}` : 'missing');
+        const accepted = await call('GET', 'users/invites?status=accepted', { token: S });
+        report((accepted.body?.invites || []).some((i) => i.email === adminEmail && i.status === 'accepted'), 'The invite now shows as accepted');
+        const N = tokenFor(newAdmin);
+        await expect('The new admin reads the staff list', call('GET', 'users/staff', { token: N }), 200);
+        const staffList = await call('GET', 'users/staff', { token: S });
+        const self = (staffList.body?.staff || []).find((p) => p.id === d.admin.id);
+        report(self?.is_self === true && (staffList.body?.staff || []).every((p) => ['reviewer', 'superadmin'].includes(p.role)), 'The staff list has reviewers and admins only, and marks yourself');
+        await expect('A reviewer cannot remove themselves', call('PUT', `users/${d.reviewer.id}/remove-reviewer`, { token: R }), 403, 'FORBIDDEN_ROLE');
+
+        // Deactivating admins
+        await expect('Deactivate yourself', call('PUT', `users/${d.admin.id}/deactivate-admin`, { token: S }), 400, 'CANNOT_DEACTIVATE_SELF');
+        await expect('Deactivate-admin on a reviewer', call('PUT', `users/${d.reviewer.id}/deactivate-admin`, { token: S }), 400, 'NOT_AN_ADMIN');
+        await expect('Deactivate-admin on a user that does not exist', call('PUT', `users/${d.goneUser.id}/deactivate-admin`, { token: S }), 404, 'USER_NOT_FOUND');
+        const actingN = await actingTokenFor(N, d.studentA);
+        await expect('Deactivate the new admin', call('PUT', `users/${newAdmin.id}/deactivate-admin`, { token: S }), 200);
+        await expect('The deactivated admin is refused on the next request', call('GET', 'users/staff', { token: N }), 401, 'ACCOUNT_DEACTIVATED');
+        await expect('The deactivated admin cannot log in', call('POST', 'login', { json: { email: adminEmail, password: 'LongEnough1' } }), 403, 'ACCOUNT_DEACTIVATED');
+        await expect("The deactivated admin's acting session ends", call('GET', 'applications/mine', { token: actingN }), 401, 'ACTING_ENDED');
+        const again = await call('PUT', `users/${newAdmin.id}/deactivate-admin`, { token: S });
+        report(again.status === 200 && again.body.alreadyDeactivated === true, 'Deactivating again changes nothing', `${again.status}`);
+
+        // Reactivation: same account, same id, new password
+        await expect('Invite a deactivated admin as a reviewer', invite({ email: adminEmail, role: 'reviewer', programme_code: d.programmeCodes[0], replace: true }), 409, 'EMAIL_TAKEN_OTHER_ROLE');
+        const reinvite = await invite({ email: adminEmail, role: 'superadmin' });
+        const token2 = tokenOf(reinvite.body?.link);
+        const shown = await call('GET', `invites/${token2}`);
+        report(reinvite.status === 201 && shown.body?.invite?.existingName === 'Security Check Admin', 'Re-invite a deactivated admin: the accept page keeps the name', `${reinvite.status}`);
+        const reaccepted = await call('POST', `invites/${token2}/accept`, { json: { password: 'AnotherPass2' } });
+        const back = (await pool.query('SELECT id, deactivated_at FROM users WHERE email = $1', [adminEmail])).rows;
+        report(reaccepted.status === 200 && reaccepted.body.reactivated === true && back.length === 1 && back[0].id === newAdmin.id && !back[0].deactivated_at,
+            'Re-invite reactivates the same admin account (same id)', `#${back[0]?.id}`);
+        await expect('The reactivated admin logs in with the new password', call('POST', 'login', { json: { email: adminEmail, password: 'AnotherPass2' } }), 200);
+        await expect('The old password no longer works', call('POST', 'login', { json: { email: adminEmail, password: 'LongEnough1' } }), 401, 'INVALID_CREDENTIALS');
+
+        // The last admin: two admins deactivating each other at the same moment leave one
+        const otherActive = (await pool.query("SELECT count(*)::int AS n FROM users WHERE role = 'superadmin' AND deactivated_at IS NULL AND id NOT IN ($1, $2)", [d.admin.id, newAdmin.id])).rows[0].n;
+        if (otherActive > 0) {
+            skip('Two admins deactivating each other', `${otherActive} other active admin(s) in this database`);
+        } else {
+            adminBackup = { ids: [d.admin.id] };
+            const [one, two] = await Promise.all([
+                call('PUT', `users/${newAdmin.id}/deactivate-admin`, { token: S }),
+                call('PUT', `users/${d.admin.id}/deactivate-admin`, { token: tokenFor(newAdmin) }),
+            ]);
+            const left = (await pool.query("SELECT count(*)::int AS n FROM users WHERE role = 'superadmin' AND deactivated_at IS NULL")).rows[0].n;
+            const wins = [one, two].filter((r) => r.status === 200).length;
+            const refusal = [one, two].find((r) => r.status !== 200);
+            report(wins === 1 && left === 1 && ['LAST_ADMIN', 'ACCOUNT_DEACTIVATED'].includes(refusal?.code),
+                'Two admins deactivating each other: exactly one succeeds, one admin stays active', `${one.status} ${one.code || ''} / ${two.status} ${two.code || ''}, active ${left}`);
+            await restoreAdmin();
+        }
+
+        // The admin list shows which programmes have no reviewer (the admin decides those)
+        const apps = await call('GET', 'applications', { token: S });
+        report(apps.status === 200 && (apps.body.applications || []).every((a) => typeof a.programme_has_reviewer === 'boolean'),
+            'The admin application list says whether each programme has an active reviewer');
+
+        // First-admin script: only while no active admin exists, address from the command line or FIRST_ADMIN_EMAIL
+        const script = (args, env = {}) => spawnSync(process.execPath, ['admin.js', ...args], { cwd: `${__dirname}/..`, env: { ...process.env, ...env }, encoding: 'utf8' });
+        const noEmail = script([], { FIRST_ADMIN_EMAIL: '' });
+        report(noEmail.status === 1 && /Usage/.test(noEmail.stderr), 'First-admin script without an address: usage, nothing created');
+        const withAdmin = script([`first-${stamp}${TEST_DOMAIN}`]);
+        const withEnv = script([], { FIRST_ADMIN_EMAIL: `first-${stamp}${TEST_DOMAIN}` });
+        const firstInvites = (await pool.query('SELECT count(*)::int AS n FROM staff_invites WHERE email = $1', [`first-${stamp}${TEST_DOMAIN}`])).rows[0].n;
+        report(withAdmin.status === 1 && withEnv.status === 1 && /already exists/.test(withAdmin.stderr) && firstInvites === 0,
+            'First-admin script refuses while an active admin exists (argument and FIRST_ADMIN_EMAIL)', `${withAdmin.status} / ${withEnv.status}`);
+        // With no active admin (all switched off for a moment, put back right after, also after a crash)
+        const activeIds = (await pool.query("SELECT id FROM users WHERE role = 'superadmin' AND deactivated_at IS NULL")).rows.map((r) => r.id);
+        adminBackup = { ids: activeIds };
+        try {
+            await pool.query('UPDATE users SET deactivated_at = now() WHERE id = ANY($1)', [activeIds]);
+            const firstEmail = `first-${stamp}${TEST_DOMAIN}`;
+            const ok = script([], { FIRST_ADMIN_EMAIL: firstEmail.toUpperCase() });
+            const firstLink = (ok.stdout.match(/\/invite\/([0-9a-f]{64})/) || [])[1];
+            const row = (await pool.query('SELECT role, programme_id, invited_by FROM staff_invites WHERE email = $1 AND accepted_at IS NULL AND cancelled_at IS NULL', [firstEmail])).rows[0];
+            report(ok.status === 0 && !!firstLink && row?.role === 'superadmin' && row.programme_id === null,
+                'First-admin script with no active admin: creates an admin invite and prints its link', `${ok.status}`);
+            const firstPage = firstLink ? await call('GET', `invites/${firstLink}`) : { status: 0 };
+            report(firstPage.status === 200 && firstPage.body.invite.role === 'superadmin', 'The printed link opens the admin accept page', `${firstPage.status}`);
+        } finally {
+            await restoreAdmin();
+        }
+
+        const removed = await removeTestAdmins();
+        console.log(`(removed ${removed} temporary admin(s) and their invites)`);
     }
 
     section('5. Allowed reads still work -> 200');
@@ -1756,6 +1894,12 @@ const finish = async (ok) => {
         await removeTestStudents();
     } catch (err) {
         console.error('Could not remove the temporary test student:', err.message);
+    }
+    try {
+        await restoreAdmin();
+        await removeTestAdmins();
+    } catch (err) {
+        console.error('Could not put back the admins of section 4l:', err.message);
     }
     try {
         const restored = await restoreReviewerAccess();

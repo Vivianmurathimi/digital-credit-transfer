@@ -24,7 +24,7 @@ router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), a
                     count(a.id) FILTER (WHERE a.status = 'pending')::int AS pending,
                     count(a.id) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
              FROM programmes p
-             LEFT JOIN users r ON r.role = 'reviewer' AND r.reviewer_deactivated_at IS NULL AND r.programme_id = p.id
+             LEFT JOIN users r ON r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id
              LEFT JOIN applications a ON a.programme_id = p.id AND a.status IN ('pending', 'needs_info')
              GROUP BY p.id, r.name
              ORDER BY p.code`

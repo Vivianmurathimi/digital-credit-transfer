@@ -22,7 +22,7 @@ const lockProgramme = (client, programmeId, mode = 'UPDATE') =>
 // The programme's active reviewer, or null
 const activeReviewerOf = async (db, programmeId, { lock = false } = {}) => (await db.query(
     `SELECT id, name, email FROM users
-     WHERE role = 'reviewer' AND reviewer_deactivated_at IS NULL AND programme_id = $1${lock ? ' FOR UPDATE' : ''}`,
+     WHERE role = 'reviewer' AND deactivated_at IS NULL AND programme_id = $1${lock ? ' FOR UPDATE' : ''}`,
     [programmeId]
 )).rows[0] || null;
 

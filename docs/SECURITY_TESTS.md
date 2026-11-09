@@ -229,6 +229,13 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Decision record: reviewer approves / admin overrides / admin acting as the reviewer approves | `reviewer` + reviewer's id / `admin` + admin's id / `admin` + admin's id (history too) |
 | | | Acting as the reviewer and the student: logged, own dashboard, withdraw recorded as admin, refresh keeps it, no acting from inside, a new one ends the old | as described |
 | | | Exit; the old acting token; forged, other-admin, other-person and over-one-hour acting tokens | admin's own token (same login time) / `401 ACTING_ENDED` |
+| 4l | **Admins and reviewers (admin round Group 2)** | Register with an admin-domain or staff-domain address; the old role-change route | `403 STAFF_BY_INVITATION`, no account / `404` |
+| | | Invite input: admin with a programme or replace, reviewer without a programme, no role, unknown language, an active account's email, unknown status filter | `400` / `409 EMAIL_TAKEN` / `400 INVALID_STATUS` |
+| | | Admin invite: created (no programme, status sent), accept page, accept, listed as accepted | verified active admin |
+| | | Deactivate yourself / a reviewer / nobody / the new admin | `400 CANNOT_DEACTIVATE_SELF` / `400 NOT_AN_ADMIN` / `404` / `200`; next request `401 ACCOUNT_DEACTIVATED`, login `403`, their acting session `401 ACTING_ENDED` |
+| | | Re-invite a deactivated admin (as reviewer / as admin) | `409 EMAIL_TAKEN_OTHER_ROLE` / same account reactivated, new password only |
+| | | Two admins deactivating each other at the same moment | exactly one succeeds, one admin stays active (`409 LAST_ADMIN`) |
+| | | First-admin script: no address / with an active admin / with none | usage / refused / admin invite created, link opens |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |

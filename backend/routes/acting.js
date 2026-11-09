@@ -24,13 +24,13 @@ router.post('/acting/start', verifyToken, requireRole('superadmin'), async (req,
 
     try {
         const person = (await pool.query(
-            'SELECT id, name, role, reviewer_deactivated_at FROM users WHERE id = $1', [personId]
+            'SELECT id, name, role, deactivated_at FROM users WHERE id = $1', [personId]
         )).rows[0];
         if (!person) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
         if (!['student', 'reviewer'].includes(person.role)) {
             return sendError(res, 400, 'CANNOT_ACT_AS_ROLE', 'You can only act as a student or a reviewer');
         }
-        if (person.role === 'reviewer' && person.reviewer_deactivated_at) {
+        if (person.role === 'reviewer' && person.deactivated_at) {
             return sendError(res, 400, 'CANNOT_ACT_AS_REMOVED_REVIEWER', 'This reviewer has been removed');
         }
 
