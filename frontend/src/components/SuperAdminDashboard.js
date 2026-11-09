@@ -4,9 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import TermArchive from './TermArchive';
 import ReviewerOverview from './ReviewerOverview';
+import { startActing } from '../acting';
+import { formatDateTime } from '../dates';
 
-const SuperAdminDashboard = () => {
-    const { t } = useTranslation();
+// onActingStarted: called once the session is the person's (Dashboard then shows their screen)
+const SuperAdminDashboard = ({ onActingStarted }) => {
+    const { t, i18n } = useTranslation();
     const [systemUsers, setSystemUsers] = useState([]);
     const [applications, setApplications] = useState([]);
 
@@ -67,12 +70,25 @@ const SuperAdminDashboard = () => {
         try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
     };
 
-    const handleImpersonateSpecificUser = (user) => {
-        localStorage.setItem('originalRole', 'superadmin');
-        localStorage.setItem('impersonatedRole', user.role);
-        localStorage.setItem('impersonatedUserId', user.id);
-        localStorage.setItem('impersonatedName', user.name);
-        window.location.reload();
+    // Acting as a student or reviewer (admin round Group 1): the server starts the session and
+    // records it; everything done in it is saved as Admin
+    const handleActAs = async (user) => {
+        if (user.deactivated) return;
+        try {
+            await startActing(user.id);
+            onActingStarted();
+        } catch (err) {
+            alert(getErrorMessage(err, t, 'acting_start_failed'));
+        }
+    };
+
+    // "Reviewer: <name>", "Admin" or "System", with the date; "—" for older rows without a record
+    const decidedBy = (app) => {
+        if (!app.decided_by_role) return '—';
+        const who = app.decided_by_role === 'reviewer'
+            ? t('superadmin_decided_by_reviewer', { name: app.decided_by_name || '—' })
+            : t(`reviewer_decided_by_${app.decided_by_role}`);
+        return app.decided_at ? `${who}, ${formatDateTime(app.decided_at, i18n.language)}` : who;
     };
 
     const handleUpdateStatus = async (appId, newStatus) => {
@@ -121,7 +137,7 @@ const SuperAdminDashboard = () => {
             if (res.data.success) {
                 setRoleUpdateStatus(`${user.name} is now ${newRole}.`);
                 fetchAllUsers(); // refresh the list to show the change
-                fetchSystemUsers(); // also refresh impersonation dropdowns in case role affects them
+                fetchSystemUsers(); // also refresh the act-as lists in case the role change affects them
                 setTimeout(() => setRoleUpdateStatus(''), 3000);
             }
         } catch (err) {
@@ -161,15 +177,15 @@ const SuperAdminDashboard = () => {
             {/* Pending applications and reviewers per programme (reviewer Group 7) */}
             <ReviewerOverview />
 
-            {/* Impersonation Engine */}
+            {/* Act as a student or reviewer (admin round Group 1) */}
             <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>
-                <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_impersonate_title')}</h2>
-                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
+                <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_act_as_title')}</h2>
+                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_act_as_description')}</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
-                    {/* Student Impersonation */}
+                    {/* Act as a student */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', marginBottom: '5px' }}>{t('superadmin_act_as_student')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid var(--link)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
@@ -178,7 +194,7 @@ const SuperAdminDashboard = () => {
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--link)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
                                 {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_students')}</div> : (
                                     filteredStudents.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-info)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                        <div key={user.id} onClick={() => handleActAs(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-info)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: 'var(--link)', fontSize: '14px' }}>{user.name}</div>
                                             <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
@@ -188,9 +204,9 @@ const SuperAdminDashboard = () => {
                         )}
                     </div>
 
-                    {/* Reviewer Impersonation */}
+                    {/* Act as a reviewer */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--success-text)', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--success-text)', marginBottom: '5px' }}>{t('superadmin_act_as_reviewer')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid var(--accent)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
@@ -199,8 +215,8 @@ const SuperAdminDashboard = () => {
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--accent)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4x 8px rgba(0,0,0,0.1)' }}>
                                 {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_reviewers')}</div> : (
                                     filteredReviewers.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--success-surface)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
-                                            <div style={{ fontWeight: 'bold', color: 'var(--success-text)', fontSize: '14px' }}>{user.name}</div>
+                                        <div key={user.id} onClick={() => handleActAs(user)} aria-disabled={user.deactivated || undefined} onMouseEnter={(e) => { if (!user.deactivated) e.currentTarget.style.backgroundColor = 'var(--success-surface)'; }} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: user.deactivated ? 'not-allowed' : 'pointer', opacity: user.deactivated ? 0.55 : 1, borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                            <div style={{ fontWeight: 'bold', color: 'var(--success-text)', fontSize: '14px' }}>{user.name}{user.deactivated && ` (${t('superadmin_removed_reviewer')})`}</div>
                                             <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
                                     ))
@@ -278,12 +294,13 @@ const SuperAdminDashboard = () => {
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_decided_by_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_action_column')}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {applications.length === 0 ? (
-                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
+                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
                         ) : applications.map(app => {
                             const coursesList = parseCourses(app.fulfilled_courses_json);
                             const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
@@ -310,6 +327,7 @@ const SuperAdminDashboard = () => {
                                         {t(`status_${app.status}`)}
                                     </span>
                                 </td>
+                                <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>{decidedBy(app)}</td>
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                     {/* Reset and force approve break the decision rules (reviewer Group 6: approvals need a
                                         grade, decided applications are final). Disabled until the admin round rebuilds them

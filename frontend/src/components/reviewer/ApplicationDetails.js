@@ -28,7 +28,7 @@ const decisionButton = (cue) => ({
 });
 
 // readOnly (reviewer group L3): a past semester's application; the server says so too (read_only)
-const ApplicationDetails = ({ appId, searchParams, onDecide, readOnly = false }) => {
+const ApplicationDetails = ({ appId, onDecide, readOnly = false }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -38,11 +38,11 @@ const ApplicationDetails = ({ appId, searchParams, onDecide, readOnly = false })
         let current = true;
         setDetails(null);
         setError('');
-        http.get(`reviewer/applications/${appId}`, { searchParams }).json()
+        http.get(`reviewer/applications/${appId}`).json()
             .then((data) => { if (current) setDetails(data.application); })
             .catch((err) => { if (current) setError(getErrorMessage(err, t, 'reviewer_details_failed')); });
         return () => { current = false; };
-    }, [appId, searchParams, t]);
+    }, [appId, t]);
 
     if (error) return <div role="alert" style={{ margin: '0 12px 12px', backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', borderLeft: '4px solid var(--red)' }}>{error}</div>;
     if (!details) return <p role="status" style={{ ...muted, padding: '0 12px 12px', margin: 0 }}>{t('reviewer_details_loading')}</p>;
@@ -145,7 +145,7 @@ const ApplicationDetails = ({ appId, searchParams, onDecide, readOnly = false })
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
                         {(() => {
                             const cue = statusCue(details.status, details.decision.decided_by_role);
-                            return <Chip cue={cue.cue} icon={STATUS_ICONS[cue.cue]}>{t(cue.labelKey)}</Chip>;
+                            return <Chip cue={cue.cue} icon={STATUS_ICONS[cue.cue]} size="large">{t(cue.labelKey)}</Chip>;
                         })()}
                         {details.status === 'approved' && <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</span>}
                     </div>

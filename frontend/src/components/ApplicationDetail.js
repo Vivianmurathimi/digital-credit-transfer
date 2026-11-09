@@ -23,7 +23,7 @@ const noteText = { margin: '6px 0 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'a
 const WITHDRAWABLE = ['pending', 'needs_info'];
 
 // readOnly: opened from an earlier semester (Group 3), so nothing can be changed from here
-const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
+const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
     const { t } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const dialogRef = useRef(null);
@@ -71,17 +71,16 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
             setWithdrawing(false);
         }
     };
-    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !isImpersonating && !readOnly;
+    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !readOnly;
 
     useEffect(() => {
         let current = true;
-        // The student reads their own application; the impersonating admin reads it by student id
-        const path = isImpersonating ? `applications/student/${userId}/${applicationId}` : `applications/mine/${applicationId}`;
-        http.get(path).json()
+        // The student's own application (also while the admin acts as the student: same session)
+        http.get(`applications/mine/${applicationId}`).json()
             .then((data) => { if (current) setApplication(data.application); })
             .catch((err) => { if (current) setError(getErrorMessage(err, t, 'student_detail_load_failed')); });
         return () => { current = false; };
-    }, [applicationId, userId, isImpersonating, t]);
+    }, [applicationId, t]);
 
     const fileName = (stored) => application?.file_names?.[stored] || String(stored || '').replace(/^\d+-/, '');
     const FileLink = ({ file }) => (
@@ -216,7 +215,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
                         {t('student_withdraw')}
                     </button>
                 )}
-                {application?.status === 'needs_info' && !isImpersonating && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
+                {application?.status === 'needs_info' && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
                     <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                         {t('student_add_missing_info')}
                     </button>

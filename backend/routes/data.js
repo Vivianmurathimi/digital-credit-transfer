@@ -4,14 +4,16 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
+const { requireIdParam } = require('../utils/validate');
 const { COUNTRY_CODES } = require('../utils/countries');
 const { getSubmissionState } = require('../utils/semesters');
 
-// Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
+// Used for the superadmin's "act as" lists (admin round Group 1) — superadmins intentionally excluded.
+// Deactivated reviewers are marked, because nobody can act as them.
 // Superadmin only: it lists every student's and reviewer's name and email.
 router.get('/users', verifyToken, requireRole('superadmin'), async (req, res) => {
     try {
-        const result = await pool.query("SELECT id,name,email,role FROM users WHERE role!='superadmin'");
+        const result = await pool.query("SELECT id, name, email, role, (reviewer_deactivated_at IS NOT NULL) AS deactivated FROM users WHERE role != 'superadmin' ORDER BY name");
         res.json({ success: true, users: result.rows });
     } catch (err) {
         sendError(res, 500, 'SERVER_ERROR', 'Fetch users failed');
@@ -51,8 +53,8 @@ router.put('/users/:id/language', verifyToken, async (req, res) => {
 });
 
 // NEW: change a user's role — superadmin only
-router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const { id } = req.params;
+router.put('/users/:id/role', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
     const { newRole } = req.body;
     const validRoles = ['student', 'reviewer', 'superadmin'];
 
@@ -149,8 +151,8 @@ router.get('/countries', (req, res) => {
 // for the id in the checked token, never from the request (any query is ignored).
 // And only the current semester's (or, before it starts, the coming one's); between semesters
 // none (Group 3). Courses from before semesters (no semester) are never offered.
-// Reviewers and the superadmin still get every course for now (also used while the superadmin
-// impersonates a student); the reviewer and admin rounds can narrow this.
+// Reviewers and the superadmin still get every course for now (while the superadmin acts as a
+// student, the student's rule applies); the admin round can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
         const semester = req.user.role === 'student' ? (await getSubmissionState()).semester : null;

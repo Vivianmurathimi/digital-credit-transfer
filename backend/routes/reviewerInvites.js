@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
+const { requireIdParam } = require('../utils/validate');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const sendEmail = require('../utils/sendEmail');
@@ -61,10 +62,6 @@ const inviteForAdmin = ({ programme_code: code, name_en, name_hu, name_de, ...in
     { ...invite, programme: { code, name_en, name_hu, name_de } }
 );
 
-const inviteId = (req) => {
-    const id = Number(req.params.id);
-    return Number.isSafeInteger(id) && id > 0 ? id : null;
-};
 
 // ---------------------------------------------------------------------------------------------
 // Superadmin: invite, list, resend, cancel, remove a reviewer
@@ -147,9 +144,8 @@ router.get('/users/reviewer-invites', verifyToken, requireRole('superadmin'), as
 });
 
 // POST /api/users/reviewer-invites/:id/resend: a new link valid for another 7 days; the old link stops working
-router.post('/users/reviewer-invites/:id/resend', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const id = inviteId(req);
-    if (!id) return sendError(res, 404, 'INVITE_NOT_FOUND', 'Invite not found');
+router.post('/users/reviewer-invites/:id/resend', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
     const token = newToken();
     try {
         const { rows } = await pool.query(
@@ -171,9 +167,8 @@ router.post('/users/reviewer-invites/:id/resend', verifyToken, requireRole('supe
 });
 
 // DELETE /api/users/reviewer-invites/:id: cancels an open invite (its link stops working)
-router.delete('/users/reviewer-invites/:id', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const id = inviteId(req);
-    if (!id) return sendError(res, 404, 'INVITE_NOT_FOUND', 'Invite not found');
+router.delete('/users/reviewer-invites/:id', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
     try {
         const { rowCount } = await pool.query(`UPDATE reviewer_invites i SET cancelled_at = now() WHERE i.id = $1 AND ${OPEN_INVITE}`, [id]);
         if (rowCount === 0) return sendError(res, 404, 'INVITE_NOT_FOUND', 'Invite not found (or already accepted or cancelled)');
@@ -190,9 +185,8 @@ router.delete('/users/reviewer-invites/:id', verifyToken, requireRole('superadmi
  * is set and verifyToken refuses them from the next request on. Their open applications have
  * no reviewer until a new one accepts an invite. Removing an already removed reviewer changes nothing.
  */
-router.put('/users/:id/remove-reviewer', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const id = inviteId(req);
-    if (!id) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
+router.put('/users/:id/remove-reviewer', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
     try {
         const result = await inTransaction(async (client) => {
             const user = (await client.query('SELECT id, role, programme_id, reviewer_deactivated_at FROM users WHERE id = $1', [id])).rows[0];

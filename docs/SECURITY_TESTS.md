@@ -184,7 +184,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Reviewer's list; another programme's student's applications | only the reviewer's own programme |
 | | | Reviewer opens or changes another programme's application | `404 APPLICATION_NOT_FOUND`; nothing changed |
 | | | Reviewer opens a file that only another programme's application names, as transcript, syllabus, grading document, old reply file (`supplemental_files`) and reply file (history) | `404 FILE_NOT_FOUND` each; `200` once the same application is in the reviewer's programme |
-| | | Admin viewing the list as a reviewer (`?as_reviewer=`); a reviewer trying it | only that reviewer's programme; ignored for reviewers |
+| | | The admin acting as the reviewer (admin round Group 1); a reviewer sending `?as_reviewer=` | only that reviewer's programme; ignored for reviewers |
 | | | Admin changes a decision | stored with `decided_by_role = 'admin'`, the admin's id and the date |
 | | | Invite: programme has a reviewer (no `replace`), a student's or an active reviewer's email, bad email, unknown programme | `409 PROGRAMME_HAS_REVIEWER` / `409 EMAIL_TAKEN` / `400 INVALID_EMAIL` / `400 INVALID_PROGRAMME` |
 | | | Role route: make someone a reviewer, or change a reviewer's role | `400 USE_REVIEWER_INVITE` |
@@ -194,18 +194,18 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Used, unknown, expired, replaced-by-resend and cancelled links | `410 INVITE_INVALID` / `410 INVITE_EXPIRED` |
 | | | Remove a reviewer | `401 REVIEWER_REMOVED` on the next request, `403 REVIEWER_REMOVED` at login, open applications unassigned; again: no change; a student: `400 NOT_A_REVIEWER` |
 | | | Re-invite the removed reviewer's email | the same account is reactivated, name unchanged, open applications theirs again |
-| 4g | **Reviewer dashboard (reviewer Groups 3 and 4)** | A student; the superadmin without `as_reviewer`; with a non-reviewer's id | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` / `404 USER_NOT_FOUND` |
+| 4g | **Reviewer dashboard (reviewer Groups 3 and 4)** | A student; the superadmin as themselves | `403 FORBIDDEN_ROLE` / `403 FORBIDDEN_ROLE` (the admin acts as the reviewer instead) |
 | | | `GET /reviewer/applications` with temporary applications of student A: open and decided (current semester), withdrawn, decided in an earlier semester and before semesters, open in another programme | only the reviewer's programme; open and current-semester decided ones listed; withdrawn, earlier-semester, before-semesters and other-programme ones not |
 | | | "Other applications from this student" | counts only the same programme and semester, without withdrawn (1) |
 | | | Submitted 3 days ago, replied yesterday | `resubmit_count` 1, waiting 1 day (the reply is the last action) |
 | | | Decided row; field list | who decided and when; no email or password fields |
-| | | Admin impersonating the reviewer; the reviewer sending `as_reviewer` | exactly the reviewer's list and header; ignored for reviewers |
+| | | The admin acting as the reviewer; the reviewer sending `as_reviewer` | exactly the reviewer's list and header; ignored for reviewers |
 | | | Decided applications without decision columns | printed as a count (0 in the development data) |
 | | | List rows | no details in the list (no courses, institutions, notes or files) |
 | | | `GET /reviewer/applications/:id` (reviewer Group 4), own programme | `200`: student with programme, target course, fulfilled courses, institutions; every named file listed, a missing one marked missing; no email addresses |
 | | | Details of another programme's, a withdrawn or a non-existent application; also as the superadmin viewing as the reviewer | `404 APPLICATION_NOT_FOUND` |
 | | | History in the details (reviewer Group 5) | every step from `application_events` with the note type from `application_notes` and the student's or reviewer's name; no user ids; an admin's step shows as Admin without the admin's name |
-| | | Details as a student; as the superadmin without `as_reviewer` | `403 FORBIDDEN_ROLE` / `400 AS_REVIEWER_REQUIRED` |
+| | | Details as a student; as the superadmin as themselves; acting as the reviewer (own / other programme) | `403 FORBIDDEN_ROLE` / `403 FORBIDDEN_ROLE` / `200` / `404 APPLICATION_NOT_FOUND` |
 | 4h | **Decisions (reviewer Group 6)**, on applications of a temporary student (`@security-check.invalid`, deleted afterwards) | From `needs_info`, `approved`, `rejected`, `withdrawn` to any decision | `409 WAITING_FOR_STUDENT` / `ALREADY_DECIDED` / `ALREADY_DECIDED` / `APPLICATION_WITHDRAWN`; nothing changed |
 | | | Setting `pending` or `withdrawn` | `400 INVALID_STATUS` |
 | | | Approve without a grade; with 1, 6, 4.5 or "4" | `400 GRADE_REQUIRED` / `400 INVALID_FINAL_GRADE` |
@@ -218,12 +218,17 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | An approval without a grade written straight to the database | refused by `applications_approved_has_grade` (migration 011) |
 | 4i | **Admin overview (reviewer Group 7)** | `GET /api/admin/reviewer-overview` without a token, as a student, as a reviewer | `401 NO_TOKEN` / `403 FORBIDDEN_ROLE` / `403 FORBIDDEN_ROLE` |
 | | | As the superadmin | `200`; per programme only code, names, reviewer name, pending and needs-info counts (no email addresses, no ids); counts equal the database; programmes without an active reviewer have none |
-| 4j | **Past semesters (reviewer group L3)**, temporary ended semesters, applications and files | Semester list; a past semester's list as the reviewer and as the superadmin impersonating them | only semesters with the own programme's applications; `read_only: true`; own programme only, no withdrawn |
+| 4j | **Past semesters (reviewer group L3)**, temporary ended semesters, applications and files | Semester list; a past semester's list as the reviewer and as the superadmin acting as them | only semesters with the own programme's applications; `read_only: true`; own programme only, no withdrawn |
 | | | A semester that hasn't ended, a non-number, an unknown id | `404 SEMESTER_NOT_FOUND` |
 | | | Another programme's past details or decision | `404 APPLICATION_NOT_FOUND` |
 | | | Decide, request information or reject (reviewer and superadmin), change a decided one, the student's withdrawal | `409 SEMESTER_ENDED`; nothing saved, no history entry |
 | | | A past-semester file of the own / the other programme | `200` / `404 FILE_NOT_FOUND` |
 | | | The student deletes a file a submitted application uses / an unused own file / another student's file | `409 FILE_IN_USE` (file kept) / `200` / `403 NOT_OWNER` |
+| 4k | **Admin foundation (admin round Group 1)** | Students and reviewers on every admin-only route | `403 FORBIDDEN_ROLE` (no token: `401 NO_TOKEN`, section 1) |
+| | | Bad input: ids "abc", "0", "1.5"; `isOpen` not true/false; broken dates and names; act as "abc", nobody, a superadmin, a removed reviewer; Exit without acting | `400` with `INVALID_ID`, `INVALID_IS_OPEN`, `INVALID_DATES`, `INVALID_ARCHIVE_NAME`, `INVALID_USER_ID`, `CANNOT_ACT_AS_ROLE`, `CANNOT_ACT_AS_REMOVED_REVIEWER`, `NOT_ACTING`; unknown user `404` |
+| | | Decision record: reviewer approves / admin overrides / admin acting as the reviewer approves | `reviewer` + reviewer's id / `admin` + admin's id / `admin` + admin's id (history too) |
+| | | Acting as the reviewer and the student: logged, own dashboard, withdraw recorded as admin, refresh keeps it, no acting from inside, a new one ends the old | as described |
+| | | Exit; the old acting token; forged, other-admin, other-person and over-one-hour acting tokens | admin's own token (same login time) / `401 ACTING_ENDED` |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -452,8 +457,8 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B5 | Wrong password | Log in with a wrong password | Error on the page, no redirect |
 | B6 | Logged-in user on login/register | While logged in, open `/login` and `/register` | Redirected to the dashboard, no loop |
 | B7 | Unknown address | Open `/abc` | Login page (or the dashboard when logged in) |
-| B8 | Faked role in the browser | As a student, set `role = superadmin`, `originalRole = superadmin`, `impersonatedRole = reviewer`, `impersonatedUserId = 2` in Local Storage, reload | Still the student's own dashboard; the impersonation keys are removed |
-| B9 | Real impersonation | As superadmin, impersonate a student, then try Submit | Student's applications shown; Submit shows "You are not allowed to do this." and does not log out |
+| B8 | Faked role in the browser | As a student, set `role = superadmin`, `originalRole = superadmin`, `impersonatedRole = reviewer`, `impersonatedUserId = 2` in Local Storage, reload | Still the student's dashboard: the old keys are ignored (only the server-issued token decides) |
+| B9 | Acting as a student (admin round Group 1) | As superadmin, act as a student, then submit, reply or withdraw | Works as for the student; the history shows **Admin**; the banner "Acting as <name>" with Exit |
 | B10 | Fake login message | Open `/login?reason=FILES_NOT_OWNED`, then `/login?reason=SESSION_TOO_OLD` | No message for the first; the 8-hour message for the second |
 | B11 | Email links with an old session | Make the token expire (B2), then open a reset or verify link from the email | The page works; no redirect to login |
 | B12 | Evidence file download (reviewer) | Reviewer: Open and Download a student's PDF and image | Opens in a new tab / saves with its name |
@@ -471,7 +476,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B19 | Inline registration errors | Register with Neptun `CSTST1`; then with email `student.cs@tr.pte.hu`; then without a programme | Error under the Neptun field / under the email / under the programme (no request sent for the last) |
 | B20 | Profile header | Log in as `student.cs@tr.pte.hu` | Name, email, Neptun code `CSTST1`, programme next to Logout, in the current language |
 | B21 | No stale profile | Log out, log in as `student.civil@tr.pte.hu` in the same tab | Only the Civil student's details, never the previous student's, not even briefly |
-| B22 | No profile for staff / impersonation | Log in as a reviewer and as admin; impersonate a student | No profile card |
+| B22 | No profile for staff | Log in as a reviewer and as admin | No profile card (while acting as a student: that student's card) |
 | B23 | Course picker by programme | As `student.cs` and as `student.civil`, open the submit tab | 12 CS courses / 5 Civil courses, never the other programme's |
 | B24 | No courses yet | Delete the Civil courses (`DELETE FROM courses WHERE programme_id = …`), open the submit tab as `student.civil`; then `npm run seed:dev` | "No courses are available for your programme yet." and Submit disabled |
 | B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id` or `pte_course_names`; application appears with both courses |
@@ -535,7 +540,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B68 | Draft after submit | Submit; open the submit tab again; reload | Empty form, no "restored" notice |
 | B69 | Old draft format | In the database set `UPDATE application_drafts SET version = 0`, reload | "…made with an older version of this form and could not be restored."; empty form |
 | B70 | Draft not loading | Stop the backend, reload the dashboard, start the backend | "Your saved draft could not be loaded. Autosave is paused…"; reloading restores it |
-| B71 | No drafts while impersonating | As admin, impersonate a student and open the submit tab | No draft status, no "not allowed" banner, the student's draft unchanged |
+| B71 | Drafts while acting | As admin, act as a student and open the submit tab | The student's own draft, saved as usual |
 
 **My Status (Group 8):** run `npm run migrate` (007) and restart the backend first. Emails arrive in the Mailtrap sandbox.
 
@@ -558,7 +563,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B86 | Withdrawn for the reviewer | Log in as `reviewer.cs` | The application is in none of the tabs |
 | B87 | Reviewer acts on a withdrawn one | Open the reviewer page; the student withdraws in another browser; the reviewer then approves it | "The student has withdrawn this application, so it can no longer be changed."; nothing changed |
 | B88 | Apply again | After withdrawing, open the submit tab | The course can be chosen again |
-| B89 | No withdraw | Details of an approved or rejected application; any application while impersonating | No Withdraw button |
+| B89 | No withdraw | Details of an approved or rejected application | No Withdraw button |
 
 **The needs-info loop (Group 9):** the SQL lines are run with `docker exec -it credit_system_db psql -U user -d credit_db`; replace `<id>` with the application's id.
 
@@ -647,7 +652,7 @@ The highlighter's rules are tested in Node (`frontend/src/highlighter.js`), with
 - **Shared IPs.** A whole campus can share one IP (eduroam, computer labs). That is why the per-IP limits are generous (30 per hour); they can be changed in `.env`.
 - ~~Forgot password timing~~ **(fixed 2026-10-28).** A real address used to take about 1.9 s longer than an unknown one, because the email was sent before replying. The reply now comes straight after the lookup in both cases (see section 1).
 - **Older evidence files without an owner tag.** A few files uploaded before ownership tagging can be opened by reviewers and the superadmin, but not by the student who uploaded them. No other student can open them either.
-- **Impersonation shows every programme's courses.** While the superadmin impersonates a student, the course picker uses the admin's token, so it lists the courses of all programmes, not only that student's. Submitting is refused during impersonation anyway. To be fixed in the admin round.
+- ~~Impersonation shows every programme's courses~~ **(fixed in admin round Group 1).** Acting as a student uses the student's own session, so the course picker shows only their programme's courses.
 - **Highlights are not verified by the server** (see "Evidence highlighter" above).
 - **Uploads from forms that are never submitted stay in storage** until a cleanup job exists (see [PLANNED.md](PLANNED.md)).
 - **Drafts: the last save wins.** With the form open in two tabs or browsers, each saves its own state; the later save replaces the other. Opening the form again shows the last saved state. A tab left open after a submit can also save the submitted form again as a draft; submitting it a second time is refused with `ALREADY_APPLIED`. A conflict check is planned (see [PLANNED.md](PLANNED.md)).

@@ -13,14 +13,14 @@ import SemesterSelect from './reviewer/SemesterSelect';
 // The reviewer dashboard (reviewer Groups 3 and 4): header, tabs, search, the list and, per opened row, the details.
 // The backend sends only the reviewer's own programme (completed ones of the current semester
 // only); search and the student filter run here, on that list.
-// userId / isImpersonating: set while the superadmin looks at a reviewer's dashboard: the
-// backend then answers for that reviewer (?as_reviewer=, a view filter only).
+// The superadmin sees this dashboard by acting as the reviewer (admin round Group 1): the session
+// is then the reviewer's, so nothing here needs to know.
 // Past semesters (reviewer group L3): picked in the semester selector, shown read-only with the
 // same list, search and details, but without decision buttons.
 
 const EMPTY_TEXT = { pending: 'reviewer_empty_pending', needs_info: 'reviewer_empty_needs_info', completed: 'reviewer_empty_completed' };
 
-const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
+const ReviewerDashboard = () => {
     const { t } = useTranslation();
     const [data, setData] = useState(null); // { reviewer, semester, applications }
     const [loadError, setLoadError] = useState('');
@@ -33,30 +33,26 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
     const [semesters, setSemesters] = useState(null); // { current, past: [{ id, name, ends_on }] }
     const [semesterId, setSemesterId] = useState(null); // null = the current view
 
-    // While the superadmin impersonates, every request is for that reviewer (one object, so the
-    // details don't load again on every render)
-    const searchParams = useMemo(() => (isImpersonating ? { as_reviewer: userId } : undefined), [isImpersonating, userId]);
-
     const load = useCallback(async () => {
         try {
-            const params = { ...(searchParams || {}), ...(semesterId ? { semester: semesterId } : {}) };
+            const params = semesterId ? { semester: semesterId } : {};
             setData(await http.get('reviewer/applications', { searchParams: params }).json());
             setLoadError('');
         } catch (err) {
             setLoadError(getErrorMessage(err, t, 'reviewer_load_failed'));
         }
-    }, [searchParams, semesterId, t]);
+    }, [semesterId, t]);
 
     useEffect(() => { load(); }, [load]);
 
     // The semesters for the selector (shown only when there are past ones)
     useEffect(() => {
         let current = true;
-        http.get('reviewer/semesters', { searchParams }).json()
+        http.get('reviewer/semesters').json()
             .then((result) => { if (current) setSemesters(result); })
             .catch((err) => console.error('Could not load the semesters', err));
         return () => { current = false; };
-    }, [searchParams]);
+    }, []);
 
     const readOnly = !!data?.read_only;
     const chooseSemester = (id) => {
@@ -113,7 +109,6 @@ const ReviewerDashboard = ({ userId, isImpersonating = false }) => {
                             onToggle={() => setOpenId(openId === app.id ? null : app.id)}
                             onShowStudent={() => showStudent(app)}
                             onDecide={(type) => { setNotice(''); setDecision({ app, type }); }}
-                            searchParams={searchParams}
                         />
                     ))}
                 </ul>

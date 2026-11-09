@@ -27,24 +27,17 @@ const activeReviewerOf = async (db, programmeId, { lock = false } = {}) => (awai
 )).rows[0] || null;
 
 /**
- * Whose reviewer view a request is for. A reviewer: themselves. The superadmin: the reviewer in
- * ?as_reviewer=<user id> (while impersonating them); that is a view filter only.
- * @returns {Promise<{ reviewer: { id, name, programme_id } } | { error: [status, code, message] } | { all: true }>}
- *   all: the superadmin without as_reviewer (only where `allowAll` is set)
+ * Whose reviewer view a request is for: a reviewer sees their own programme, the superadmin every
+ * programme. (The old ?as_reviewer view filter is gone: to see exactly what a reviewer sees, the
+ * superadmin now acts as them, admin round Group 1, and is then a reviewer here.)
+ * @returns {Promise<{ reviewer: { id, name, programme_id } } | { all: true }>}
  */
-const resolveReviewerView = async (db, req, { allowAll = false } = {}) => {
+const resolveReviewerView = async (db, req) => {
     if (req.user.role === 'reviewer') {
         const reviewer = (await db.query('SELECT id, name, programme_id FROM users WHERE id = $1', [req.user.id])).rows[0];
         return { reviewer };
     }
-    if (req.query.as_reviewer === undefined) {
-        return allowAll ? { all: true } : { error: [400, 'AS_REVIEWER_REQUIRED', 'Add ?as_reviewer=<reviewer id> to see a reviewer\'s view'] };
-    }
-    const id = Number(req.query.as_reviewer);
-    const reviewer = Number.isSafeInteger(id) && id > 0
-        ? (await db.query("SELECT id, name, programme_id FROM users WHERE id = $1 AND role = 'reviewer'", [id])).rows[0]
-        : null;
-    return reviewer ? { reviewer } : { error: [404, 'USER_NOT_FOUND', 'No reviewer with this id'] };
+    return { all: true };
 };
 
 module.exports = { OPEN_STATUSES, programmeScopeOf, lockProgramme, activeReviewerOf, resolveReviewerView };

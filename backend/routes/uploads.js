@@ -100,6 +100,9 @@ router.post('/', verifyToken, requireRole('student'), receiveFile, async (req, r
                 'X-Amz-Meta-Uploader-Id': String(req.user.id),
                 'X-Amz-Meta-Uploader-Role': req.user.role,
                 'X-Amz-Meta-Original-Name': encodeForMetadata(originalName),
+                // Uploaded by the admin acting as the student (admin round Group 1): the file is the
+                // student's (so they can use it), and this tag records who really uploaded it
+                ...(req.acting ? { 'X-Amz-Meta-Acted-By-Admin': String(req.actor.id) } : {}),
             }
         );
 

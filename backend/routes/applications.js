@@ -114,7 +114,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
                         (SELECT id FROM users WHERE role = 'reviewer' AND reviewer_deactivated_at IS NULL AND programme_id = $2)) RETURNING id`,
                 [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
             );
-            await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: 'student', actorId: student_id, status: 'pending', note: studentNote });
+            await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: studentNote });
             return rows[0];
         }).catch((err) => {
             // Two submits at the same moment both passed the check above: the database lets only one in
@@ -162,8 +162,8 @@ router.get('/applications/mine/:id', verifyToken, requireRole('student'), async 
     }
 });
 
-// One student's applications as that student sees them, for reviewers and the superadmin
-// (the impersonation view shows the student's own screen). A reviewer gets only the ones in
+// One student's applications as that student sees them, for reviewers and the superadmin.
+// A reviewer gets only the ones in
 // their own programme (reviewer Group 2).
 router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const requestedId = Number(req.params.id);
@@ -177,7 +177,7 @@ router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'su
     }
 });
 
-// One application of that student, as the detail view shows it (impersonation, read-only)
+// One application of that student, as the detail view shows it
 router.get('/applications/student/:id/:applicationId', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const requestedId = Number(req.params.id);
     try {
@@ -194,16 +194,17 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
 
 
 // Every application a reviewer may see: only their own programme's (reviewer Group 2).
-// The superadmin sees every programme; ?as_reviewer=<user id> (while impersonating a reviewer)
-// shows only that reviewer's programme. That is a view filter only: the superadmin's decisions
-// are still made, and stored, as "admin".
+// The superadmin sees every programme. decided_by_name: the deciding reviewer's name (admin round
+// Group 1); "Admin" and "System" are shown without a name, and old rows without a record as "—".
 router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     try {
-        const view = await resolveReviewerView(pool, req, { allowAll: true });
-        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
+        const view = await resolveReviewerView(pool, req);
         const programmeId = view.all ? null : view.reviewer.programme_id;
         const result = await pool.query(
-            `SELECT a.*, u.name as student_name FROM applications a JOIN users u ON a.student_id=u.id
+            `SELECT a.*, u.name as student_name,
+                    CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name
+             FROM applications a JOIN users u ON a.student_id=u.id
+             LEFT JOIN users d ON d.id = a.decided_by
              WHERE ($1::int IS NULL OR a.programme_id = $1)
              ORDER BY a.created_at DESC`,
             [programmeId]
@@ -229,7 +230,9 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     if (errors) return sendValidationErrors(res, errors);
     const { status, note, finalGrade } = decision;
     const isDecision = status === 'approved' || status === 'rejected';
-    const actorRole = actorRoleOf(req.user); // 'reviewer', or 'admin' for the superadmin
+    // 'reviewer', or 'admin' for the superadmin, also while acting as the reviewer (admin round Group 1):
+    // then decided_by, reviewed_by and the history are the admin, never the reviewer
+    const actorRole = actorRoleOf(req.actor);
 
     try {
         const result = await inTransaction(async (client) => {
@@ -245,7 +248,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                     decision_rationale    = CASE WHEN $7::boolean THEN $2::text END
                  WHERE id = $4 AND status = $9 AND ($10::int IS NULL OR programme_id = $10) AND NOT ${semesterEndedSql()}
                  RETURNING student_id, info_deadline`,
-                [status, note, req.user.id, id, status === 'needs_info', finalGrade, isDecision, actorRole, DECIDABLE_STATUS, programmeScopeOf(req.user)]
+                [status, note, req.actor.id, id, status === 'needs_info', finalGrade, isDecision, actorRole, DECIDABLE_STATUS, programmeScopeOf(req.user)]
             );
             if (rows.length === 0) {
                 // Not changed: not found (or another programme's), its semester has ended (past
@@ -260,7 +263,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
             }
             await addEvent(client, {
                 applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
-                actorRole, actorId: req.user.id, status, note,
+                actorRole, actorId: req.actor.id, status, note,
             });
             return rows[0];
         });
@@ -299,7 +302,7 @@ router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), as
                 if (own.rows.length === 0) return 'not_found';
                 return own.rows[0].semester_ended ? 'semester_ended' : 'not_allowed';
             }
-            await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: 'student', actorId: req.user.id, status: 'withdrawn' });
+            await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'withdrawn' });
             return 'withdrawn';
         });
         if (result === 'not_found') return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
@@ -380,7 +383,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
                 [replyNote, updatedFiles, id, req.user.id]
             );
             if (rowCount === 0) return false;
-            await addEvent(client, { applicationId: id, kind: 'replied', actorRole: 'student', actorId: req.user.id, status: 'pending', note: replyNote, files: newFiles });
+            await addEvent(client, { applicationId: id, kind: 'replied', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: replyNote, files: newFiles });
             return true;
         });
         if (!saved) return sendError(res, 409, 'NOT_WAITING_FOR_INFO', 'This application is not waiting for more information');

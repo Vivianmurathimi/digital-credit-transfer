@@ -10,9 +10,11 @@ const LanguageSwitcher = () => {
     i18n.changeLanguage(lng);
 
     // Logged in? Save the choice so notification emails use this language.
-    // Uses the real account from the token (not an impersonated one).
-    const userId = readTokenPayload()?.id;
-    if (!userId) return; // not logged in (or unreadable token): nothing to save
+    // Not while the admin acts as someone (admin round Group 1): the admin's screen language
+    // must not change which language that person's emails are in.
+    const payload = readTokenPayload();
+    const userId = payload?.id;
+    if (!userId || payload.acting) return; // not logged in, unreadable token, or acting: nothing to save
     http.put(`users/${userId}/language`, { json: { language: lng } })
       .catch((err) => console.error('Could not save language preference', err));
   };

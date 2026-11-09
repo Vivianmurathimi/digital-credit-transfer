@@ -30,7 +30,7 @@ A deactivated reviewer keeps the role "reviewer" but does not count as the progr
 
 - Every reviewer query is limited to `programme_id = the reviewer's programme`, read from the database on each request.
 - **Files:** a reviewer may open a file only if an application of their own programme names it, in any of the five places a file can appear: transcript, syllabus, grading-system document, reply file, or the older reply-file list. Anything else gets "not found".
-- **The superadmin** sees everything. To see exactly what one reviewer sees, the superadmin "impersonates" them: the dashboard adds `?as_reviewer=<id>`, which is only a view filter. Anything the superadmin does there is still recorded as done by **Admin**, never in the reviewer's name.
+- **The superadmin** sees everything. To see exactly what one reviewer sees, the superadmin **acts as** them (admin round Group 1, `routes/acting.js`): the server issues a session for the reviewer that also carries the admin's id, logged in `acting_sessions`. Anything the superadmin does there is recorded as done by **Admin**, with the admin's id, never in the reviewer's name. The session ends with Exit or after one hour.
 - Lists and details never contain email addresses or internal user ids; an admin's step shows as "Admin", the system's as "System".
 
 ## 3. The reviewer dashboard (`routes/reviewer.js`, frontend `components/reviewer/`)
@@ -46,7 +46,7 @@ A deactivated reviewer keeps the role "reviewer" but does not count as the progr
 - A past semester shows the same list, search and details (notes, files, history, decision, grade, who decided), but no decision buttons, and a "Past semester – read only" banner.
 - **The server enforces it, not only the screen.** Any status change on an application whose semester has ended is refused with 409 `SEMESTER_ENDED`: decisions, information requests, the student's withdrawal and replies, for everyone, also the superadmin. The check is part of the same conditional update, so there's no gap between checking and saving.
 - **Evidence is kept.** A student can't delete a file that any submitted application uses, in any status or semester (409 `FILE_IN_USE`). Files of unsent drafts can still be removed.
-- **Not yet built:** the superadmin's view of all programmes' past semesters comes in the admin round. Today the superadmin sees a reviewer's past semesters by impersonating them.
+- **Not yet built:** the superadmin's view of all programmes' past semesters comes in the admin round. Today the superadmin sees a reviewer's past semesters by acting as them.
 
 ## 4. Decisions and the status rules (`utils/decisions.js`, `PUT /api/applications/:id/status`)
 

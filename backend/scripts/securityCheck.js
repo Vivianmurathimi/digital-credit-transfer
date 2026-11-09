@@ -140,6 +140,7 @@ const restoreReviewerAccess = async () => {
     await pool.query("UPDATE users SET reviewer_deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
     await pool.query('UPDATE users SET reviewer_deactivated_at = $2, programme_id = $3 WHERE id = $1', [b.reviewerId, b.deactivatedAt, b.programmeId]);
     for (const a of b.assignments) await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [a.id, a.assigned]);
+    await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1)', [testUsers]);
     await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [testUsers]);
     const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [testUsers]);
     return `reviewer #${b.reviewerId} active again, ${rowCount} test account(s) and the test invites removed`;
@@ -152,6 +153,7 @@ const removeTestStudents = async () => {
     const { rows } = await pool.query("SELECT id FROM users WHERE role = 'student' AND email LIKE $1", [`%${TEST_DOMAIN}`]);
     if (rows.length === 0) return 0;
     const ids = rows.map((r) => r.id);
+    await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1)', [ids]);
     await pool.query('DELETE FROM applications WHERE student_id = ANY($1)', [ids]);
     const { rowCount } = await pool.query('DELETE FROM users WHERE id = ANY($1)', [ids]);
     return rowCount;
@@ -206,6 +208,8 @@ const SEMESTER_NOW = '(SELECT id FROM semester_bounds WHERE ends_at > now() ORDE
 const canSubmitNow = (settings) => (settings.body?.submission ? settings.body.submission.canSubmit === true : settings.body?.isOpen === true);
 
 const tokenFor = (user) => signSessionToken({ id: user.id, role: user.role });
+// An acting session (admin round Group 1), started through the API like the admin dashboard does
+const actingTokenFor = async (adminToken, person) => (await call('POST', 'acting/start', { token: adminToken, json: { userId: person.id } })).body?.token;
 const now = () => Math.floor(Date.now() / 1000);
 const expiredToken = (user) => jwt.sign({ id: user.id, role: user.role, sessionStart: now() - 3600, exp: now() - 60 }, JWT_SECRET, { algorithm: ALGORITHM });
 const tooOldToken = (user) => signSessionToken({ id: user.id, role: user.role }, now() - 9 * 3600);
@@ -321,6 +325,7 @@ const run = async () => {
         ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
         ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`],
         ['GET', 'reviewer/applications'], ['GET', 'reviewer/applications/1'],
+        ['POST', 'acting/start'], ['POST', 'acting/exit'], ['GET', 'admin/reviewer-overview'],
     ];
     for (const [method, path] of protectedRoutes) {
         await expect(`${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
@@ -1002,15 +1007,17 @@ const run = async () => {
                 await expect('Superadmin opens any file', call('GET', fileUrl, { token: S }), 200);
             }
 
-            // --- The admin impersonating a reviewer: only that reviewer's programme (a view filter)
-            const asReviewer = await call('GET', `applications?as_reviewer=${d.reviewer.id}`, { token: S });
+            // --- The admin acting as the reviewer (admin round Group 1): only that reviewer's programme
+            const actingR = await actingTokenFor(S, d.reviewer);
+            const asReviewer = await call('GET', 'applications', { token: actingR });
             const all = await call('GET', 'applications', { token: S });
             report(asReviewer.status === 200 && (asReviewer.body.applications || []).every((a) => a.programme_id === programmeOfB)
                 && (all.body?.applications || []).some((a) => a.id === other),
-            "Admin viewing as the reviewer sees only that programme (and everything without it)", `${(asReviewer.body?.applications || []).length} of ${(all.body?.applications || []).length}`);
-            await expect('as_reviewer with a non-reviewer id', call('GET', `applications?as_reviewer=${d.studentA.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+            "Admin acting as the reviewer sees only that programme (and everything as themselves)", `${(asReviewer.body?.applications || []).length} of ${(all.body?.applications || []).length}`);
+            await call('POST', 'acting/exit', { token: actingR });
+            // The old ?as_reviewer view filter is gone: it is ignored
             const ignored = await call('GET', `applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
-            report(ignored.status === 200 && !(ignored.body.applications || []).some((a) => a.programme_id !== programmeOfB), 'A reviewer cannot use as_reviewer to see another programme', `${ignored.status}`);
+            report(ignored.status === 200 && !(ignored.body.applications || []).some((a) => a.programme_id !== programmeOfB), 'A reviewer adding ?as_reviewer still sees only their own programme', `${ignored.status}`);
             // (An admin decision stored as "admin": section 4h, reviewer Group 6)
         }
 
@@ -1122,8 +1129,7 @@ const run = async () => {
         console.log(`(decided applications without decision columns, shown as "—": ${oldDecisions})`);
 
         await expect('Student opens the reviewer list', call('GET', 'reviewer/applications', { token: A }), 403, 'FORBIDDEN_ROLE');
-        await expect('Superadmin without as_reviewer', call('GET', 'reviewer/applications', { token: S }), 400, 'AS_REVIEWER_REQUIRED');
-        await expect('Superadmin with a non-reviewer as_reviewer', call('GET', `reviewer/applications?as_reviewer=${d.studentA.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+        await expect('Superadmin opens the reviewer list (only by acting as the reviewer)', call('GET', 'reviewer/applications', { token: S }), 403, 'FORBIDDEN_ROLE');
 
         if (!current) skip('Reviewer list: semesters, withdrawn and other applications', 'no semester is running now');
         else {
@@ -1184,12 +1190,14 @@ const run = async () => {
             report(decidedRow?.decided_by_role === 'admin' && !!decidedRow?.decided_at, 'A completed row says who decided and when', `${decidedRow?.decided_by_role}`);
             report(rows.every((r) => !('email' in r) && !('password' in r)), 'No email addresses or passwords in the list');
 
-            const asReviewer = await call('GET', `reviewer/applications?as_reviewer=${d.reviewer.id}`, { token: S });
+            const actingR = await actingTokenFor(S, d.reviewer);
+            const asReviewer = await call('GET', 'reviewer/applications', { token: actingR });
             report(asReviewer.status === 200 && asReviewer.body.reviewer.id === d.reviewer.id
                 && JSON.stringify(asReviewer.body.applications.map((r) => r.id)) === JSON.stringify(ids),
-            "Admin impersonating the reviewer gets exactly the reviewer's list and header", `${asReviewer.status}`);
+            "Admin acting as the reviewer gets exactly the reviewer's list and header", `${asReviewer.status}`);
+            await call('POST', 'acting/exit', { token: actingR });
             const ignored = await call('GET', `reviewer/applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
-            report(ignored.status === 200 && ignored.body.reviewer.id === d.reviewer.id, 'A reviewer cannot use as_reviewer to see another reviewer\'s list', `${ignored.body?.reviewer?.id}`);
+            report(ignored.status === 200 && ignored.body.reviewer.id === d.reviewer.id, 'A reviewer adding ?as_reviewer still gets their own list', `${ignored.body?.reviewer?.id}`);
 
             // The list carries no details (they come from the details route, reviewer Group 4)
             report(rows.every((r) => !('fulfilled_courses_json' in r) && !('student_note' in r) && !('supplemental_files' in r) && !('institutions' in r)),
@@ -1226,11 +1234,13 @@ const run = async () => {
             await expect('Details of a withdrawn application', call('GET', `reviewer/applications/${withdrawn}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
             await expect('Details of an application that does not exist', call('GET', 'reviewer/applications/999999999', { token: R }), 404, 'APPLICATION_NOT_FOUND');
             await expect('Student opens reviewer details', call('GET', `reviewer/applications/${open}`, { token: A }), 403, 'FORBIDDEN_ROLE');
-            await expect('Superadmin opens details without as_reviewer', call('GET', `reviewer/applications/${open}`, { token: S }), 400, 'AS_REVIEWER_REQUIRED');
-            await expect('Superadmin opens details as the reviewer', call('GET', `reviewer/applications/${open}?as_reviewer=${d.reviewer.id}`, { token: S }), 200);
+            await expect('Superadmin opens reviewer details as themselves', call('GET', `reviewer/applications/${open}`, { token: S }), 403, 'FORBIDDEN_ROLE');
+            const actingDetails = await actingTokenFor(S, d.reviewer);
+            await expect('Superadmin acting as the reviewer opens the details', call('GET', `reviewer/applications/${open}`, { token: actingDetails }), 200);
             if (otherProgramme) {
-                await expect("Superadmin as the reviewer: another programme's details", call('GET', `reviewer/applications/${otherProgramme}?as_reviewer=${d.reviewer.id}`, { token: S }), 404, 'APPLICATION_NOT_FOUND');
+                await expect("Superadmin acting as the reviewer: another programme's details", call('GET', `reviewer/applications/${otherProgramme}`, { token: actingDetails }), 404, 'APPLICATION_NOT_FOUND');
             }
+            await call('POST', 'acting/exit', { token: actingDetails });
 
             const removedApps = await removeTempApplications();
             const restored = await restoreSemesters();
@@ -1456,9 +1466,11 @@ const run = async () => {
             if (currentId) await expect('A semester that has not ended as a past semester', call('GET', `reviewer/applications?semester=${currentId}`, { token: R }), 404, 'SEMESTER_NOT_FOUND');
             await expect('A semester id that is not a number', call('GET', 'reviewer/applications?semester=abc', { token: R }), 404, 'SEMESTER_NOT_FOUND');
             await expect('A semester that does not exist', call('GET', 'reviewer/applications?semester=999999999', { token: R }), 404, 'SEMESTER_NOT_FOUND');
-            const asReviewer = await call('GET', `reviewer/applications?semester=${past}&as_reviewer=${d.reviewer.id}`, { token: S });
+            const actingPast = await actingTokenFor(S, d.reviewer);
+            const asReviewer = await call('GET', `reviewer/applications?semester=${past}`, { token: actingPast });
             report(asReviewer.status === 200 && JSON.stringify((asReviewer.body?.applications || []).map((r) => r.id).sort()) === JSON.stringify([...ids].sort()),
-                'Superadmin as the reviewer gets the same past semester list', `${asReviewer.status}`);
+                'Superadmin acting as the reviewer gets the same past semester list', `${asReviewer.status}`);
+            await call('POST', 'acting/exit', { token: actingPast });
 
             // Details
             const details = await call('GET', `reviewer/applications/${decidedOwn}`, { token: R });
@@ -1493,6 +1505,138 @@ const run = async () => {
             for (const name of testFiles) await minioClient.removeObject(EVIDENCE_BUCKET, name).catch(() => {});
             console.log(`(removed ${removedApps} temporary application(s), ${testFiles.length} test file(s); ${restored})`);
         }
+    }
+
+    section('4k. Admin foundation (admin round Group 1): 401/403/400 on admin routes, acting as a student or reviewer');
+    {
+        const programmeOfB = d.studentB.programme_id;
+        // 403 for students and reviewers on every admin-only route (401 without a token: section 1)
+        const adminOnly = [
+            ['GET', 'users'], ['GET', 'users/all'], ['PUT', `users/${d.studentA.id}/role`], ['PUT', 'settings/toggle'],
+            ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'], ['GET', 'admin/reviewer-overview'],
+            ['POST', 'users/invite-reviewer'], ['GET', 'users/reviewer-invites'], ['POST', 'users/reviewer-invites/1/resend'],
+            ['DELETE', 'users/reviewer-invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`], ['POST', 'acting/start'],
+        ];
+        for (const [method, path] of adminOnly) {
+            const json = method === 'GET' ? undefined : {};
+            await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json }), 403, 'FORBIDDEN_ROLE');
+            await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json }), 403, 'FORBIDDEN_ROLE');
+        }
+
+        // 400 for bad input
+        await expect('Role change with id "abc"', call('PUT', 'users/abc/role', { token: S, json: { newRole: 'student' } }), 400, 'INVALID_ID');
+        await expect('Role change with id "0"', call('PUT', 'users/0/role', { token: S, json: { newRole: 'student' } }), 400, 'INVALID_ID');
+        await expect('Role change to an unknown role', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'owner' } }), 400, 'INVALID_ROLE');
+        await expect('Open/close with "yes" instead of true/false', call('PUT', 'settings/toggle', { token: S, json: { isOpen: 'yes' } }), 400, 'INVALID_IS_OPEN');
+        await expect('Open/close without a value', call('PUT', 'settings/toggle', { token: S, json: {} }), 400, 'INVALID_IS_OPEN');
+        await expect('Term book with a broken date', call('POST', 'archive/generate', { token: S, json: { from: '2026-13-01', to: '2026-12-31' } }), 400, 'INVALID_DATES');
+        await expect('Term book download with a strange name', call('GET', 'archive/..%2Fsecret/download', { token: S }), 400, 'INVALID_ARCHIVE_NAME');
+        await expect('Resend an invite with id "abc"', call('POST', 'users/reviewer-invites/abc/resend', { token: S }), 400, 'INVALID_ID');
+        await expect('Cancel an invite with id "abc"', call('DELETE', 'users/reviewer-invites/abc', { token: S }), 400, 'INVALID_ID');
+        await expect('Remove a reviewer with id "1.5"', call('PUT', 'users/1.5/remove-reviewer', { token: S }), 400, 'INVALID_ID');
+        await expect('Invite with a broken email', call('POST', 'users/invite-reviewer', { token: S, json: { email: 'not-an-email', programme_code: d.programmeCodes[0] } }), 400);
+        await expect('Act as: userId "abc"', call('POST', 'acting/start', { token: S, json: { userId: 'abc' } }), 400, 'INVALID_USER_ID');
+        await expect('Act as: no userId', call('POST', 'acting/start', { token: S, json: {} }), 400, 'INVALID_USER_ID');
+        await expect('Act as: a user that does not exist', call('POST', 'acting/start', { token: S, json: { userId: d.goneUser.id } }), 404, 'USER_NOT_FOUND');
+        await expect('Act as: a superadmin', call('POST', 'acting/start', { token: S, json: { userId: d.admin.id } }), 400, 'CANNOT_ACT_AS_ROLE');
+        await expect('Exit without acting', call('POST', 'acting/exit', { token: S }), 400, 'NOT_ACTING');
+
+        // A temporary student (decisions and withdrawals email them; @security-check.invalid)
+        const neptun = `SK${Math.random().toString(36).slice(2, 6).toUpperCase().padEnd(4, 'X')}`.slice(0, 6);
+        const student = (await pool.query(
+            `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+             VALUES ('Security Check Acting Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role, name, programme_id`,
+            [`acting-${Date.now().toString(36)}${TEST_DOMAIN}`, neptun, programmeOfB]
+        )).rows[0];
+        let seq = 0;
+        const pendingApp = async () => {
+            seq += 1;
+            const code = `SECK${Date.now().toString(36)}${seq}`.toUpperCase();
+            return (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending') RETURNING id`,
+                [student.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'Acting check', credits: 3 }]), code]
+            )).rows[0].id;
+        };
+        const decision = async (id) => (await pool.query('SELECT decided_by, decided_by_role, reviewed_by FROM applications WHERE id = $1', [id])).rows[0];
+        const lastEvent = async (id) => (await pool.query('SELECT actor_role, actor_id FROM application_events WHERE application_id = $1 ORDER BY id DESC LIMIT 1', [id])).rows[0];
+        const sessionRow = async (token) => (await pool.query('SELECT * FROM acting_sessions WHERE id = $1', [jwt.decode(token)?.acting?.sessionId || 0])).rows[0];
+
+        // The decision record: the reviewer themselves
+        const byReviewer = await pendingApp();
+        await expect('Reviewer approves (grade 4)', call('PUT', `applications/${byReviewer}/status`, { token: R, json: { status: 'approved', final_grade: 4 } }), 200);
+        const r1 = await decision(byReviewer);
+        report(r1?.decided_by_role === 'reviewer' && r1?.decided_by === d.reviewer.id, 'A reviewer\'s approval stores reviewer + their id + date', `${r1?.decided_by_role} #${r1?.decided_by}`);
+        // ... the admin as themselves
+        const byAdmin = await pendingApp();
+        await expect('Admin override: reject', call('PUT', `applications/${byAdmin}/status`, { token: S, json: { status: 'rejected', note: 'Admin check.' } }), 200);
+        const r2 = await decision(byAdmin);
+        report(r2?.decided_by_role === 'admin' && r2?.decided_by === d.admin.id, 'An admin override stores admin + the admin\'s id', `${r2?.decided_by_role} #${r2?.decided_by}`);
+
+        // Acting as the reviewer
+        const AR = await actingTokenFor(S, d.reviewer);
+        report(!!AR, 'The admin can start acting as the reviewer');
+        const rowR = AR ? await sessionRow(AR) : null;
+        report(rowR?.admin_id === d.admin.id && rowR?.person_id === d.reviewer.id && rowR?.person_role === 'reviewer' && rowR?.started_at && !rowR?.ended_at,
+            'The acting session is logged: admin, person, started, not ended', `#${rowR?.id}`);
+        const header = await call('GET', 'reviewer/applications', { token: AR });
+        report(header.status === 200 && header.body?.reviewer?.id === d.reviewer.id, 'Acting as the reviewer opens the reviewer\'s own dashboard', `${header.status}`);
+        await expect('Acting as the reviewer: start acting again from inside', call('POST', 'acting/start', { token: AR, json: { userId: student.id } }), 403, 'FORBIDDEN_ROLE');
+        await expect('Acting as the reviewer: admin-only route', call('GET', 'users/all', { token: AR }), 403, 'FORBIDDEN_ROLE');
+        const actingApproval = await pendingApp();
+        await expect('Acting as the reviewer: approve (grade 5)', call('PUT', `applications/${actingApproval}/status`, { token: AR, json: { status: 'approved', final_grade: 5 } }), 200);
+        const r3 = await decision(actingApproval);
+        const e3 = await lastEvent(actingApproval);
+        report(r3?.decided_by_role === 'admin' && r3?.decided_by === d.admin.id && r3?.reviewed_by === d.admin.id && e3?.actor_role === 'admin' && e3?.actor_id === d.admin.id,
+            'An approval while acting as the reviewer is stored as admin (not the reviewer)', `${r3?.decided_by_role} #${r3?.decided_by}, event ${e3?.actor_role} #${e3?.actor_id}`);
+        const refreshed = await call('POST', 'refresh-token', { token: AR });
+        const refreshedActing = jwt.decode(refreshed.body?.token || '')?.acting;
+        report(refreshed.status === 200 && refreshedActing?.sessionId === jwt.decode(AR).acting.sessionId && refreshedActing?.actorId === d.admin.id,
+            'Refreshing an acting session keeps it an acting session', `${refreshed.status}`);
+
+        // Acting as the student (starting a new one ends the reviewer one)
+        const AT = await actingTokenFor(S, student);
+        await expect('The earlier acting session ended when a new one started', call('GET', 'reviewer/applications', { token: AR }), 401, 'ACTING_ENDED');
+        await expect('Acting as the student: "my applications"', call('GET', 'applications/mine', { token: AT }), 200);
+        const actingWithdraw = await pendingApp();
+        await expect('Acting as the student: withdraw', call('PUT', `applications/${actingWithdraw}/withdraw`, { token: AT }), 200);
+        const e4 = await lastEvent(actingWithdraw);
+        report(e4?.actor_role === 'admin' && e4?.actor_id === d.admin.id, 'A withdrawal while acting as the student is recorded as admin', `${e4?.actor_role} #${e4?.actor_id}`);
+        await expect('Acting as the student: another student\'s application', call('GET', `applications/mine/${d.appOfB.id}`, { token: AT }), 404);
+
+        // Exit
+        const exit = await call('POST', 'acting/exit', { token: AT });
+        const back = jwt.decode(exit.body?.token || '');
+        report(exit.status === 200 && back?.id === d.admin.id && back?.role === 'superadmin' && !back?.acting && back?.sessionStart === jwt.decode(AT).sessionStart,
+            'Exit returns the admin\'s own session (same login time)', `${exit.status}`);
+        const rowT = await sessionRow(AT);
+        report(!!rowT?.ended_at, 'Exit records when the acting session ended');
+        await expect('The acting token after Exit', call('GET', 'applications/mine', { token: AT }), 401, 'ACTING_ENDED');
+        await expect('The admin\'s token from Exit works', call('GET', 'users', { token: exit.body?.token }), 200);
+
+        // Tokens the server did not issue, and sessions that ran out
+        const forged = signSessionToken({ id: student.id, role: 'student' }, now(), { sessionId: 999999999, actorId: d.admin.id, name: 'x' });
+        await expect('An acting token for a session that does not exist', call('GET', 'applications/mine', { token: forged }), 401, 'ACTING_ENDED');
+        const AT2 = await actingTokenFor(S, student);
+        const wrongActor = signSessionToken({ id: student.id, role: 'student' }, now(), { ...jwt.decode(AT2).acting, actorId: d.reviewer.id });
+        await expect('An acting token naming another admin', call('GET', 'applications/mine', { token: wrongActor }), 401, 'ACTING_ENDED');
+        const otherPerson = signSessionToken({ id: d.studentA.id, role: 'student' }, now(), jwt.decode(AT2).acting);
+        await expect('An acting session used for another person', call('GET', 'applications/mine', { token: otherPerson }), 401, 'ACTING_ENDED');
+        await pool.query("UPDATE acting_sessions SET started_at = now() - interval '2 hours' WHERE id = $1", [jwt.decode(AT2).acting.sessionId]);
+        await expect('An acting session older than one hour', call('GET', 'applications/mine', { token: AT2 }), 401, 'ACTING_ENDED');
+        report(!!(await sessionRow(AT2))?.ended_at, 'A session that ran out is closed in the log');
+
+        // Nobody can act as a removed reviewer
+        const removedReviewer = (await pool.query(
+            `INSERT INTO users (name, email, password, role, is_verified, programme_id, reviewer_deactivated_at)
+             VALUES ('Security Check Removed Reviewer', $1, 'not-a-password-hash', 'reviewer', true, $2, now()) RETURNING id`,
+            [`removed-${Date.now().toString(36)}${TEST_DOMAIN}`, programmeOfB]
+        )).rows[0];
+        await expect('Act as a removed reviewer', call('POST', 'acting/start', { token: S, json: { userId: removedReviewer.id } }), 400, 'CANNOT_ACT_AS_REMOVED_REVIEWER');
+        await pool.query('DELETE FROM users WHERE id = $1', [removedReviewer.id]);
+
+        const removed = await removeTestStudents();
+        console.log(`(removed the temporary student (${removed}) with their applications, history and acting sessions)`);
     }
 
     section('5. Allowed reads still work -> 200');
@@ -1628,6 +1772,11 @@ const finish = async (ok) => {
         await restoreDrafts();
     } catch (err) {
         console.error('Could not put back the drafts of students A and B:', err.message);
+    }
+    try {
+        if (runStartedAt) await pool.query('DELETE FROM acting_sessions WHERE started_at >= $1', [runStartedAt]);
+    } catch (err) {
+        console.error('Could not remove this run\'s acting sessions:', err.message);
     }
     try {
         const removed = await cleanupRateLimitRows();

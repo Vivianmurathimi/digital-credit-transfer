@@ -72,14 +72,14 @@ TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d 
   They are refused on their next click and can't log in. The admin banner shows a red "No active reviewer" warning for Computer Science.
 - [ ] **Re-invite Dr. Szabó:** use her address `demo.reviewer.cs@mik.pte.hu`, programme CS. On the accept page her name is shown read-only. After accepting with a new password, she sees her applications again.
 
-## 3. Admin impersonation
+## 3. The admin acting as a reviewer
 
 - [ ] **The banner:** as the admin, it shows one line per programme: pending, waiting for the student, the semester's last day, and the reviewer's name.
-- [ ] **Impersonate Reviewer → Dr. Szabó:**
+- [ ] **Act as a reviewer → Dr. Szabó:**
   - the same list and details she sees, nothing from Civil, and files open
-  - an impersonation banner at the top
-  - "Stop impersonation" returns to the admin dashboard
-- [ ] **A decision while impersonating** (e.g. approve Anna's CS202) is shown as decided by **Admin**:
+  - the banner "Acting as Dr. Szabó (Reviewer)" at the top
+  - "Exit" returns to the admin dashboard
+- [ ] **A decision while acting as her** (e.g. approve Anna's CS202) is shown as decided by **Admin**:
   - in the details
   - in the student's My Status
   - in the history (no admin name anywhere)
@@ -181,7 +181,7 @@ The demo's previous semester has Bence's approved CS101 (CS) and Eszter's CE101,
   - Search still works (e.g. "bence").
 - [ ] **Back to "Current semester":** the normal list with decision buttons is back.
 - [ ] **Civil reviewer:** Eszter's CE101 shows "⚙ Rejected · System" with the reason in the reviewer's language.
-- [ ] **Admin impersonating** Dr. Szabó sees the same selector and the same read-only view.
+- [ ] **The admin acting as** Dr. Szabó sees the same selector and the same read-only view.
 - [ ] **Changes are refused even without the UI** (from `backend`, with `npm run demo:start` running):
   ```
   TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d '{"email":"demo.reviewer.cs@mik.pte.hu","password":"Demo1234!"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")

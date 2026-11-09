@@ -2,8 +2,8 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { programmeName } from '../../programmeName';
 
-// "Reviewer – Computer Science Engineering" and the reviewer's name. While the superadmin
-// impersonates a reviewer, this is that reviewer's header (the backend sends whose view it is).
+// "Reviewer – Computer Science Engineering" and the reviewer's name (the backend sends it; while
+// the admin acts as the reviewer, the session is the reviewer's).
 const ReviewerHeader = ({ reviewer, semester }) => {
     const { t, i18n } = useTranslation();
     if (!reviewer) return null;

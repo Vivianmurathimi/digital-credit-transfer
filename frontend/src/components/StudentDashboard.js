@@ -50,7 +50,7 @@ const NoteCounter = ({ id, text, t }) => {
 const fieldLabelStyle = { fontSize: '12px', fontWeight: 'bold', display: 'block', marginBottom: '3px' };
 const fieldInputStyle = { width: '100%', padding: '8px', boxSizing: 'border-box' };
 
-const StudentDashboard = ({ userId, isImpersonating = false }) => {
+const StudentDashboard = ({ userId }) => {
     const { t, i18n } = useTranslation();
     const [courses, setCourses] = useState([]);
     const [coursesLoaded, setCoursesLoaded] = useState(false);
@@ -145,12 +145,12 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
     const fetchMyApplications = useCallback(async () => {
         if (!userId) return;
         try {
-            // A student reads "my applications" (id from the login token);
-            // the superadmin impersonating a student reads that student's list by id
-            const data = await http.get(isImpersonating ? `applications/student/${userId}` : 'applications/mine').json();
+            // "My applications" (id from the login token; while the admin acts as the student, the
+            // session is the student's, admin round Group 1)
+            const data = await http.get('applications/mine').json();
             if (data.success) setMyApplications(data.applications);
         } catch (err) { console.error('Error fetching student apps', err); }
-    }, [userId, isImpersonating]);
+    }, [userId]);
 
     const fetchSystemStatus = useCallback(async () => {
         try {
@@ -269,8 +269,8 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
 
     // --- Draft (Group 7): the unsent form is saved on the server while the student types ---
     // Restored when the form is opened again (also in another browser). One draft per student;
-    // with two tabs open, the last save wins. Off while the superadmin views a student's dashboard.
-    const draftsEnabled = !isImpersonating;
+    // with two tabs open, the last save wins.
+    const draftsEnabled = true;
     // 'loading' -> 'ready' (autosave on) | 'failed' (autosave paused, so the stored draft is never overwritten)
     const [draftPhase, setDraftPhase] = useState(draftsEnabled ? 'loading' : 'off');
     const draftReady = useRef(false);
@@ -895,7 +895,7 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                                         </p>
                                     )}
                                     {app.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={app.info_deadline} />}
-                                    {app.status === 'needs_info' && !readOnly && !isImpersonating && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
+                                    {app.status === 'needs_info' && !readOnly && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
                                         <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
                                     ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
                                 </td>
@@ -933,11 +933,9 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                         // Empty state, with the way to start
                         <div style={{ backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
                             <p style={{ marginTop: 0 }}>{t(previousApplications.length > 0 ? 'student_no_applications_this_semester' : 'student_no_applications')}</p>
-                            {!isImpersonating && (
-                                <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                    {t('student_start_request')}
-                                </button>
-                            )}
+                            <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                {t('student_start_request')}
+                            </button>
                         </div>
                     ) : renderApplicationTable(currentApplications)}
 
@@ -959,8 +957,6 @@ const StudentDashboard = ({ userId, isImpersonating = false }) => {
                     {detailId !== null && (
                         <ApplicationDetail
                             applicationId={detailId}
-                            userId={userId}
-                            isImpersonating={isImpersonating}
                             countryName={countryName}
                             statusLabel={statusLabel}
                             statusColor={statusColor}

@@ -7,14 +7,16 @@ const TOKEN_KEY = 'token';
 const ROLE_KEY = 'role';
 // Only these keys belong to a session. Clearing them never touches other saved
 // settings, such as the language the user picked (i18nextLng).
-const IMPERSONATION_KEYS = ['originalRole', 'impersonatedRole', 'impersonatedUserId', 'impersonatedName'];
-const SESSION_KEYS = [TOKEN_KEY, ROLE_KEY, ...IMPERSONATION_KEYS];
+// The old "impersonation" keys (before admin round Group 1) are no longer read; they are only
+// removed with the session, so a browser that still has them is cleaned up.
+const OLD_IMPERSONATION_KEYS = ['originalRole', 'impersonatedRole', 'impersonatedUserId', 'impersonatedName'];
+const SESSION_KEYS = [TOKEN_KEY, ROLE_KEY, ...OLD_IMPERSONATION_KEYS];
 
 export const VALID_ROLES = ['student', 'reviewer', 'superadmin'];
 
 // Reasons the login page may show after ?reason=. Anything else in the address is ignored,
 // because anyone can type a ?reason= value into the URL.
-export const SESSION_END_CODES = ['NO_TOKEN', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'SESSION_TOO_OLD', 'ACCOUNT_GONE', 'REVIEWER_REMOVED'];
+export const SESSION_END_CODES = ['NO_TOKEN', 'TOKEN_EXPIRED', 'INVALID_TOKEN', 'SESSION_TOO_OLD', 'ACCOUNT_GONE', 'REVIEWER_REMOVED', 'ACTING_ENDED'];
 
 // Pages anyone can open, logged in or not. Links from emails (verify, reset, email link)
 // must keep working even with an old session in the browser. Kept in this one place
@@ -70,16 +72,18 @@ export const msUntilExpiry = () => {
 
 /**
  * The guard rules as a plain function (no React, no storage), so they can be tested on their own.
- * Input: the raw token, the four impersonation values, and the current time.
+ * Input: the raw token and the current time.
  *
- * Returns { valid: false, reason } or { valid: true, user, view, dropImpersonation }:
- * - user: the real account, read from the TOKEN (not the separate 'role' key, which anyone can edit)
- * - view: whose dashboard to show (the impersonated user while a superadmin impersonates)
- * - dropImpersonation: true when impersonation keys exist but must be ignored and removed
+ * Returns { valid: false, reason } or { valid: true, user, view }:
+ * - user: the account the session is for, read from the TOKEN (not the separate 'role' key,
+ *   which anyone can edit)
+ * - view: whose dashboard to show. While the admin acts as a student or reviewer (admin round
+ *   Group 1) the token itself is that person's, plus `acting` ({ sessionId, actorId, name }),
+ *   which the server issued; then `acting` is true and `name` is the person's name for the banner.
  *
  * This only decides which screens to show. The backend checks every request itself.
  */
-export const evaluateSession = ({ token, impersonation = {}, now = Date.now() }) => {
+export const evaluateSession = ({ token, now = Date.now() }) => {
     if (!token) return { valid: false, reason: null };
 
     const payload = readTokenPayload(token);
@@ -92,34 +96,23 @@ export const evaluateSession = ({ token, impersonation = {}, now = Date.now() })
     if (now - startedAt > MAX_SESSION_MS) return { valid: false, reason: 'SESSION_TOO_OLD' };
 
     const user = { id: payload.id, role: payload.role };
-    const { originalRole, impersonatedRole, impersonatedUserId, impersonatedName } = impersonation;
-    const hasImpersonationKeys = !!(originalRole || impersonatedRole || impersonatedUserId || impersonatedName);
+    // Only a student or reviewer session can be an acting one (the server never issues another)
+    const acting = !!payload.acting && ['student', 'reviewer'].includes(payload.role);
+    const view = { userId: user.id, role: user.role, name: acting ? String(payload.acting.name || '') : '', acting };
 
-    // Only a real superadmin may look at another user's dashboard (never another superadmin's)
-    const canImpersonate = user.role === 'superadmin'
-        && originalRole === 'superadmin'
-        && ['student', 'reviewer'].includes(impersonatedRole)
-        && !!impersonatedUserId;
-
-    const view = canImpersonate
-        ? { userId: impersonatedUserId, role: impersonatedRole, name: impersonatedName || '', impersonating: true }
-        : { userId: user.id, role: user.role, name: '', impersonating: false };
-
-    return { valid: true, user, view, dropImpersonation: hasImpersonationKeys && !canImpersonate };
+    return { valid: true, user, view };
 };
 
 // evaluateSession for the session saved in this browser
-export const getSessionState = () => evaluateSession({
-    token: getToken(),
-    impersonation: Object.fromEntries(IMPERSONATION_KEYS.map((key) => [key, read(key)])),
-});
+export const getSessionState = () => evaluateSession({ token: getToken() });
+
+// True while the admin acts as someone (the banner, and nothing saved to that person's profile)
+export const isActing = () => !!readTokenPayload()?.acting;
 
 // Removes stored keys without leaving the page
 const removeKeys = (keys) => keys.forEach((key) => {
     try { localStorage.removeItem(key); } catch { /* ignore */ }
 });
-
-export const forgetImpersonation = () => removeKeys(IMPERSONATION_KEYS);
 
 // Ends the session quietly (no redirect), e.g. an expired token on a public page
 export const forgetSession = () => removeKeys(SESSION_KEYS);

@@ -14,8 +14,10 @@ const parseList = (value) => {
     }
 };
 
-// Who did something, as the student is told: never a personal name
-const actorRoleOf = (user) => (user.role === 'superadmin' ? 'admin' : user.role);
+// Who did something, as the student is told: never a personal name.
+// Pass req.actor (the real actor): the superadmin is 'admin', also while acting as a student or
+// reviewer (admin round Group 1).
+const actorRoleOf = (actor) => (actor.role === 'superadmin' ? 'admin' : actor.role);
 
 /**
  * Adds one step to an application's history. Pass the transaction's client, so the event is

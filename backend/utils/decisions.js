@@ -1,6 +1,6 @@
 // The reviewer's decisions (reviewer Group 6), in one place: which status changes are allowed and
 // what each one needs. Used by PUT /api/applications/:id/status for everyone who can decide
-// (reviewers, and the superadmin, also while impersonating a reviewer).
+// (reviewers, and the superadmin, also while acting as a reviewer).
 //
 // Allowed: pending -> approved / rejected / needs_info. Nothing else:
 // - needs_info -> pending happens only through the student's reply (resubmit route)

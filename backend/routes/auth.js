@@ -192,8 +192,9 @@ router.post('/login', async (req, res) => {
 // Called by the frontend while the user is active, to replace a token before it expires.
 // verifyToken has already checked the token and re-read the user's current role.
 // The original login time is kept, so a session still ends 8 hours after login.
+// An acting session (admin round Group 1) stays an acting session: its claims are carried over.
 router.post('/refresh-token', verifyToken, (req, res) => {
-    const token = signSessionToken(req.user, req.sessionStart);
+    const token = signSessionToken(req.user, req.sessionStart, req.acting);
     res.json({ success: true, token, role: req.user.role });
 });
 

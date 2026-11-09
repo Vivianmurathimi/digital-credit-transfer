@@ -22,8 +22,14 @@ const MAX_SESSION_SECONDS = 8 * 60 * 60;
  * Signs a session token. `sessionStart` (seconds) is the original login time and is
  * carried over unchanged on every refresh, so the 8-hour limit cannot be extended.
  */
-const signSessionToken = ({ id, role }, sessionStart = Math.floor(Date.now() / 1000)) =>
-    jwt.sign({ id, role, sessionStart }, JWT_SECRET, { algorithm: ALGORITHM, expiresIn: IDLE_TIMEOUT });
+const signSessionToken = ({ id, role }, sessionStart = Math.floor(Date.now() / 1000), acting = null) =>
+    jwt.sign(acting ? { id, role, sessionStart, acting } : { id, role, sessionStart }, JWT_SECRET, { algorithm: ALGORITHM, expiresIn: IDLE_TIMEOUT });
+
+// The admin acting as a student or reviewer (admin round Group 1): the token is that person's
+// (id, role), plus `acting`: { sessionId, actorId, name } (the acting_sessions row, the real admin,
+// and the person's name for the banner). verifyToken re-checks the row on every request.
+// An acting session lasts at most this long, and never past the admin's own 8-hour limit.
+const MAX_ACTING_SECONDS = 60 * 60;
 
 // Throws if the signature, algorithm or expiry is wrong (jsonwebtoken errors)
 const verifySessionToken = (token) => jwt.verify(token, JWT_SECRET, { algorithms: [ALGORITHM] });
@@ -40,6 +46,7 @@ module.exports = {
     ALGORITHM,
     IDLE_TIMEOUT,
     MAX_SESSION_SECONDS,
+    MAX_ACTING_SECONDS,
     signSessionToken,
     verifySessionToken,
     isSessionTooOld,

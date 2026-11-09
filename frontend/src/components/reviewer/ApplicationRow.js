@@ -12,9 +12,8 @@ import Chip, { STATUS_ICONS } from './Chip';
 // Hover and the open row's highlight come from the reviewer-row class (theme/theme.css).
 const WAITING_CUES = { warn: { cue: 'needs-info', icon: '⏱' }, late: { cue: 'rejected', icon: '⚠' } };
 
-// searchParams: { as_reviewer } while the superadmin impersonates (the details are that reviewer's view too)
 // readOnly: a past semester (reviewer group L3): no waiting or deadline cues, no decision buttons
-const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, onDecide, searchParams }) => {
+const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, onDecide }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const target = targetCourse(app);
@@ -43,7 +42,7 @@ const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, 
                     </strong>
                     <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '6px' }}>
                         {app.resubmit_count > 0 && app.status === 'pending' && <Chip cue="resubmitted" icon="🔄">{t('reviewer_resubmitted')}</Chip>}
-                        <Chip cue={status.cue} icon={STATUS_ICONS[status.cue]}>{t(status.labelKey)}</Chip>
+                        <Chip cue={status.cue} icon={STATUS_ICONS[status.cue]} size={app.status === 'approved' || app.status === 'rejected' ? 'large' : 'normal'}>{t(status.labelKey)}</Chip>
                     </span>
                 </div>
                 <div style={{ marginTop: '4px' }}>
@@ -81,7 +80,7 @@ const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, 
                             <span style={{ color: 'var(--text-secondary)' }}>{t('reviewer_other_applications', { count: 0 })}</span>
                         )}
                     </div>
-                    <ApplicationDetails appId={app.id} searchParams={searchParams} onDecide={onDecide} readOnly={readOnly} />
+                    <ApplicationDetails appId={app.id} onDecide={onDecide} readOnly={readOnly} />
                 </div>
             )}
         </li>

@@ -8,8 +8,8 @@ const { resolveReviewerView } = require('../utils/reviewers');
 const { getFileOwner, splitFileList } = require('../utils/fileOwner');
 const { semesterEndedSql } = require('../utils/semesters');
 
-// The reviewer dashboard (reviewer Groups 3 and 4). Always one reviewer's view: the logged-in
-// reviewer's, or (for the superadmin impersonating them) the reviewer in ?as_reviewer=<id>.
+// The reviewer dashboard (reviewer Groups 3 and 4). Always the logged-in reviewer's view; the
+// superadmin sees it by acting as the reviewer (admin round Group 1).
 // Every query is limited to that reviewer's programme.
 
 // The semester running now (from its first application day to its last day), like the student side
@@ -79,12 +79,11 @@ const readSemesterId = (value) => {
     return Number.isSafeInteger(id) && id > 0 ? id : 0;
 };
 
-// GET /api/reviewer/semesters[?as_reviewer=<id>]: the past semesters the reviewer can look at (reviewer group L3)
-router.get('/reviewer/semesters', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+// GET /api/reviewer/semesters: the past semesters the reviewer can look at (reviewer group L3)
+router.get('/reviewer/semesters', verifyToken, requireRole('reviewer'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const view = await resolveReviewerView(pool, req);
-        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
         const current = (await pool.query(CURRENT_SEMESTER)).rows[0] || null;
         const { rows } = await pool.query(PAST_SEMESTERS_QUERY, [view.reviewer.programme_id]);
         res.json({ success: true, current, past: rows });
@@ -94,14 +93,13 @@ router.get('/reviewer/semesters', verifyToken, requireRole('reviewer', 'superadm
     }
 });
 
-// GET /api/reviewer/applications[?as_reviewer=<id>][&semester=<id>]: the header and the list.
+// GET /api/reviewer/applications[?semester=<id>]: the header and the list.
 // With semester: that past semester's applications of the reviewer's programme, read-only
 // (read_only: true). A semester that doesn't exist or hasn't ended: 404 SEMESTER_NOT_FOUND.
-router.get('/reviewer/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+router.get('/reviewer/applications', verifyToken, requireRole('reviewer'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const view = await resolveReviewerView(pool, req);
-        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
         const { reviewer } = view;
 
         const programme = (await pool.query('SELECT code, name_en, name_hu, name_de FROM programmes WHERE id = $1', [reviewer.programme_id])).rows[0];
@@ -133,7 +131,7 @@ router.get('/reviewer/applications', verifyToken, requireRole('reviewer', 'super
 const asList = (value) => (Array.isArray(value) ? value : []);
 
 /**
- * GET /api/reviewer/applications/:id[?as_reviewer=<id>]: one application's details (reviewer Group 4),
+ * GET /api/reviewer/applications/:id: one application's details (reviewer Group 4),
  * only from the reviewer's own programme (any other id: 404, like one that doesn't exist).
  * Withdrawn applications aren't listed, so they have no details either.
  * files: for every file the application names, the name the student gave it and whether it still
@@ -142,13 +140,12 @@ const asList = (value) => (Array.isArray(value) ? value : []);
  * note_type from the application_notes view (student, resubmit, reviewer, system; null without
  * a note) and the actor's name. The conversation and the history table are both built from it.
  */
-router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
     try {
         const view = await resolveReviewerView(pool, req);
-        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
 
         const found = (await pool.query(
             `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
