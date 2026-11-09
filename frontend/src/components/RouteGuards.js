@@ -1,6 +1,6 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { forgetImpersonation, forgetSession, getSessionState } from '../session';
+import { forgetSession, getSessionState } from '../session';
 
 // Both guards decide with the same getSessionState(), so they can never send
 // a user back and forth between /login and /dashboard.
@@ -15,9 +15,6 @@ export const RequireAuth = ({ children }) => {
         const target = session.reason ? `/login?reason=${session.reason}` : '/login';
         return <Navigate to={target} replace />;
     }
-
-    // Impersonation keys that do not belong to a real superadmin are ignored and removed
-    if (session.dropImpersonation) forgetImpersonation();
 
     return children;
 };

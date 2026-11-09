@@ -3,9 +3,21 @@ import api from '../api';
 import { useTranslation } from 'react-i18next';
 import { getErrorMessage } from '../errorMessage';
 import TermArchive from './TermArchive';
+import ReviewerOverview from './ReviewerOverview';
+import { startActing } from '../acting';
+import { formatDateTime } from '../dates';
+import StaffAccess from './StaffAccess';
+import DecisionModal from './reviewer/DecisionModal';
+import Chip from './reviewer/Chip';
 
-const SuperAdminDashboard = () => {
-    const { t } = useTranslation();
+// The admin's decision buttons (admin round Group 2): only for pending applications of a programme
+// with no active reviewer. Same panel and rules as the reviewer's; recorded as Admin.
+const DECIDE_TYPES = [['approved', 'approve', 'reviewer_approve'], ['needs_info', 'info', 'reviewer_request_info'], ['rejected', 'reject', 'reviewer_reject']];
+const OPEN_STATUSES = ['pending', 'needs_info'];
+
+// onActingStarted: called once the session is the person's (Dashboard then shows their screen)
+const SuperAdminDashboard = ({ onActingStarted }) => {
+    const { t, i18n } = useTranslation();
     const [systemUsers, setSystemUsers] = useState([]);
     const [applications, setApplications] = useState([]);
 
@@ -17,9 +29,8 @@ const SuperAdminDashboard = () => {
 
     const [isSystemOpen, setIsSystemOpen] = useState(true);
 
-    // --- NEW: Role Management State ---
-    const [allUsers, setAllUsers] = useState([]);
-    const [roleUpdateStatus, setRoleUpdateStatus] = useState('');
+    const [decision, setDecision] = useState(null); // { app, type } while the decision panel is open
+    const [decisionNotice, setDecisionNotice] = useState('');
 
     const fetchSystemUsers = useCallback(async () => {
         try {
@@ -44,20 +55,11 @@ const SuperAdminDashboard = () => {
         } catch (err) { console.error('Error fetching system status', err); }
     }, []);
 
-    // --- NEW: Fetch full user list including superadmins ---
-    const fetchAllUsers = useCallback(async () => {
-        try {
-            const res = await api.get('/api/users/all');
-            if (res.data.success) setAllUsers(res.data.users);
-        } catch (err) { console.error('Error fetching all users', err); }
-    }, []);
-
     useEffect(() => {
         fetchSystemUsers();
         fetchApplications();
         fetchSystemStatus();
-        fetchAllUsers();
-    }, [fetchSystemUsers, fetchApplications, fetchSystemStatus, fetchAllUsers]);
+    }, [fetchSystemUsers, fetchApplications, fetchSystemStatus]);
 
     // --- Helper to safely parse the Phase 1 JSON array ---
     const parseCourses = (jsonStringOrArray) => {
@@ -66,12 +68,25 @@ const SuperAdminDashboard = () => {
         try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
     };
 
-    const handleImpersonateSpecificUser = (user) => {
-        localStorage.setItem('originalRole', 'superadmin');
-        localStorage.setItem('impersonatedRole', user.role);
-        localStorage.setItem('impersonatedUserId', user.id);
-        localStorage.setItem('impersonatedName', user.name);
-        window.location.reload();
+    // Acting as a student or reviewer (admin round Group 1): the server starts the session and
+    // records it; everything done in it is saved as Admin
+    const handleActAs = async (user) => {
+        if (user.deactivated) return;
+        try {
+            await startActing(user.id);
+            onActingStarted();
+        } catch (err) {
+            alert(getErrorMessage(err, t, 'acting_start_failed'));
+        }
+    };
+
+    // "Reviewer: <name>", "Admin" or "System", with the date; "—" for older rows without a record
+    const decidedBy = (app) => {
+        if (!app.decided_by_role) return '—';
+        const who = app.decided_by_role === 'reviewer'
+            ? t('superadmin_decided_by_reviewer', { name: app.decided_by_name || '—' })
+            : t(`reviewer_decided_by_${app.decided_by_role}`);
+        return app.decided_at ? `${who}, ${formatDateTime(app.decided_at, i18n.language)}` : who;
     };
 
     const handleUpdateStatus = async (appId, newStatus) => {
@@ -95,40 +110,6 @@ const SuperAdminDashboard = () => {
                 const res = await api.put('/api/settings/toggle', { isOpen: !isSystemOpen });
                 if (res.data.success) setIsSystemOpen(res.data.isOpen);
             } catch (err) { alert(getErrorMessage(err, t, 'superadmin_toggle_failed')); }
-        }
-    };
-
-    // --- NEW: Handle a role change from the dropdown ---
-    const handleRoleChange = async (user, newRole) => {
-        if (newRole === user.role) return; // no actual change
-
-        // Extra confirmation specifically for promoting someone TO superadmin
-        if (newRole === 'superadmin') {
-            const confirmed = window.confirm(
-                `Are you sure you want to make ${user.name} a Super Admin? This grants them full control over the entire system.`
-            );
-            if (!confirmed) return;
-        } else {
-            // Normal confirmation for other role changes
-            const confirmed = window.confirm(`Change ${user.name}'s role from ${user.role} to ${newRole}?`);
-            if (!confirmed) return;
-        }
-
-        try {
-            setRoleUpdateStatus('Updating role...');
-            const res = await api.put(`/api/users/${user.id}/role`, { newRole });
-            if (res.data.success) {
-                setRoleUpdateStatus(`${user.name} is now ${newRole}.`);
-                fetchAllUsers(); // refresh the list to show the change
-                fetchSystemUsers(); // also refresh impersonation dropdowns in case role affects them
-                setTimeout(() => setRoleUpdateStatus(''), 3000);
-            }
-        } catch (err) {
-            // Translated reason from the backend code (e.g. LAST_SUPERADMIN), or a general message
-            const errorMsg = getErrorMessage(err, t, 'superadmin_role_update_failed');
-            setRoleUpdateStatus(errorMsg);
-            alert(errorMsg);
-            setTimeout(() => setRoleUpdateStatus(''), 4000);
         }
     };
 
@@ -157,15 +138,18 @@ const SuperAdminDashboard = () => {
                 </button>
             </div>
 
-            {/* Impersonation Engine */}
+            {/* Pending applications and reviewers per programme (reviewer Group 7) */}
+            <ReviewerOverview />
+
+            {/* Act as a student or reviewer (admin round Group 1) */}
             <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>
-                <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_impersonate_title')}</h2>
-                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_impersonate_description')}</p>
+                <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_act_as_title')}</h2>
+                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '20px' }}>{t('superadmin_act_as_description')}</p>
                 
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '40px', flexWrap: 'wrap' }}>
-                    {/* Student Impersonation */}
+                    {/* Act as a student */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--link)', marginBottom: '5px' }}>{t('superadmin_impersonate_student')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--link)', marginBottom: '5px' }}>{t('superadmin_act_as_student')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} onFocus={() => setShowStudentDropdown(true)} onBlur={() => setTimeout(() => setShowStudentDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid var(--link)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
@@ -174,7 +158,7 @@ const SuperAdminDashboard = () => {
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--link)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
                                 {filteredStudents.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_students')}</div> : (
                                     filteredStudents.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-info)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                        <div key={user.id} onClick={() => handleActAs(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--hover-info)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
                                             <div style={{ fontWeight: 'bold', color: 'var(--link)', fontSize: '14px' }}>{user.name}</div>
                                             <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
@@ -184,9 +168,9 @@ const SuperAdminDashboard = () => {
                         )}
                     </div>
 
-                    {/* Reviewer Impersonation */}
+                    {/* Act as a reviewer */}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', position: 'relative' }}>
-                        <label style={{ fontWeight: 'bold', color: 'var(--success-text)', marginBottom: '5px' }}>{t('superadmin_impersonate_reviewer')}</label>
+                        <label style={{ fontWeight: 'bold', color: 'var(--success-text)', marginBottom: '5px' }}>{t('superadmin_act_as_reviewer')}</label>
                         <input 
                             type="text" placeholder={t('superadmin_search_placeholder')} value={reviewerSearch} onChange={(e) => setReviewerSearch(e.target.value)} onFocus={() => setShowReviewerDropdown(true)} onBlur={() => setTimeout(() => setShowReviewerDropdown(false), 200)}
                             style={{ width: '250px', padding: '10px', border: '1px solid var(--accent)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px', outline: 'none' }}
@@ -195,8 +179,8 @@ const SuperAdminDashboard = () => {
                             <div style={{ position: 'absolute', top: '70px', left: 0, width: '250px', maxHeight: '200px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--accent)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4x 8px rgba(0,0,0,0.1)' }}>
                                 {filteredReviewers.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t('superadmin_no_reviewers')}</div> : (
                                     filteredReviewers.map(user => (
-                                        <div key={user.id} onClick={() => handleImpersonateSpecificUser(user)} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--success-surface)'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
-                                            <div style={{ fontWeight: 'bold', color: 'var(--success-text)', fontSize: '14px' }}>{user.name}</div>
+                                        <div key={user.id} onClick={() => handleActAs(user)} aria-disabled={user.deactivated || undefined} onMouseEnter={(e) => { if (!user.deactivated) e.currentTarget.style.backgroundColor = 'var(--success-surface)'; }} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--surface)'} style={{ padding: '10px', cursor: user.deactivated ? 'not-allowed' : 'pointer', opacity: user.deactivated ? 0.55 : 1, borderBottom: '1px solid var(--border-subtle)', textAlign: 'left' }}>
+                                            <div style={{ fontWeight: 'bold', color: 'var(--success-text)', fontSize: '14px' }}>{user.name}{user.deactivated && ` (${t('superadmin_removed_reviewer')})`}</div>
                                             <div style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{user.email}</div>
                                         </div>
                                     ))
@@ -207,86 +191,38 @@ const SuperAdminDashboard = () => {
                 </div>
             </div>
 
-            {/* --- NEW: Role Management Engine --- */}
-            <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--purple-text)', marginBottom: '30px' }}>
-                <h2 style={{ marginTop: 0, color: 'var(--purple-text)' }}>Role Management</h2>
-                <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '15px' }}>
-                    Change any user's role. Promoting someone to Super Admin requires extra confirmation.
-                </p>
-
-                {roleUpdateStatus && (
-                    <div style={{ backgroundColor: 'var(--surface-accent)', color: 'var(--link)', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
-                        {roleUpdateStatus}
-                    </div>
-                )}
-
-                <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
-                    <thead>
-                        <tr style={{ backgroundColor: 'var(--purple)', color: 'white' }}>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>Name</th>
-                            <th style={{ padding: '10px', textAlign: 'left' }}>Email</th>
-                            <th style={{ padding: '10px', textAlign: 'center' }}>Current Role</th>
-                            <th style={{ padding: '10px', textAlign: 'center' }}>Change Role To</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {allUsers.length === 0 ? (
-                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>No users found.</td></tr>
-                        ) : allUsers.map(user => (
-                            <tr key={user.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                                <td style={{ padding: '10px' }}>{user.name}</td>
-                                <td style={{ padding: '10px', color: 'var(--text-secondary)', fontSize: '13px' }}>{user.email}</td>
-                                <td style={{ padding: '10px', textAlign: 'center' }}>
-                                    <span style={{
-                                        fontWeight: 'bold',
-                                        padding: '4px 10px',
-                                        borderRadius: '12px',
-                                        fontSize: '12px',
-                                        backgroundColor: user.role === 'superadmin' ? 'var(--purple)' : user.role === 'reviewer' ? 'var(--brand)' : 'var(--blue)',
-                                        color: 'white'
-                                    }}>
-                                        {user.role}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '10px', textAlign: 'center' }}>
-                                    <select
-                                        value={user.role}
-                                        onChange={(e) => handleRoleChange(user, e.target.value)}
-                                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid var(--border-strong)', cursor: 'pointer' }}
-                                    >
-                                        <option value="student">Student</option>
-                                        <option value="reviewer">Reviewer</option>
-                                        <option value="superadmin">Super Admin</option>
-                                    </select>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+            {/* Reviewers and admins: invites, removal, deactivation (admin round Group 2) */}
+            <StaffAccess />
 
             {/* Application Overrides Engine */}
             <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--heading)' }}>
                 <h2 style={{ marginTop: 0, color: 'var(--heading)' }}>{t('superadmin_application_overrides_title')}</h2>
+                {decisionNotice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{decisionNotice}</p>}
                 <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                     <thead>
                         <tr style={{ backgroundColor: 'var(--header-bg)', color: 'white' }}>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
+                            <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_decided_by_column')}</th>
                             <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_action_column')}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {applications.length === 0 ? (
-                            <tr><td colSpan="4" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
+                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
                         ) : applications.map(app => {
                             const coursesList = parseCourses(app.fulfilled_courses_json);
                             const fulfilledNames = coursesList.map(c => c.course_name).join(', ');
 
                             return (
                             <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                                <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>{app.student_name}</td>
+                                <td style={{ padding: '12px', fontWeight: 'bold', verticalAlign: 'top' }}>
+                                    {app.student_name}
+                                    {!app.programme_has_reviewer && OPEN_STATUSES.includes(app.status) && (
+                                        <div style={{ marginTop: '6px' }}><Chip cue="rejected">{t('superadmin_no_reviewer')}</Chip></div>
+                                    )}
+                                </td>
                                 <td style={{ padding: '12px', color: 'var(--text-strong)', fontSize: '13px', verticalAlign: 'top' }}>
                                     <div style={{ marginBottom: '5px' }}>
                                         <strong style={{ color: 'var(--link)' }}>From:</strong> {fulfilledNames || 'N/A'}
@@ -306,15 +242,47 @@ const SuperAdminDashboard = () => {
                                         {t(`status_${app.status}`)}
                                     </span>
                                 </td>
+                                <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>{decidedBy(app)}</td>
                                 <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'pointer', padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_reset_button')}</button>
-                                    <button onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'pointer', marginLeft: '8px', padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('superadmin_force_approve_button')}</button>
+                                    {/* No active reviewer for this programme: the admin decides (recorded as Admin) */}
+                                    {app.status === 'pending' && !app.programme_has_reviewer && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', marginBottom: '8px' }}>
+                                            {DECIDE_TYPES.map(([type, cue, labelKey]) => (
+                                                <button key={type} type="button" onClick={() => { setDecisionNotice(''); setDecision({ app, type }); }}
+                                                    style={{ padding: '6px 12px', backgroundColor: `var(--cue-btn-${cue})`, color: `var(--cue-btn-${cue}-text)`, border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
+                                                    {t(labelKey)}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {/* Reset and force approve break the decision rules (reviewer Group 6: approvals need a
+                                        grade, decided applications are final). Disabled until the admin round rebuilds them
+                                        as admin overrides; handleUpdateStatus is kept for that. The tooltip sits on a wrapper,
+                                        because disabled buttons don't show one in every browser. */}
+                                    <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block' }}>
+                                        <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_reset_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_reset_button')}</button>
+                                    </span>
+                                    <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block', marginLeft: '8px' }}>
+                                        <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_force_approve_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_force_approve_button')}</button>
+                                    </span>
                                 </td>
                             </tr>
                         )})}
                     </tbody>
                 </table>
             </div>
+
+            {decision && (
+                <DecisionModal
+                    app={decision.app} type={decision.type}
+                    onClose={() => setDecision(null)}
+                    onDone={(saved) => {
+                        setDecision(null);
+                        setDecisionNotice(saved ? t('reviewer_decision_saved') : '');
+                        fetchApplications();
+                    }}
+                />
+            )}
 
             {/* Term Archive: semester PDF books for audits */}
             <TermArchive />

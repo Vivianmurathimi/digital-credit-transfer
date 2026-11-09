@@ -21,8 +21,10 @@ router.get('/status', verifyToken, async (req, res) => {
 
 // PUT: Super Admin toggles the switch (superadmin only)
 router.put('/toggle', verifyToken, requireRole('superadmin'), async (req, res) => {
+    // Only a real true/false: anything else ("yes", 1, missing) would be saved as something unintended
+    const isOpen = req.body?.isOpen;
+    if (typeof isOpen !== 'boolean') return sendError(res, 400, 'INVALID_IS_OPEN', 'isOpen must be true or false', { field: 'isOpen' });
     try {
-        const { isOpen } = req.body;
         await pool.query('UPDATE system_settings SET is_submissions_open = $1', [isOpen]);
         res.json({ success: true, isOpen });
     } catch (err) {

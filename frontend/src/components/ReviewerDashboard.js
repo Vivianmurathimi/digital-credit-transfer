@@ -1,277 +1,130 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import api from '../api';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import http from '../http';
 import { getErrorMessage } from '../errorMessage';
-import SecureImage from './SecureImage';
-import { openSecureFile, downloadSecureFile } from '../secureFiles';
+import { countsFor, rowsFor } from '../reviewerList';
+import ReviewerHeader from './reviewer/ReviewerHeader';
+import ReviewerTabs from './reviewer/ReviewerTabs';
+import ReviewerSearch from './reviewer/ReviewerSearch';
+import ApplicationRow from './reviewer/ApplicationRow';
+import DecisionModal from './reviewer/DecisionModal';
+import SemesterSelect from './reviewer/SemesterSelect';
+
+// The reviewer dashboard (reviewer Groups 3 and 4): header, tabs, search, the list and, per opened row, the details.
+// The backend sends only the reviewer's own programme (completed ones of the current semester
+// only); search and the student filter run here, on that list.
+// The superadmin sees this dashboard by acting as the reviewer (admin round Group 1): the session
+// is then the reviewer's, so nothing here needs to know.
+// Past semesters (reviewer group L3): picked in the semester selector, shown read-only with the
+// same list, search and details, but without decision buttons.
+
+const EMPTY_TEXT = { pending: 'reviewer_empty_pending', needs_info: 'reviewer_empty_needs_info', completed: 'reviewer_empty_completed' };
 
 const ReviewerDashboard = () => {
     const { t } = useTranslation();
-    const [applications, setApplications] = useState([]);
-    const [reviewerTab, setReviewerTab] = useState('pending');
-    const [feedbackModal, setFeedbackModal] = useState({ isOpen: false, appId: null, type: '' });
-    const [reviewerNote, setReviewerNote] = useState('');
-    const [feedbackUploadStatus, setFeedbackUploadStatus] = useState('');
+    const [data, setData] = useState(null); // { reviewer, semester, applications }
+    const [loadError, setLoadError] = useState('');
+    const [tab, setTab] = useState('pending');
+    const [query, setQuery] = useState('');
+    const [student, setStudent] = useState(null); // { studentId, semesterId, name }
+    const [openId, setOpenId] = useState(null);
+    const [decision, setDecision] = useState(null); // { app, type }
+    const [notice, setNotice] = useState(''); // "Decision saved." after the panel closes
+    const [semesters, setSemesters] = useState(null); // { current, past: [{ id, name, ends_on }] }
+    const [semesterId, setSemesterId] = useState(null); // null = the current view
 
-    const fetchApplications = useCallback(async () => {
+    const load = useCallback(async () => {
         try {
-            const res = await api.get('/api/applications');
-            if (res.data.success) setApplications(res.data.applications);
-        } catch (err) { 
-            console.error('Error fetching apps', err); 
+            const params = semesterId ? { semester: semesterId } : {};
+            setData(await http.get('reviewer/applications', { searchParams: params }).json());
+            setLoadError('');
+        } catch (err) {
+            setLoadError(getErrorMessage(err, t, 'reviewer_load_failed'));
         }
+    }, [semesterId, t]);
+
+    useEffect(() => { load(); }, [load]);
+
+    // The semesters for the selector (shown only when there are past ones)
+    useEffect(() => {
+        let current = true;
+        http.get('reviewer/semesters').json()
+            .then((result) => { if (current) setSemesters(result); })
+            .catch((err) => console.error('Could not load the semesters', err));
+        return () => { current = false; };
     }, []);
 
-    useEffect(() => {
-        fetchApplications();
-    }, [fetchApplications]);
-
-    // --- Helper to safely parse the Phase 1 JSON array ---
-    const parseCourses = (jsonStringOrArray) => {
-        if (!jsonStringOrArray) return [];
-        if (Array.isArray(jsonStringOrArray)) return jsonStringOrArray;
-        try { return JSON.parse(jsonStringOrArray); } catch (e) { return []; }
+    const readOnly = !!data?.read_only;
+    const chooseSemester = (id) => {
+        setSemesterId(id);
+        setData(null);
+        setOpenId(null);
+        setStudent(null);
+        setNotice('');
+        // A past semester's applications are decided: start on Completed
+        setTab(id ? 'completed' : 'pending');
     };
 
-    const isImageFile = (fileName) => !!fileName && /\.(jpe?g|png|gif|bmp|webp)$/i.test(fileName);
+    const applications = useMemo(() => data?.applications || [], [data]);
+    const rows = useMemo(() => rowsFor(applications, { tab, query, student }), [applications, tab, query, student]);
+    const counts = useMemo(() => countsFor(applications, { query, student }), [applications, query, student]);
 
-    // Evidence files need the login token: open and download them through secureFiles
-    const handleOpenFile = (fileName) => {
-        openSecureFile(fileName).catch((err) => alert(getErrorMessage(err, t, 'file_open_failed')));
+    const showStudent = (app) => {
+        setStudent({ studentId: app.student_id, semesterId: app.semester_id ?? null, name: app.student_name });
+        setQuery('');
     };
 
-    const handleDownload = async (fileName) => {
-        try {
-            await downloadSecureFile(fileName);
-        } catch (err) {
-            alert(getErrorMessage(err, t, 'reviewer_download_failed'));
-        }
-    };
-
-    const submitReviewerDecision = async () => {
-        if (feedbackModal.type !== 'approved' && !reviewerNote.trim()) {
-            return alert(t('reviewer_note_required'));
-        }
-        
-        try {
-            setFeedbackUploadStatus(t('reviewer_decision_submitting'));
-            const noteToSend = feedbackModal.type === 'approved' ? t('reviewer_confirm_approve_text') : reviewerNote;
-            
-            const res = await api.put(`/api/applications/${feedbackModal.appId}/status`, { status: feedbackModal.type, note: noteToSend });
-            if (res.data.success) {
-                alert(t('reviewer_application_marked', { status: t(`status_${feedbackModal.type}`) }));
-                setFeedbackModal({ isOpen: false, appId: null, type: '' });
-                setReviewerNote('');
-                setFeedbackUploadStatus('');
-                fetchApplications(); 
-            }
-        } catch (err) {
-            setFeedbackUploadStatus(getErrorMessage(err, t, 'reviewer_decision_failed'));
-        }
-    };
-
-    const pendingApps = applications.filter(a => a.status === 'pending');
-    const needsInfoApps = applications.filter(a => a.status === 'needs_info');
-    const completedApps = applications.filter(a => a.status === 'approved' || a.status === 'rejected');
-    const activeReviewerApps = reviewerTab === 'pending' ? pendingApps : reviewerTab === 'needs_info' ? needsInfoApps : completedApps;
-
-    const getModalTitle = () => {
-        if (feedbackModal.type === 'approved') return t('reviewer_confirm_title_approved');
-        if (feedbackModal.type === 'needs_info') return t('reviewer_confirm_title_needs_info');
-        return t('reviewer_confirm_title_rejected');
+    // Why the list is empty: nothing in this tab at all, or nothing matching the search / student filter
+    const emptyText = () => {
+        if (readOnly && rowsFor(applications, { tab }).length === 0) return t('reviewer_empty_past');
+        if (tab === 'completed' && data && !data.semester) return t('reviewer_no_semester');
+        const anyInTab = rowsFor(applications, { tab }).length > 0;
+        return anyInTab ? t('reviewer_no_search_results') : t(EMPTY_TEXT[tab]);
     };
 
     return (
         <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
-            <h2 style={{ marginTop: 0, color: 'var(--success-text)' }}>{t('reviewer_title')}</h2>
-            
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '3px solid var(--success-border)', paddingBottom: '10px' }}>
-                <button onClick={() => setReviewerTab('pending')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'pending' ? 'var(--surface)' : 'transparent', color: 'var(--success-text)' }}>
-                    {t('reviewer_pending_tab')} <span style={{ backgroundColor: 'var(--request)', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{pendingApps.length}</span>
-                </button>
-                <button onClick={() => setReviewerTab('needs_info')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'needs_info' ? 'var(--surface)' : 'transparent', color: 'var(--success-text)' }}>
-                    {t('reviewer_needs_info_tab')} <span style={{ backgroundColor: 'var(--orange)', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{needsInfoApps.length}</span>
-                </button>
-                <button onClick={() => setReviewerTab('completed')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '20px', fontWeight: 'bold', backgroundColor: reviewerTab === 'completed' ? 'var(--surface)' : 'transparent', color: 'var(--success-text)' }}>
-                    {t('reviewer_completed_tab')} <span style={{ backgroundColor: 'var(--accent)', color: '#fff', padding: '2px 8px', borderRadius: '10px', marginLeft: '5px' }}>{completedApps.length}</span>
-                </button>
-            </div>
+            <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} />
+            {loadError && <div role="alert" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--danger-border)' }}>{loadError}</div>}
 
-            <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)' }}>
-                <thead>
-                    <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
-                        <th style={{ padding: '10px', textAlign: 'left', width: '20%' }}>{t('reviewer_student')}</th>
-                        <th style={{ padding: '10px', textAlign: 'left', width: '25%' }}>{t('reviewer_fulfilled_course')}</th>
-                        <th style={{ padding: '10px', textAlign: 'left', width: '25%' }}>{t('reviewer_target_courses')}</th>
-                        <th style={{ padding: '10px', textAlign: 'center', width: '20%' }}>{t('reviewer_evidence')}</th>
-                        <th style={{ padding: '10px', textAlign: 'center', width: '10%' }}>{t('reviewer_actions')}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {activeReviewerApps.length === 0 ? (
-                        <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>{t('reviewer_no_apps')}</td></tr>
-                    ) : activeReviewerApps.map(app => {
-                        // --- Extract the JSON List per application ---
-                        const coursesList = parseCourses(app.fulfilled_courses_json);
-                        
-                        return (
-                        <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                            
-                            {/* --- PHASE 2: Student Name + Cover Letter Note --- */}
-                            <td style={{ padding: '10px', verticalAlign: 'top' }}>
-                                <div style={{ fontWeight: 'bold', fontSize: '15px' }}>{app.student_name}</div>
-                                {app.student_note && (
-                                    <div style={{ marginTop: '10px', backgroundColor: 'var(--warning-bg)', padding: '10px', borderRadius: '5px', fontSize: '12px', borderLeft: '4px solid var(--yellow)', color: 'var(--warning-text)' }}>
-                                        <strong style={{ display: 'block', marginBottom: '4px' }}>📝 Student's Note:</strong> 
-                                        {app.student_note}
-                                    </div>
-                                )}
-                                {app.student_resubmit_note && (
-                                    <div style={{ marginTop: '10px', backgroundColor: 'var(--info-bg)', padding: '10px', borderRadius: '5px', fontSize: '12px', borderLeft: '4px solid var(--teal)', color: 'var(--info-text)' }}>
-                                        <strong style={{ display: 'block', marginBottom: '4px' }}>🔄 Resubmit Note:</strong>
-                                        {app.student_resubmit_note}
-                                    </div>
-                                )}
-                                {app.reviewer_note && (
-                                    <div style={{ marginTop: '10px', backgroundColor: 'var(--danger-bg)', padding: '10px', borderRadius: '5px', fontSize: '12px', borderLeft: '4px solid var(--red)', color: 'var(--danger-text)' }}>
-                                        <strong style={{ display: 'block', marginBottom: '4px' }}>🧾 Reviewer Note:</strong>
-                                        {app.reviewer_note}
-                                    </div>
-                                )}
-                            </td>
-
-                            {/* --- PHASE 1: Stacked List of Fulfilled Courses --- */}
-                            <td style={{ padding: '10px', color: 'var(--link)', verticalAlign: 'top' }}>
-                                <ul style={{ listStyleType: 'none', padding: 0, margin: 0 }}>
-                                    {coursesList.map((course, idx) => (
-                                        <li key={idx} style={{ marginBottom: '8px' }}>
-                                            📘 <strong>{course.course_name}</strong><br/>
-                                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                                                Code: {course.course_code} | {course.credits} Cr | Grade: {course.grade}
-                                            </span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </td>
-
-                            <td style={{ padding: '10px', color: 'var(--success-accent)', fontWeight: 'bold', verticalAlign: 'top' }}>
-                                <ul style={{ margin: 0, paddingLeft: '15px', listStyleType: 'disc' }}>
-                                    {app.pte_course_names ? app.pte_course_names.split(' + ').map((courseName, idx) => (
-                                        <li key={idx} style={{ marginBottom: '5px' }}>{courseName}</li>
-                                    )) : <li>{t('reviewer_no_courses_listed')}</li>}
-                                </ul>
-                            </td>
-
-                            {/* --- PHASE 1: Stacked List of Labeled Evidence --- */}
-                            <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
-                                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                    {coursesList.map((course, idx) => course.file && (
-                                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '2px solid var(--border)', padding: '5px', borderRadius: '6px', backgroundColor: 'var(--surface-2)' }}>
-                                            <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={course.course_name}>
-                                                📄 {course.course_name}
-                                            </div>
-                                            {/* PDF evidence (e.g. a highlighted transcript) gets a document icon: a PDF can't be shown as an image */}
-                                            {isImageFile(course.file) ? (
-                                                <SecureImage 
-                                                    fileName={course.file} 
-                                                    alt={t('reviewer_evidence')} 
-                                                    onClick={() => handleOpenFile(course.file)} 
-                                                    style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
-                                                />
-                                            ) : (
-                                                <div 
-                                                    onClick={() => handleOpenFile(course.file)} 
-                                                    title={course.file}
-                                                    style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer', backgroundColor: 'var(--surface)' }}
-                                                >📄</div>
-                                            )}
-                                            <button onClick={() => handleDownload(course.file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
-                                            {/* The course's syllabus, when one was required (Group 5) */}
-                                            {course.syllabus_file && (
-                                                <>
-                                                    <div style={{ fontSize: '10px', fontWeight: 'bold', marginTop: '4px' }}>{t('reviewer_syllabus')}</div>
-                                                    {isImageFile(course.syllabus_file) ? (
-                                                        <SecureImage fileName={course.syllabus_file} alt={t('reviewer_syllabus')} onClick={() => handleOpenFile(course.syllabus_file)} style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} />
-                                                    ) : (
-                                                        <div onClick={() => handleOpenFile(course.syllabus_file)} title={course.syllabus_file} style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer' }}>📄</div>
-                                                    )}
-                                                    <button onClick={() => handleDownload(course.syllabus_file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
-                                                </>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                                {app.supplemental_files && app.supplemental_files.split(',').filter(Boolean).length > 0 && (
-                                    <div style={{ marginTop: '10px' }}>
-                                        <strong style={{ display: 'block', marginBottom: '6px', fontSize: '12px', color: 'var(--link)' }}>📎 {t('reviewer_additional_evidence')}</strong>
-                                        {/* Same card layout as the original evidence above */}
-                                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                            {app.supplemental_files.split(',').filter(Boolean).map((file, idx) => (
-                                                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'center', border: '2px solid var(--border)', padding: '5px', borderRadius: '6px', backgroundColor: 'var(--surface-2)' }}>
-                                                    <div style={{ fontSize: '10px', fontWeight: 'bold', maxWidth: '70px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={file}>
-                                                        📄 {t('reviewer_additional_file', { number: idx + 1 })}
-                                                    </div>
-                                                    {isImageFile(file) ? (
-                                                        <SecureImage 
-                                                            fileName={file} 
-                                                            alt={t('reviewer_evidence')} 
-                                                            onClick={() => handleOpenFile(file)} 
-                                                            style={{ width: '45px', height: '45px', objectFit: 'cover', border: '1px solid var(--border-strong)', cursor: 'pointer' }} 
-                                                        />
-                                                    ) : (
-                                                        <div 
-                                                            onClick={() => handleOpenFile(file)} 
-                                                            title={file}
-                                                            style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '1px solid var(--border-strong)', cursor: 'pointer', backgroundColor: 'var(--surface)' }}
-                                                        >📄</div>
-                                                    )}
-                                                    <button onClick={() => handleDownload(file)} title={t('reviewer_download_title')} style={{ cursor: 'pointer', fontSize: '11px', padding: '3px 0', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '3px', width: '100%', fontWeight: 'bold' }}>📥</button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                            </td>
-
-                            <td style={{ padding: '10px', textAlign: 'center', verticalAlign: 'top' }}>
-                                {reviewerTab !== 'completed' ? (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'approved' })} style={{ backgroundColor: 'var(--brand)', color: 'white', cursor: 'pointer', padding: '6px', border: '1px solid var(--brand)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_approve')}</button>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'needs_info' })} style={{ backgroundColor: 'var(--request)', color: 'white', cursor: 'pointer', padding: '6px', border: '1px solid var(--request)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_request_info')}</button>
-                                        <button onClick={() => setFeedbackModal({ isOpen: true, appId: app.id, type: 'rejected' })} style={{ backgroundColor: 'var(--surface)', color: 'var(--link)', cursor: 'pointer', padding: '6px', border: '1px solid var(--link)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_reject')}</button>
-                                    </div>
-                                ) : (
-                                    <strong style={{ color: app.status === 'approved' ? 'var(--ok-text)' : 'var(--error-text)' }}>{t(`status_${app.status}`)}</strong>
-                                )}
-                            </td>
-                        </tr>
-                    )})}
-                </tbody>
-            </table>
-
-            {feedbackModal.isOpen && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'var(--overlay)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-                    <div style={{ backgroundColor: 'var(--surface)', padding: '25px', borderRadius: '10px', width: '400px', boxShadow: '0 5px 15px rgba(0,0,0,0.3)' }}>
-                        <h3 style={{ marginTop: 0, color: 'var(--link)' }}>
-                            {getModalTitle()}
-                        </h3>
-                        
-                        {feedbackModal.type === 'approved' ? (
-                            <p style={{ color: 'var(--link)', fontWeight: 'bold', fontSize: '15px' }}>{t('reviewer_confirm_approve_text')}</p>
-                        ) : (
-                            <>
-                                <label style={{ fontWeight: 'bold', fontSize: '14px' }}>{t('reviewer_rationale_note_label')}</label>
-                                <textarea value={reviewerNote} onChange={(e) => setReviewerNote(e.target.value)} placeholder={t('reviewer_note_placeholder')} style={{ width: '100%', height: '100px', marginTop: '8px', padding: '10px', boxSizing: 'border-box', border: '1px solid var(--border-strong)', borderRadius: '4px' }} />
-                            </>
-                        )}
-
-                        {feedbackUploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginTop: '10px' }}>{feedbackUploadStatus}</p>}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-                            <button onClick={() => { setFeedbackModal({ isOpen: false }); setReviewerNote(''); }} style={{ padding: '8px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('reviewer_cancel')}</button>
-                            <button onClick={submitReviewerDecision} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_confirm_decision')}</button>
-                        </div>
-                    </div>
+            <SemesterSelect semesters={semesters} value={semesterId} onChange={chooseSemester} />
+            {readOnly && (
+                <div role="note" style={{ backgroundColor: 'var(--cue-system-bg)', color: 'var(--cue-system-text)', border: '1px solid var(--cue-system-border)', borderLeft: '4px solid var(--cue-note-system-border)', padding: '10px 12px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
+                    <span aria-hidden="true">🔒 </span>{t('reviewer_past_banner', { name: data.semester?.name || '' })}
                 </div>
+            )}
+            {notice && <div role="status" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--success-border)' }}>{notice}</div>}
+            <ReviewerTabs tab={tab} counts={counts} onChange={(name) => { setTab(name); setOpenId(null); }} />
+            <ReviewerSearch query={query} onQueryChange={setQuery} student={student} onClearStudent={() => setStudent(null)} />
+
+            {!data && !loadError ? (
+                <p role="status" style={{ color: 'var(--text-muted)' }}>{t('reviewer_loading')}</p>
+            ) : rows.length === 0 ? (
+                <p role="status" style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--surface)', borderRadius: '8px', color: 'var(--text-secondary)' }}>{emptyText()}</p>
+            ) : (
+                <ul style={{ padding: 0, margin: 0 }}>
+                    {rows.map((app) => (
+                        <ApplicationRow
+                            key={app.id} app={app} open={openId === app.id} readOnly={readOnly}
+                            onToggle={() => setOpenId(openId === app.id ? null : app.id)}
+                            onShowStudent={() => showStudent(app)}
+                            onDecide={(type) => { setNotice(''); setDecision({ app, type }); }}
+                        />
+                    ))}
+                </ul>
+            )}
+
+            {decision && (
+                <DecisionModal
+                    app={decision.app} type={decision.type}
+                    onClose={() => setDecision(null)}
+                    onDone={(saved) => {
+                        setDecision(null);
+                        setNotice(saved ? t('reviewer_decision_saved') : '');
+                        setOpenId(null);
+                        load();
+                    }}
+                />
             )}
         </div>
     );

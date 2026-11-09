@@ -8,7 +8,7 @@ const buildTermBookPdf = require('../utils/buildTermBookPdf');
 const sendError = require('../utils/sendError');
 
 // Private bucket: no public policy, books are only served through the download route below
-const ARCHIVE_BUCKET = 'archives';
+const { ARCHIVE_BUCKET } = require('../config/buckets');
 const BOOK_NAME = /^term-book_(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})_(\d+)\.pdf$/;
 
 const ensureArchiveBucket = async () => {

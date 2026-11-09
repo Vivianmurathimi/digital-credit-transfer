@@ -70,6 +70,45 @@
   --teal: #1f6fb2;
   --blue: #007bff;
   --grey: #6c757d;
+  --shadow-modal: rgba(0, 0, 0, 0.3);
+
+  /* Colour cues (reviewer group L2): soft tints, coloured borders and small chips around the
+     school blue. Every cue also has text or an icon, never colour alone. Text on each tint
+     passes WCAG AA (npm run check:contrast). The student and admin sides will reuse them. */
+  --cue-pending-bg: #e7f0fb;      --cue-pending-text: #0b3d7a;      --cue-pending-border: #9fbfe6;
+  --cue-needs-info-bg: #fff1cc;   --cue-needs-info-text: #6b4400;   --cue-needs-info-border: #f0c75e;
+  --cue-approved-bg: #e2f3e7;     --cue-approved-text: #17552b;     --cue-approved-border: #9fd3ad;
+  --cue-rejected-bg: #fbe3e5;     --cue-rejected-text: #8a1c25;     --cue-rejected-border: #f0b3b9;
+  --cue-system-bg: #f1ecec;       --cue-system-text: #5a4749;       --cue-system-border: #d6c9ca;
+  --cue-resubmitted-bg: #eee8fa;  --cue-resubmitted-text: #4b2e83;  --cue-resubmitted-border: #c9b8ec;
+  --cue-neutral-bg: #eef0f3;      --cue-neutral-text: #3d4550;      --cue-neutral-border: #cfd5dc;
+
+  /* Note boxes in the conversation: a light tint and a coloured left border */
+  --cue-note-student-bg: #eef4fb;  --cue-note-student-border: #4a7fc1;
+  --cue-note-reviewer-bg: #e9f6f3; --cue-note-reviewer-border: #2a8c7f;
+  --cue-note-resubmit-bg: #f3effc; --cue-note-resubmit-border: #7b5cc4;
+  --cue-note-system-bg: #f4f0f0;   --cue-note-system-border: #9a6b70;
+
+  /* List rows and tabs */
+  --cue-row-hover: #f3f7fc;
+  --cue-row-open: #e8f0fa;
+  --cue-row-open-border: #004085;
+  --cue-tab-badge-bg: #004085;
+  --cue-tab-badge-text: #ffffff;
+  --cue-tab-active-bg: #e7f0fb;
+
+  /* Decision buttons (their text stays on them) */
+  --cue-btn-approve: #1e7a3c;      --cue-btn-approve-text: #ffffff;
+  --cue-btn-reject: #b42331;       --cue-btn-reject-text: #ffffff;
+  --cue-btn-info: #f2b632;         --cue-btn-info-text: #2b1d00;
+}
+
+/* Reviewer list rows (reviewer group L2): hover, and the open row slightly highlighted */
+.reviewer-row { transition: background-color 0.15s ease; }
+.reviewer-row:hover, .reviewer-row:focus-within { background-color: var(--cue-row-hover) !important; }
+.reviewer-row.is-open, .reviewer-row.is-open:hover, .reviewer-row.is-open:focus-within {
+  background-color: var(--cue-row-open) !important;
+  border-left: 4px solid var(--cue-row-open-border) !important;
 }
 
 body {

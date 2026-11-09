@@ -23,10 +23,12 @@
   "scripts": {
     "check:form-rules": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/formRulesCheck.mjs",
     "check:translations": "node scripts/translationsCheck.mjs",
+    "check:reviewer-list": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/reviewerListCheck.mjs",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "check:contrast": "node scripts/contrastCheck.mjs"
   },
   "eslintConfig": {
     "extends": [

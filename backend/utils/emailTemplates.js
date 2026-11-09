@@ -27,6 +27,11 @@ const formatDeadline = (date, language) => new Intl.DateTimeFormat(DATE_LOCALES[
     timeZone: 'Europe/Budapest', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(new Date(date));
 
+// A calendar day ('YYYY-MM-DD', e.g. a semester's last day) as "31 January 2027" in the language
+const formatDay = (day, language) => new Intl.DateTimeFormat(DATE_LOCALES[language], {
+    timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric',
+}).format(new Date(`${day}T00:00:00Z`));
+
 // Reviewer's message exactly as written: escaped, with line breaks kept
 const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
@@ -45,10 +50,24 @@ const reasons = {
 };
 
 // Words shared by every template in a language
+// The PTE final grades (reviewer Group 6): always with the Hungarian name, translated next to it
+const gradeNames = {
+    hu: { 5: 'jeles', 4: 'jó', 3: 'közepes', 2: 'elégséges' },
+    en: { 5: 'excellent', 4: 'good', 3: 'satisfactory', 2: 'pass' },
+    de: { 5: 'sehr gut', 4: 'gut', 3: 'befriedigend', 2: 'ausreichend' },
+};
+// "4 (jó)" in Hungarian, "4 (jó – good)" in English and German
+const gradeLabel = (grade, language) => {
+    const hu = gradeNames.hu[grade];
+    if (!hu) return String(grade);
+    const local = (gradeNames[language] || {})[grade];
+    return language === 'hu' || !local ? `${grade} (${hu})` : `${grade} (${hu} – ${local})`;
+};
+
 const common = {
-    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', signature: 'PTE Kreditátvitel' },
-    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', signature: 'PTE Credit Transfer' },
-    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', signature: 'PTE Kreditübertragung' },
+    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', gradeTitle: 'Végső jegy:', signature: 'PTE Kreditátvitel' },
+    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', gradeTitle: 'Final grade:', signature: 'PTE Credit Transfer' },
+    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', gradeTitle: 'Endnote:', signature: 'PTE Kreditübertragung' },
 };
 
 const templates = {
@@ -166,7 +185,7 @@ const noteBlock = (title, note) => `
  * Builds a notification email.
  * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
- * @param {{ name: string, status?: string, note?: string, reasonCode?: string, deadline?: Date|string, linkUrl?: string }} data
+ * @param {{ name: string, status?: string, note?: string, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send
  */
 const buildEmail = (type, lang, data) => {
@@ -183,10 +202,13 @@ const buildEmail = (type, lang, data) => {
         const label = (statusLabels[language] || statusLabels[DEFAULT_LANGUAGE])[data.status];
         if (!label) return null; // unknown status: add its label above to start sending it
         content += template.body({ label });
-        // An automatic decision shows its reason in the student's language instead of a reviewer's message
+        // An approval carries its final grade (reviewer Group 6)
+        if (data.status === 'approved' && data.finalGrade) content += noteBlock(words.gradeTitle, gradeLabel(data.finalGrade, language));
+        // An automatic decision shows its reason in the student's language instead of a reviewer's message;
+        // a rejection's rationale is shown as the reason, an approval's note as the reviewer's message
         const reason = data.reasonCode && (reasons[language] || {})[data.reasonCode];
         if (reason) content += noteBlock(words.reasonTitle, reason);
-        else if (hasNote) content += noteBlock(words.noteTitle, data.note);
+        else if (hasNote) content += noteBlock(data.status === 'rejected' ? words.reasonTitle : words.noteTitle, data.note);
         if (data.status === 'rejected') content += template.rejectedExtra;
     } else {
         content += template.body();
@@ -213,6 +235,8 @@ const buildEmail = (type, lang, data) => {
 
 // Account emails (Group 10): the verification link after registering and the password reset link.
 // Sent in the language chosen when registering / the account's saved language.
+// reviewerInvite (reviewer Group 2) and adminInvite (admin round Group 2): the superadmin's
+// invitation, in the language chosen for it.
 const accountTemplates = {
     hu: {
         verifyAccount: {
@@ -228,6 +252,20 @@ const accountTemplates = {
             text: 'Jelszó-visszaállítást kért PTE Kreditátviteli fiókjához. Új jelszó beállításához kattintson az alábbi gombra. A link 1 óráig érvényes.',
             button: 'Jelszó visszaállítása',
             footer: 'Ha nem Ön kérte, hagyja figyelmen kívül ezt az e-mailt.',
+        },
+        reviewerInvite: {
+            subject: 'Meghívó bírálónak – PTE Kreditátvitel',
+            heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
+            text: (programme) => `Meghívást kapott a(z) ${programme} szak bírálójának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
+            button: 'Meghívó elfogadása',
+            footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
+        },
+        adminInvite: {
+            subject: 'Meghívó adminisztrátornak – PTE Kreditátvitel',
+            heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
+            text: 'Meghívást kapott a PTE Kreditátviteli rendszer adminisztrátorának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.',
+            button: 'Meghívó elfogadása',
+            footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
     },
     en: {
@@ -245,6 +283,20 @@ const accountTemplates = {
             button: 'Reset password',
             footer: 'If you did not ask for this, you can ignore this email.',
         },
+        reviewerInvite: {
+            subject: 'Reviewer invitation – PTE Credit Transfer',
+            heading: 'Invitation to the PTE Credit Transfer System',
+            text: (programme) => `You have been invited to be the reviewer for the ${programme} programme. Click the button below to set your password and activate your account.`,
+            button: 'Accept invitation',
+            footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
+        adminInvite: {
+            subject: 'Administrator invitation – PTE Credit Transfer',
+            heading: 'Invitation to the PTE Credit Transfer System',
+            text: 'You have been invited to be an administrator of the PTE Credit Transfer System. Click the button below to set your password and activate your account.',
+            button: 'Accept invitation',
+            footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
     },
     de: {
         verifyAccount: {
@@ -261,36 +313,153 @@ const accountTemplates = {
             button: 'Passwort zurücksetzen',
             footer: 'Falls Sie dies nicht angefordert haben, können Sie diese E-Mail ignorieren.',
         },
+        reviewerInvite: {
+            subject: 'Einladung als Gutachter – PTE-Kreditübertragung',
+            heading: 'Einladung zum PTE-Kreditübertragungssystem',
+            text: (programme) => `Sie wurden als Gutachter für den Studiengang ${programme} eingeladen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.`,
+            button: 'Einladung annehmen',
+            footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
+        adminInvite: {
+            subject: 'Einladung als Administrator – PTE-Kreditübertragung',
+            heading: 'Einladung zum PTE-Kreditübertragungssystem',
+            text: 'Sie wurden als Administrator des PTE-Kreditübertragungssystems eingeladen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.',
+            button: 'Einladung annehmen',
+            footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
     },
 };
 
 /**
  * Builds an account email with its link button.
- * @param {'verifyAccount'|'resetPassword'} type
+ * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'adminInvite'} type
  * @param {string} lang  falls back to Hungarian
- * @param {{ url: string }} data
+ * @param {{ url: string, programme?: string }} data  programme: the programme's name (reviewer invite)
  * @returns {{ subject: string, html: string }}
  */
-const buildAccountEmail = (type, lang, { url }) => {
+const buildAccountEmail = (type, lang, { url, programme = '' }) => {
     const language = normalizeLanguage(lang);
     const words = accountTemplates[language][type];
     const link = escapeHtml(url);
     const color = type === 'resetPassword' ? '#dc3545' : '#004085';
-    // The verification email shows the link as text too; the reset email says what to do if unrequested
-    const footer = type === 'verifyAccount'
-        ? `<p>${escapeHtml(words.footer)}<br/>${link}</p>`
-        : `<p>${escapeHtml(words.footer)}</p>`;
+    const text = typeof words.text === 'function' ? words.text(programme) : words.text;
+    // The verification and invite emails show the link as text too; the reset email says what to do if unrequested
+    const footer = type === 'resetPassword'
+        ? `<p>${escapeHtml(words.footer)}</p>`
+        : `<p>${escapeHtml(words.footer)}<br/>${link}</p>`;
     const html = `
         <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
             <h2>${escapeHtml(words.heading)}</h2>
-            <p>${escapeHtml(words.text)}</p>
+            <p>${escapeHtml(text)}</p>
             <a href="${link}" style="background-color: ${color}; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">${escapeHtml(words.button)}</a>
             ${footer}
         </div>`;
     return { subject: words.subject, html };
 };
 
-// Every text table by language, for the translation check (frontend: npm run check:translations)
-const translatedTables = { templates, statusLabels, reasons, common, accountTemplates };
+// The programme and the two numbers of a semester-end reminder, as a list (no plural forms needed)
+const reminderCounts = (language, { programme, pending, needsInfo }) => {
+    const words = reviewerTemplates[language].counts;
+    return `<p>${words.programme}: <strong>${programme}</strong></p><ul><li>${words.pending}: <strong>${pending}</strong></li><li>${words.needsInfo}: <strong>${needsInfo}</strong></li></ul>`;
+};
 
-module.exports = { buildEmail, buildAccountEmail, normalizeLanguage, escapeHtml, statusLabels, templates, translatedTables };
+// Emails to the programme's reviewer (reviewer Group 6): a new application, and a student's reply
+// to a request for information. In the reviewer's saved language; the button opens the login page.
+const reviewerTemplates = {
+    hu: {
+        greeting: (name) => `Kedves ${name}!`,
+        button: 'Bejelentkezés',
+        signature: 'PTE Kreditátvitel',
+        newApplication: {
+            subject: 'Új kreditátviteli kérelem érkezett',
+            body: ({ student, course }) => `<p>Új kérelem érkezett a szakjára: <strong>${student}</strong>, ${course}.</p><p>A kérelem az Elbírálásra vár fülön található.</p>`,
+        },
+        studentReplied: {
+            subject: 'Egy hallgató válaszolt a kiegészítési kérésére',
+            body: ({ student, course }) => `<p><strong>${student}</strong> válaszolt a kiegészítési kérésére: ${course}.</p><p>A kérelem ismét az Elbírálásra vár fülön található.</p>`,
+        },
+        // Before the semester ends (reviewer Group 7): 7 days before, and on the last day
+        semesterEndsSoon: {
+            subject: 'Hamarosan véget ér a félév: kérelmek várnak az elbírálására',
+            body: (data) => `<p>A félév utolsó napja: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A félév végéig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+        },
+        semesterEndsToday: {
+            subject: 'Ma van a félév utolsó napja: kérelmek várnak az elbírálására',
+            body: (data) => `<p>Ma van a félév utolsó napja (<strong>${data.date}</strong>).</p>${reminderCounts('hu', data)}<p>Az éjfélig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+        },
+        counts: { programme: 'Szak', pending: 'Elbírálásra vár', needsInfo: 'A hallgató válaszára vár' },
+    },
+    en: {
+        greeting: (name) => `Dear ${name},`,
+        button: 'Log in',
+        signature: 'PTE Credit Transfer',
+        newApplication: {
+            subject: 'New credit transfer application',
+            body: ({ student, course }) => `<p>A new application has arrived in your programme: <strong>${student}</strong>, ${course}.</p><p>You will find it under Pending.</p>`,
+        },
+        studentReplied: {
+            subject: 'A student replied to your request for information',
+            body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
+        },        semesterEndsSoon: {
+            subject: 'The semester ends soon: applications are waiting for your decision',
+            body: (data) => `<p>The last day of the semester is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Applications not decided by the end of the semester are rejected automatically.</p>`,
+        },
+        semesterEndsToday: {
+            subject: 'Today is the last day of the semester: applications are waiting for your decision',
+            body: (data) => `<p>Today (<strong>${data.date}</strong>) is the last day of the semester.</p>${reminderCounts('en', data)}<p>Applications not decided by midnight are rejected automatically.</p>`,
+        },
+        counts: { programme: 'Programme', pending: 'Waiting for your decision', needsInfo: "Waiting for the student's reply" },
+    },
+    de: {
+        greeting: (name) => `Liebe/r ${name},`,
+        button: 'Anmelden',
+        signature: 'PTE-Kreditübertragung',
+        newApplication: {
+            subject: 'Neuer Antrag auf Kreditübertragung',
+            body: ({ student, course }) => `<p>In Ihrem Studiengang ist ein neuer Antrag eingegangen: <strong>${student}</strong>, ${course}.</p><p>Sie finden ihn unter „Ausstehend“.</p>`,
+        },
+        studentReplied: {
+            subject: 'Ein Studierender hat auf Ihre Informationsanfrage geantwortet',
+            body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
+        },        semesterEndsSoon: {
+            subject: 'Das Semester endet bald: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Der letzte Tag des Semesters ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Anträge, die bis zum Semesterende nicht entschieden sind, werden automatisch abgelehnt.</p>`,
+        },
+        semesterEndsToday: {
+            subject: 'Heute ist der letzte Tag des Semesters: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Heute (<strong>${data.date}</strong>) ist der letzte Tag des Semesters.</p>${reminderCounts('de', data)}<p>Anträge, die bis Mitternacht nicht entschieden sind, werden automatisch abgelehnt.</p>`,
+        },
+        counts: { programme: 'Studiengang', pending: 'Warten auf Ihre Entscheidung', needsInfo: 'Warten auf die Antwort der Studierenden' },
+    },
+};
+
+/**
+ * An email to a reviewer.
+ * @param {'newApplication'|'studentReplied'|'semesterEndsSoon'|'semesterEndsToday'} type
+ * @param {{ name: string, student?: string, course?: string, programme?: string, endsOn?: string, pending?: number, needsInfo?: number }} data
+ *   every text is escaped here; endsOn ('YYYY-MM-DD', the semester's last day) is written as a date in the language
+ */
+const buildReviewerEmail = (type, lang, { name, student = '', course = '', programme = '', endsOn = null, pending = 0, needsInfo = 0 }) => {
+    const language = normalizeLanguage(lang);
+    const words = reviewerTemplates[language];
+    const template = typeof words[type]?.body === 'function' ? words[type] : null;
+    if (!template) return null;
+    const body = template.body({
+        student: escapeHtml(student), course: escapeHtml(course), programme: escapeHtml(programme),
+        date: endsOn ? escapeHtml(formatDay(endsOn, language)) : '', pending: Number(pending) || 0, needsInfo: Number(needsInfo) || 0,
+    });
+    const html = `
+        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
+            <h2 style="color: #004085;">${escapeHtml(words.signature)}</h2>
+            <p>${escapeHtml(words.greeting(name || ''))}</p>
+            ${body}
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: #666; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+        </div>`;
+    return { subject: template.subject, html };
+};
+
+// Every text table by language, for the translation check (frontend: npm run check:translations)
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates };
+
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, translatedTables };

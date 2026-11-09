@@ -5,14 +5,15 @@ const multer = require('multer');
 const minioClient = require('../minio');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
-const { getFileOwner } = require('../utils/fileOwner');
+const { getFileOwner, isFileInProgramme, isFileInUse } = require('../utils/fileOwner');
+const pool = require('../db');
 const crypto = require('crypto');
 const sendError = require('../utils/sendError');
 const {
     MAX_UPLOAD_BYTES, detectFileType, maxBytesFor, megabytes, cleanOriginalName, encodeForMetadata, contentDisposition,
 } = require('../utils/fileRules');
 
-const BUCKET_NAME = 'transcripts';
+const { EVIDENCE_BUCKET: BUCKET_NAME } = require('../config/buckets');
 // Files stay in memory until every check has passed, so a refused upload never reaches storage.
 // The size limit makes multer stop reading as soon as a file is larger than the highest limit.
 const upload = multer({
@@ -99,6 +100,9 @@ router.post('/', verifyToken, requireRole('student'), receiveFile, async (req, r
                 'X-Amz-Meta-Uploader-Id': String(req.user.id),
                 'X-Amz-Meta-Uploader-Role': req.user.role,
                 'X-Amz-Meta-Original-Name': encodeForMetadata(originalName),
+                // Uploaded by the admin acting as the student (admin round Group 1): the file is the
+                // student's (so they can use it), and this tag records who really uploaded it
+                ...(req.acting ? { 'X-Amz-Meta-Acted-By-Admin': String(req.actor.id) } : {}),
             }
         );
 
@@ -111,7 +115,8 @@ router.post('/', verifyToken, requireRole('student'), receiveFile, async (req, r
 });
 
 /**
- * DELETE ROUTE — students only, and only their OWN uploaded files.
+ * DELETE ROUTE — students only, only their OWN uploaded files, and only files no submitted
+ * application uses (those are evidence: 409 FILE_IN_USE).
  * Nobody else can delete a student's evidence, so the audit trail stays intact.
  */
 router.delete('/:filename', verifyToken, requireRole('student'), async (req, res) => {
@@ -124,6 +129,11 @@ router.delete('/:filename', verifyToken, requireRole('student'), async (req, res
         if (ownerId !== req.user.id) {
             return sendError(res, 403, 'NOT_OWNER', 'You can only delete your own files');
         }
+        // A file a submitted application uses (any status, any semester) stays: it is that
+        // application's evidence, also for past semesters (reviewer group L3)
+        if (await isFileInUse(pool, req.params.filename)) {
+            return sendError(res, 409, 'FILE_IN_USE', 'This file belongs to a submitted application and cannot be deleted');
+        }
 
         await minioClient.removeObject(BUCKET_NAME, req.params.filename);
         res.json({ success: true });
@@ -135,8 +145,9 @@ router.delete('/:filename', verifyToken, requireRole('student'), async (req, res
 
 
 /**
- * VIEW ROUTE — must be logged in. The student who uploaded the file can view it,
- * and so can reviewers and the superadmin (they review every application for now).
+ * VIEW ROUTE — must be logged in. The student who uploaded the file can view it, and so can
+ * the superadmin. A reviewer only when an application of their own programme refers to it
+ * (reviewer Group 2); for any other file they get "not found", the same as for a missing one.
  */
 router.get('/:filename', verifyToken, async (req, res) => {
     try {
@@ -146,8 +157,11 @@ router.get('/:filename', verifyToken, async (req, res) => {
         }
 
         const isOwner = ownerId === req.user.id;
-        const isStaff = req.user.role === 'reviewer' || req.user.role === 'superadmin';
-        if (!isOwner && !isStaff) {
+        if (!isOwner && req.user.role === 'reviewer') {
+            if (!(await isFileInProgramme(pool, req.params.filename, req.user.programmeId))) {
+                return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+            }
+        } else if (!isOwner && req.user.role !== 'superadmin') {
             return sendError(res, 403, 'NOT_OWNER', 'You can only view your own files');
         }
 

@@ -37,11 +37,13 @@ const getTermData = async (from, to) => {
                  WHERE e.application_id = a.id AND e.kind = 'auto_rejected' ORDER BY e.id DESC LIMIT 1) AS auto_reason,
                 a.created_at AT TIME ZONE 'UTC' AS submitted_at,
                 a.reviewed_at AT TIME ZONE 'UTC' AS reviewed_at,
+                a.final_grade, a.decided_by_role, a.decided_at, a.decision_rationale, d.name AS decider_name,
                 s.name AS student_name, s.email AS student_email,
                 r.name AS reviewer_name, r.email AS reviewer_email
          FROM applications a
          JOIN users s ON s.id = a.student_id
          LEFT JOIN users r ON r.id = a.reviewed_by
+         LEFT JOIN users d ON d.id = a.decided_by
          WHERE a.created_at AT TIME ZONE 'UTC' >= $1::date AT TIME ZONE '${APP_TIMEZONE}'
            AND a.created_at AT TIME ZONE 'UTC' <  ($2::date + 1) AT TIME ZONE '${APP_TIMEZONE}'
          ORDER BY a.created_at, a.id`,
@@ -70,6 +72,18 @@ const getTermData = async (from, to) => {
             reviewedAt: row.reviewed_at,
             student: { name: row.student_name, email: row.student_email },
             reviewer: row.reviewer_name ? { name: row.reviewer_name, email: row.reviewer_email } : null,
+            // The decision (reviewer Group 6): approved / rejected only. decidedBy: the reviewer's
+            // name, or 'Admin' / 'System' (from decided_by_role); null for older decisions without it
+            decision: ['approved', 'rejected'].includes(row.status) ? {
+                finalGrade: row.final_grade,
+                decidedBy: row.decided_by_role === 'admin' ? 'Admin'
+                    : row.decided_by_role === 'system' ? 'System'
+                        : row.decided_by_role === 'reviewer' ? (row.decider_name || 'Reviewer') : null,
+                decidedAt: row.decided_at,
+                rationale: row.decision_rationale,
+                // An automatic rejection's reason code (reviewer Group 7); the PDF writes it in English
+                reasonCode: row.decided_by_role === 'system' ? row.auto_reason : null,
+            } : null,
             courses,
             pteCourses: splitList(row.pte_course_names, ' + '),
             notes: {

@@ -1,7 +1,7 @@
 /**
  * Empties the development data (never in production):
- *   - applications, users, PTE courses, rate-limit counts
- *   - every evidence file in the "transcripts" bucket
+ *   - applications, users, reviewer invitations, PTE courses, rate-limit counts
+ *   - every evidence file in the evidence bucket ("transcripts", or MINIO_BUCKET)
  *
  *   npm run reset:dev -- --yes
  *
@@ -28,7 +28,7 @@ if (!process.argv.includes('--yes')) {
 const pool = require('../db');
 const minioClient = require('../minio');
 
-const EVIDENCE_BUCKET = 'transcripts';
+const { EVIDENCE_BUCKET } = require('../config/buckets');
 
 const listEvidenceFiles = () => new Promise((resolve, reject) => {
     const names = [];
@@ -45,6 +45,10 @@ const reset = async () => {
         await client.query('BEGIN');
         // Children first: applications point to users
         const apps = await client.query('DELETE FROM applications');
+        // Reviewer invitations belong to the accounts (the table exists from migration 010)
+        if ((await client.query("SELECT to_regclass('public.staff_invites') AS t")).rows[0].t) {
+            await client.query('DELETE FROM staff_invites');
+        }
         const users = await client.query('DELETE FROM users');
         const courses = await client.query('DELETE FROM courses');
         await client.query('DELETE FROM rate_limit_hits');

@@ -7,21 +7,12 @@ const sendError = require('../utils/sendError');
 const { COUNTRY_CODES } = require('../utils/countries');
 const { getSubmissionState } = require('../utils/semesters');
 
-// Used for the superadmin's impersonation dropdowns — superadmins intentionally excluded.
+// Used for the superadmin's "act as" lists (admin round Group 1) — superadmins intentionally excluded.
+// Deactivated reviewers are marked, because nobody can act as them.
 // Superadmin only: it lists every student's and reviewer's name and email.
 router.get('/users', verifyToken, requireRole('superadmin'), async (req, res) => {
     try {
-        const result = await pool.query("SELECT id,name,email,role FROM users WHERE role!='superadmin'");
-        res.json({ success: true, users: result.rows });
-    } catch (err) {
-        sendError(res, 500, 'SERVER_ERROR', 'Fetch users failed');
-    }
-});
-
-// NEW: full user list including superadmins — for role management only
-router.get('/users/all', verifyToken, requireRole('superadmin'), async (req, res) => {
-    try {
-        const result = await pool.query("SELECT id, name, email, role FROM users ORDER BY role, name");
+        const result = await pool.query("SELECT id, name, email, role, (deactivated_at IS NOT NULL) AS deactivated FROM users WHERE role != 'superadmin' ORDER BY name");
         res.json({ success: true, users: result.rows });
     } catch (err) {
         sendError(res, 500, 'SERVER_ERROR', 'Fetch users failed');
@@ -50,50 +41,8 @@ router.put('/users/:id/language', verifyToken, async (req, res) => {
     }
 });
 
-// NEW: change a user's role — superadmin only
-router.put('/users/:id/role', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const { id } = req.params;
-    const { newRole } = req.body;
-    const validRoles = ['student', 'reviewer', 'superadmin'];
-
-    if (!validRoles.includes(newRole)) {
-        return sendError(res, 400, 'INVALID_ROLE', 'Invalid role specified');
-    }
-
-    try {
-        const userResult = await pool.query('SELECT id, role, neptun_code, programme_id FROM users WHERE id = $1', [id]);
-        if (userResult.rows.length === 0) {
-            return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
-        }
-        const targetUser = userResult.rows[0];
-
-        // Students must have a Neptun code and a programme (database rule). Until the admin
-        // round adds a programme picker here, an account without them can't become a student.
-        if (newRole === 'student' && targetUser.role !== 'student' && (!targetUser.neptun_code || !targetUser.programme_id)) {
-            return sendError(res, 400, 'STUDENT_PROFILE_REQUIRED', 'This account has no Neptun code or programme, so it cannot be made a student yet');
-        }
-
-        if (targetUser.role === 'superadmin' && newRole !== 'superadmin') {
-            const countResult = await pool.query("SELECT COUNT(*) FROM users WHERE role = 'superadmin'");
-            const superadminCount = parseInt(countResult.rows[0].count, 10);
-
-            if (superadminCount <= 1) {
-                return sendError(res, 400, 'LAST_SUPERADMIN', 'Cannot remove the last remaining superadmin');
-            }
-        }
-
-        const updateResult = await pool.query(
-            'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, email, role',
-            [newRole, id]
-        );
-
-        res.json({ success: true, user: updateResult.rows[0] });
-
-    } catch (err) {
-        console.error('Role update error:', err.message);
-        sendError(res, 500, 'SERVER_ERROR', 'Failed to update role');
-    }
-});
+// No role-change route (admin round Group 2): roles come only from invites, so the
+// one-reviewer-per-programme and last-admin rules can't be got around.
 
 // The logged-in user's own profile. Takes NO id from the request (no :id, query or body):
 // only the id from the checked token, so it can never return another user.
@@ -143,8 +92,8 @@ router.get('/countries', (req, res) => {
 // for the id in the checked token, never from the request (any query is ignored).
 // And only the current semester's (or, before it starts, the coming one's); between semesters
 // none (Group 3). Courses from before semesters (no semester) are never offered.
-// Reviewers and the superadmin still get every course for now (also used while the superadmin
-// impersonates a student); the reviewer and admin rounds can narrow this.
+// Reviewers and the superadmin still get every course for now (while the superadmin acts as a
+// student, the student's rule applies); the admin round can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
         const semester = req.user.role === 'student' ? (await getSubmissionState()).semester : null;

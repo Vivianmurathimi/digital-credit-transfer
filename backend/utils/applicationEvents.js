@@ -14,8 +14,10 @@ const parseList = (value) => {
     }
 };
 
-// Who did something, as the student is told: never a personal name
-const actorRoleOf = (user) => (user.role === 'superadmin' ? 'admin' : user.role);
+// Who did something, as the student is told: never a personal name.
+// Pass req.actor (the real actor): the superadmin is 'admin', also while acting as a student or
+// reviewer (admin round Group 1).
+const actorRoleOf = (actor) => (actor.role === 'superadmin' ? 'admin' : actor.role);
 
 /**
  * Adds one step to an application's history. Pass the transaction's client, so the event is
@@ -35,11 +37,14 @@ const addEvent = (db, { applicationId, kind, actorRole, actorId = null, status, 
 // created_at is stored as UTC without a time zone, so it is read "AT TIME ZONE 'UTC'".
 // decided_*: the latest step that set the status (request for information, decision,
 // withdrawal or automatic rejection): who ("reviewer", "admin", "system", "student") and when.
+// final_grade / decision_rationale (reviewer Group 6): the grade of an approval and the reason or note
+// given with an approval or rejection (never a reviewer's name).
 // semester_name / current_semester (Group 3): the application's semester, and whether that is the
 // semester running now; My Status lists the others under "Previous semesters".
 const STUDENT_APPLICATION_QUERY = `
     SELECT a.id, a.status, a.target_courses, a.target_course_code, a.pte_course_names, a.fulfilled_courses_json,
            a.reviewer_note, a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
+           a.final_grade, CASE WHEN a.status IN ('approved', 'rejected') THEN a.decision_rationale END AS decision_rationale,
            r.resubmit_count, r.last_resubmitted_at,
            d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
            sb.name AS semester_name, COALESCE(sb.opens_at <= now() AND sb.ends_at > now(), false) AS current_semester
@@ -56,19 +61,25 @@ const STUDENT_APPLICATION_QUERY = `
         ORDER BY e.created_at DESC, e.id DESC LIMIT 1
     ) d ON true`;
 
-const listStudentApplications = async (db, studentId) => (await db.query(
-    `${STUDENT_APPLICATION_QUERY} WHERE a.student_id = $1 ORDER BY a.created_at DESC, a.id DESC`, [studentId]
+// programmeId: only that programme's applications (a reviewer's view); null = all of them
+const listStudentApplications = async (db, studentId, programmeId = null) => (await db.query(
+    `${STUDENT_APPLICATION_QUERY} WHERE a.student_id = $1 AND ($2::int IS NULL OR a.programme_id = $2)
+     ORDER BY a.created_at DESC, a.id DESC`, [studentId, programmeId]
 )).rows;
 
 /**
  * One application with everything the student may see, or null when it isn't this student's
  * (another student's application and an id that doesn't exist give the same answer).
+ * programmeId: null unless it's in that programme (a reviewer's view); null = any programme.
  */
-const getStudentApplication = async (db, studentId, applicationId) => {
+const getStudentApplication = async (db, studentId, applicationId, programmeId = null) => {
     const id = Number(applicationId);
     if (!Number.isSafeInteger(id) || id <= 0) return null;
 
-    const found = await db.query(`${STUDENT_APPLICATION_QUERY} WHERE a.id = $1 AND a.student_id = $2`, [id, studentId]);
+    const found = await db.query(
+        `${STUDENT_APPLICATION_QUERY} WHERE a.id = $1 AND a.student_id = $2 AND ($3::int IS NULL OR a.programme_id = $3)`,
+        [id, studentId, programmeId]
+    );
     if (found.rows.length === 0) return null;
     const application = found.rows[0];
 

@@ -127,4 +127,12 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
     }
 };
 
-module.exports = { getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };
+/**
+ * SQL: the application's semester has ended (reviewer group L3). Past semesters are read-only:
+ * no status change of any kind, for anyone. `table` is the applications table's name or alias.
+ * Applications without a semester never count as ended.
+ */
+const semesterEndedSql = (table = 'applications') =>
+    `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND ended.ends_at <= now())`;
+
+module.exports = { semesterEndedSql, getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };

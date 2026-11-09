@@ -45,15 +45,17 @@ const recorder = () => {
 const application = async (status, student = students[0]) => {
     const code = `SEMTEST${Date.now().toString(36)}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline)
-         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN $7::timestamptz END) RETURNING id`,
+        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade)
+         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN $7::timestamptz END,
+                 CASE WHEN $5::varchar = 'approved' THEN 4 END) RETURNING id`,
         [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Semester test', credits: 1 }]), code, status, semesterId,
             new Date(ENDS_AT.getTime() + 48 * HOUR)]
     );
     created.push(rows[0].id);
     return rows[0].id;
 };
-const statusOf = async (id) => (await pool.query('SELECT status, reviewer_note, info_deadline FROM applications WHERE id = $1', [id])).rows[0];
+const statusOf = async (id) => (await pool.query(
+    'SELECT status, reviewer_note, info_deadline, decided_by, decided_by_role, decision_rationale FROM applications WHERE id = $1', [id])).rows[0];
 const historyOf = async (id) => (await pool.query("SELECT kind, actor_role, reason_code FROM application_events WHERE application_id = $1 AND kind = 'auto_rejected'", [id])).rows;
 const draftStudents = () => students.map((s) => s.id);
 const saveDraft = (student, updatedAt) => pool.query(
@@ -127,8 +129,9 @@ test('at the semester end: unreviewed applications rejected as System, decided o
     for (const id of [pending, waiting]) {
         const row = await statusOf(id);
         assert.equal(row.status, 'rejected');
-        assert.equal(row.reviewer_note, 'Not reviewed before the semester closed.');
+        assert.equal(row.reviewer_note, null, 'no English text stored (reviewer Group 7)');
         assert.equal(row.info_deadline, null);
+        assert.deepEqual([row.decided_by, row.decided_by_role, row.decision_rationale], [null, 'system', null]);
         assert.deepEqual(await historyOf(id), [{ kind: 'auto_rejected', actor_role: 'system', reason_code: 'SEMESTER_ENDED' }]);
     }
     assert.equal((await statusOf(approved)).status, 'approved', 'a decided application is kept as it is');
@@ -149,8 +152,8 @@ test('running again, and again after a restart, changes nothing', async () => {
     // A restart: the job module is loaded fresh; everything it needs is in the database
     delete require.cache[require.resolve(jobsModule)];
     ({ closeEndedSemesters, runApplicationJobs } = require(jobsModule));
-    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, only, onlyDraftsOf: draftStudents() });
-    assert.deepEqual(results, { 'semester end': 0, 'deadline reminders': 0, 'overdue information requests': 0 });
+    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, remind: async () => {}, only, onlyDraftsOf: draftStudents() });
+    assert.deepEqual(results, { 'semester end': 0, 'reviewer reminders': 0, 'deadline reminders': 0, 'overdue information requests': 0 });
     assert.equal((await historyOf(id)).length, 1, 'one history entry');
     assert.equal(sent.length, 1, 'one email');
 });

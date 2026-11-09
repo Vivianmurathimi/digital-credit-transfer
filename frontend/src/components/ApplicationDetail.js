@@ -7,6 +7,7 @@ import { getErrorMessage } from '../errorMessage';
 import { statusKey } from '../applicationForm';
 import { formatDate, formatDateTime } from '../dates';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
+import { gradeText } from '../grades';
 
 const sectionTitle = { fontSize: '15px', margin: '18px 0 6px 0', color: 'var(--link)' };
 const fileButton = { background: 'none', border: 'none', padding: 0, color: 'var(--link)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', textAlign: 'left', overflowWrap: 'anywhere' };
@@ -22,7 +23,7 @@ const noteText = { margin: '6px 0 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'a
 const WITHDRAWABLE = ['pending', 'needs_info'];
 
 // readOnly: opened from an earlier semester (Group 3), so nothing can be changed from here
-const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
+const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
     const { t } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const dialogRef = useRef(null);
@@ -70,17 +71,16 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
             setWithdrawing(false);
         }
     };
-    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !isImpersonating && !readOnly;
+    const canWithdraw = application && WITHDRAWABLE.includes(application.status) && !readOnly;
 
     useEffect(() => {
         let current = true;
-        // The student reads their own application; the impersonating admin reads it by student id
-        const path = isImpersonating ? `applications/student/${userId}/${applicationId}` : `applications/mine/${applicationId}`;
-        http.get(path).json()
+        // The student's own application (also while the admin acts as the student: same session)
+        http.get(`applications/mine/${applicationId}`).json()
             .then((data) => { if (current) setApplication(data.application); })
             .catch((err) => { if (current) setError(getErrorMessage(err, t, 'student_detail_load_failed')); });
         return () => { current = false; };
-    }, [applicationId, userId, isImpersonating, t]);
+    }, [applicationId, t]);
 
     const fileName = (stored) => application?.file_names?.[stored] || String(stored || '').replace(/^\d+-/, '');
     const FileLink = ({ file }) => (
@@ -125,6 +125,16 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
                     {application.decided_by && statusKey(application.status) !== 'pending' && (
                         <p style={{ margin: '0 0 4px 0', color: 'var(--text-muted)' }}>
                             {t('student_detail_last_change', { who: t(`student_actor_${application.decided_by}`), date: formatDateTime(application.decided_at, language) })}
+                        </p>
+                    )}
+                    {/* The decision (reviewer Group 6): the final grade of an approval, and the reason or note given with it */}
+                    {application.status === 'approved' && application.final_grade && (
+                        <p style={{ margin: '8px 0 4px 0' }}><strong>{t('student_final_grade')}</strong> {gradeText(application.final_grade, t, language)}</p>
+                    )}
+                    {['approved', 'rejected'].includes(application.status) && (application.decision_reason || application.decision_rationale) && (
+                        <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                            <strong>{t('student_reviewer_note')}</strong>{' '}
+                            {t(`student_reason_${application.decision_reason}`, { defaultValue: application.decision_rationale || '' })}
                         </p>
                     )}
                     {application.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={application.info_deadline} style={{ marginTop: '8px' }} />}
@@ -205,7 +215,7 @@ const ApplicationDetail = ({ applicationId, userId, isImpersonating, readOnly = 
                         {t('student_withdraw')}
                     </button>
                 )}
-                {application?.status === 'needs_info' && !isImpersonating && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
+                {application?.status === 'needs_info' && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
                     <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                         {t('student_add_missing_info')}
                     </button>

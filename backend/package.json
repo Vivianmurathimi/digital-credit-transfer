@@ -10,7 +10,10 @@
     "reset:dev": "node scripts/resetDevData.js",
     "seed:dev": "node scripts/seedDev.js",
     "semester:create": "node scripts/createSemester.js",
-    "make-superadmin": "node admin.js"
+    "make-superadmin": "node admin.js",
+    "jobs:run": "node scripts/runJobs.js",
+    "demo:seed": "node scripts/demo.js seed",
+    "demo:start": "node scripts/demo.js start"
   },
   "keywords": [],
   "author": "",

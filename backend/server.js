@@ -16,11 +16,15 @@ const minioClient = require('./minio');
 // Import your new modular routes
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
+const staffInviteRoutes = require('./routes/staffInvites');
+const reviewerRoutes = require('./routes/reviewer');
+const adminOverviewRoutes = require('./routes/adminOverview');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
 const archiveRoutes = require('./routes/archive');
 const draftRoutes = require('./routes/drafts');
+const actingRoutes = require('./routes/acting');
 const { startJobs } = require('./jobs/scheduler');
 
 const app = express();
@@ -51,7 +55,7 @@ app.use(cors({
 }));
 
 // MinIO Bucket Initialization
-const BUCKET_NAME = 'transcripts';
+const { EVIDENCE_BUCKET: BUCKET_NAME } = require('./config/buckets');
 minioClient.bucketExists(BUCKET_NAME, (err, exists) => {
     if (err) return console.error('❌ MinIO Connection Error:', err);
     if (!exists) {
@@ -68,6 +72,10 @@ minioClient.bucketExists(BUCKET_NAME, (err, exists) => {
 // Note: We mount 'uploadRoutes' at the root ('/') because the routes inside already say '/api/upload' and '/transcripts'
 app.use('/api', authRoutes);
 app.use('/api', dataRoutes);
+app.use('/api', staffInviteRoutes); // reviewer and admin invites, removal and deactivation (reviewer Group 2, admin round Group 2)
+app.use('/api', reviewerRoutes); // the reviewer dashboard (reviewer Groups 3 and 4)
+app.use('/api', actingRoutes); // the admin acting as a student or reviewer (admin round Group 1)
+app.use('/api', adminOverviewRoutes); // the admin's per-programme overview (reviewer Group 7)
 app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);
