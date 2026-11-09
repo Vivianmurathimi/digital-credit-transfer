@@ -16,7 +16,7 @@ This document describes how the access rules of the PTE digital credit transfer 
 
 There are five parts:
 
-1. **Automated API check** (`npm run security-check`): 356 checks against the running backend.
+1. **Automated API check** (`npm run security-check`): 378 checks against the running backend.
 2. **Form rules check** (`npm run check:form-rules`): the browser's and the server's form rules give identical results (section 1b).
 3. **Background job tests** (`npm test` in `backend/`): reminders, automatic rejections and the semester end with a fake clock (section 1c).
 4. **Translation check** (`npm run check:translations` in `frontend/`): missing, unused and inconsistent texts, hard-coded English, emails (section 1d).
@@ -218,6 +218,12 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | An approval without a grade written straight to the database | refused by `applications_approved_has_grade` (migration 011) |
 | 4i | **Admin overview (reviewer Group 7)** | `GET /api/admin/reviewer-overview` without a token, as a student, as a reviewer | `401 NO_TOKEN` / `403 FORBIDDEN_ROLE` / `403 FORBIDDEN_ROLE` |
 | | | As the superadmin | `200`; per programme only code, names, reviewer name, pending and needs-info counts (no email addresses, no ids); counts equal the database; programmes without an active reviewer have none |
+| 4j | **Past semesters (reviewer group L3)**, temporary ended semesters, applications and files | Semester list; a past semester's list as the reviewer and as the superadmin impersonating them | only semesters with the own programme's applications; `read_only: true`; own programme only, no withdrawn |
+| | | A semester that hasn't ended, a non-number, an unknown id | `404 SEMESTER_NOT_FOUND` |
+| | | Another programme's past details or decision | `404 APPLICATION_NOT_FOUND` |
+| | | Decide, request information or reject (reviewer and superadmin), change a decided one, the student's withdrawal | `409 SEMESTER_ENDED`; nothing saved, no history entry |
+| | | A past-semester file of the own / the other programme | `200` / `404 FILE_NOT_FOUND` |
+| | | The student deletes a file a submitted application uses / an unused own file / another student's file | `409 FILE_IN_USE` (file kept) / `200` / `403 NOT_OWNER` |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -268,6 +274,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 | 2026-10-29 | throwaway copy with migration 005, Group 6 and the note limit (Group 7) | **153 passed, 0 failed, 0 skipped**; no applications saved, test uploads deleted |
 | 2026-10-29 | throwaway copy with migration 006, drafts (Group 7) | **177 passed, 0 failed, 0 skipped**; a real draft of student A was put back unchanged |
 | 2026-10-30 | throwaway copy with migration 008, semesters (Group 3) and the translation sweep (Group 10) | **212 passed, 0 failed, 1 skipped** (213 checks); the skip is the duplicate check, because in the development data student B's only application is withdrawn. Semester days, admin toggle, applications and drafts compared before and after: unchanged |
+| 2026-11-09 | throwaway copy, past semesters read-only and file deletion guard (reviewer group L3, section 4j) | **377 passed, 0 failed, 1 skipped** (378 checks); same skip as before; temporary applications, semesters and test files removed |
 | 2026-11-07 | throwaway copy with migration 012, automatic actions and admin overview (reviewer Groups 7 and 8, section 4i) | **355 passed, 0 failed, 1 skipped** (356 checks); same skip as before; temporary data removed |
 | 2026-11-07 | throwaway copy with migration 011, decisions and emails (reviewer Group 6) | **349 passed, 0 failed, 1 skipped** (350 checks); same skip as before; the temporary student, applications and semester removed |
 | 2026-11-07 | throwaway copy, reviewer notes and history (reviewer Group 5) | **311 passed, 0 failed, 1 skipped** (312 checks); same skip as before; temporary applications and the temporary past semester removed |

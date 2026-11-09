@@ -39,6 +39,15 @@ A deactivated reviewer keeps the role "reviewer" but does not count as the progr
 - **Each row:** student, target course, how many days it has been waiting since its last action, and how many other applications the same student has.
 - **Details:** the student, the target course, the completed courses with their institutions and an ECTS comparison, every file, the conversation (student's note, reviewer's messages, student's replies, automatic reasons) and a history table of every step.
 
+## 3b. Past semesters, read-only (`routes/reviewer.js`, frontend `reviewer/SemesterSelect.js`)
+
+- When a semester ends, **nothing is deleted except unsent drafts**. Unreviewed applications are rejected by System (see section 5), and applications, their history, files and courses all stay. They are only hidden from the current view.
+- The reviewer picks a past semester in the selector. It lists only ended semesters with applications of their own programme, newest first.
+- A past semester shows the same list, search and details (notes, files, history, decision, grade, who decided), but no decision buttons, and a "Past semester – read only" banner.
+- **The server enforces it, not only the screen.** Any status change on an application whose semester has ended is refused with 409 `SEMESTER_ENDED`: decisions, information requests, the student's withdrawal and replies, for everyone, also the superadmin. The check is part of the same conditional update, so there's no gap between checking and saving.
+- **Evidence is kept.** A student can't delete a file that any submitted application uses, in any status or semester (409 `FILE_IN_USE`). Files of unsent drafts can still be removed.
+- **Not yet built:** the superadmin's view of all programmes' past semesters comes in the admin round. Today the superadmin sees a reviewer's past semesters by impersonating them.
+
 ## 4. Decisions and the status rules (`utils/decisions.js`, `PUT /api/applications/:id/status`)
 
 The only allowed changes, for everyone (reviewer and superadmin alike):
@@ -50,6 +59,7 @@ The only allowed changes, for everyone (reviewer and superadmin alike):
 | pending | needs info | reviewer / admin | a **message** saying what the student should send |
 | needs info | pending | the **student**, by replying | before the reply deadline and before the semester ends |
 | pending / needs info | withdrawn | the **student** | — |
+| *anything* | *anything* | nobody, once the semester has ended | refused: 409 `SEMESTER_ENDED` (section 3b) |
 | needs info / pending | rejected | the **system** | see section 5 |
 
 Approved and rejected are **final**. The database itself refuses an approval without a grade (migration 011).

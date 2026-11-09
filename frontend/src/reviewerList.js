@@ -169,3 +169,32 @@ export const decisionProblems = ({ type, grade, note }) => {
     if (length > DECISION_TEXT_MAX) problems.note = 'NOTE_TOO_LONG';
     return problems;
 };
+
+// ---------- colour cues (reviewer group L2) ----------
+// Which cue (a --cue-* token family) a state gets. Every cue is shown with its text or icon too.
+
+/** Waiting time: under 7 days normal, 7-13 days amber, 14 or more red */
+export const waitingLevel = (days) => (days >= 14 ? 'late' : days >= 7 ? 'warn' : 'normal');
+
+// A moment as its Budapest calendar day, counted in whole days (for differences between days)
+const budapestDayNumber = (at) => {
+    const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Budapest', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date(at)).split('-').map(Number);
+    return Date.UTC(y, m - 1, d) / 86400000;
+};
+
+/** Calendar days (Budapest) from today until the reply deadline's day: 0 = today, 1 = tomorrow, negative = passed */
+export const daysUntil = (deadline, now = new Date()) => budapestDayNumber(deadline) - budapestDayNumber(now);
+
+/** "Respond by": amber, red when 1 day or less is left (the deadline is today or tomorrow) */
+export const respondByLevel = (deadline, now = new Date()) => (daysUntil(deadline, now) <= 1 ? 'late' : 'warn');
+
+/**
+ * The status chip: its cue and its label key. A rejection by the system has its own muted cue and
+ * says "System"; everything else shows the status name.
+ */
+export const statusCue = (status, decidedByRole = null) => {
+    if (status === 'rejected' && decidedByRole === 'system') return { cue: 'system', labelKey: 'reviewer_status_rejected_system' };
+    const cues = { pending: 'pending', needs_info: 'needs-info', approved: 'approved', rejected: 'rejected', withdrawn: 'neutral' };
+    return { cue: cues[status] || 'neutral', labelKey: `status_${status}` };
+};

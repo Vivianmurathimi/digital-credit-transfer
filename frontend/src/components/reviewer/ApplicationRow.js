@@ -1,15 +1,20 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDate } from '../../dates';
-import { targetCourse } from '../../reviewerList';
+import { respondByLevel, statusCue, targetCourse, waitingLevel } from '../../reviewerList';
 import { gradeText } from '../../grades';
 import ApplicationDetails from './ApplicationDetails';
+import Chip, { STATUS_ICONS } from './Chip';
 
-// One application: a summary line that opens into the details
-const DECISION_COLORS = { approved: 'var(--ok-text)', rejected: 'var(--error-text)' };
+// One application: a summary line that opens into the details.
+// Colour cues (reviewer group L2): the status chip, "Resubmitted", the waiting time of a pending
+// application (amber from 7 days, red from 14) and the reply deadline (red when 1 day or less is left).
+// Hover and the open row's highlight come from the reviewer-row class (theme/theme.css).
+const WAITING_CUES = { warn: { cue: 'needs-info', icon: '⏱' }, late: { cue: 'rejected', icon: '⚠' } };
 
 // searchParams: { as_reviewer } while the superadmin impersonates (the details are that reviewer's view too)
-const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchParams }) => {
+// readOnly: a past semester (reviewer group L3): no waiting or deadline cues, no decision buttons
+const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, onDecide, searchParams }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const target = targetCourse(app);
@@ -20,8 +25,13 @@ const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchPa
         : app.decided_by_role === 'admin' ? t('reviewer_decided_by_admin')
             : app.decided_by_role === 'reviewer' ? (app.decided_by_name || '—') : '—';
 
+    const status = statusCue(app.status, app.decided_by_role);
+    const waitingText = t('reviewer_waiting_days', { count: app.waiting_days });
+    const waiting = app.status === 'pending' && !readOnly ? WAITING_CUES[waitingLevel(app.waiting_days)] : null;
+    const respondLate = app.status === 'needs_info' && app.respond_by && respondByLevel(app.respond_by) === 'late';
+
     return (
-        <li style={{ listStyle: 'none', marginBottom: '10px', border: '1px solid var(--border-strong)', borderRadius: '8px', backgroundColor: 'var(--surface)' }}>
+        <li className={`reviewer-row${open ? ' is-open' : ''}`} style={{ listStyle: 'none', marginBottom: '10px', border: '1px solid var(--border-strong)', borderRadius: '8px', backgroundColor: 'var(--surface)' }}>
             <button
                 type="button" onClick={onToggle} aria-expanded={open} aria-controls={detailsId}
                 style={{ display: 'block', width: '100%', textAlign: 'left', padding: '12px', border: 'none', background: 'none', color: 'var(--text)', cursor: 'pointer', font: 'inherit' }}
@@ -31,30 +41,29 @@ const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchPa
                         <span aria-hidden="true">{open ? '▾' : '▸'} </span>
                         {target.course_code}{target.course_name ? ` – ${target.course_name}` : ''}
                     </strong>
-                    {app.resubmit_count > 0 && (
-                        <span style={{ fontSize: '12px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--info-bg)', color: 'var(--info-text)', border: '1px solid var(--info-border)' }}>
-                            {t('reviewer_resubmitted')}
-                        </span>
-                    )}
+                    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {app.resubmit_count > 0 && app.status === 'pending' && <Chip cue="resubmitted" icon="🔄">{t('reviewer_resubmitted')}</Chip>}
+                        <Chip cue={status.cue} icon={STATUS_ICONS[status.cue]}>{t(status.labelKey)}</Chip>
+                    </span>
                 </div>
                 <div style={{ marginTop: '4px' }}>
                     {app.student_name}{app.neptun_code ? ` · ${app.neptun_code}` : ''}
                 </div>
-                <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    {t('reviewer_submitted_on', { date: formatDate(app.submitted_at, language) })}
-                    {' · '}
-                    {t('reviewer_waiting_days', { count: app.waiting_days })}
+                <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                    <span>{t('reviewer_submitted_on', { date: formatDate(app.submitted_at, language) })}</span>
+                    {!readOnly && <span aria-hidden="true">·</span>}
+                    {readOnly ? null : waiting ? <Chip cue={waiting.cue} icon={waiting.icon}>{waitingText}</Chip> : <span>{waitingText}</span>}
                 </div>
-                {app.status === 'needs_info' && app.respond_by && (
-                    <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--orange-text)', fontWeight: 'bold' }}>
-                        {t('reviewer_respond_by', { date: formatDate(app.respond_by, language) })}
+                {app.status === 'needs_info' && app.respond_by && !readOnly && (
+                    <div style={{ marginTop: '6px' }}>
+                        <Chip cue={respondLate ? 'rejected' : 'needs-info'} icon={respondLate ? '⚠' : '⏰'}>
+                            {t('reviewer_respond_by', { date: formatDate(app.respond_by, language) })}
+                        </Chip>
                     </div>
                 )}
                 {(app.status === 'approved' || app.status === 'rejected') && (
                     <div style={{ marginTop: '4px', fontSize: '13px' }}>
-                        <strong style={{ color: DECISION_COLORS[app.status] }}>{t(`status_${app.status}`)}</strong>
-                        {app.status === 'approved' && <>{' · '}{t('reviewer_grade_line', { grade: gradeText(app.final_grade, t, language) })}</>}
-                        {' · '}
+                        {app.status === 'approved' && <>{t('reviewer_grade_line', { grade: gradeText(app.final_grade, t, language) })}{' · '}</>}
                         {t('reviewer_decided_line', { date: app.decided_at ? formatDate(app.decided_at, language) : '—', who: decidedBy })}
                     </div>
                 )}
@@ -72,7 +81,7 @@ const ApplicationRow = ({ app, open, onToggle, onShowStudent, onDecide, searchPa
                             <span style={{ color: 'var(--text-secondary)' }}>{t('reviewer_other_applications', { count: 0 })}</span>
                         )}
                     </div>
-                    <ApplicationDetails appId={app.id} searchParams={searchParams} onDecide={onDecide} />
+                    <ApplicationDetails appId={app.id} searchParams={searchParams} onDecide={onDecide} readOnly={readOnly} />
                 </div>
             )}
         </li>

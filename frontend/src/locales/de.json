@@ -346,8 +346,8 @@
   "reviewer_credits_fulfilled": "Absolviert: {{fulfilled}} ECTS / Erforderlich: {{required}} ECTS",
   "reviewer_credits_fulfilled_only": "Absolviert: {{fulfilled}} ECTS (für den PTE-Kurs sind keine Credits hinterlegt)",
   "reviewer_credits_required": "Erforderlich: {{required}} ECTS",
-  "reviewer_credits_enough": "Ausreichend",
-  "reviewer_credits_not_enough": "Nicht ausreichend",
+  "reviewer_credits_enough": "Credits: ausreichend",
+  "reviewer_credits_not_enough": "Credits: nicht ausreichend",
   "reviewer_credits_manual": "Unterschiedliche Credit-Systeme – bitte manuell vergleichen",
   "reviewer_no_notes": "Noch keine Notizen.",
   "reviewer_show_more": "Mehr anzeigen",
@@ -482,7 +482,9 @@
     "INVALID_FINAL_GRADE": "Die Endnote muss 2, 3, 4 oder 5 sein.",
     "GRADE_ONLY_ON_APPROVE": "Eine Endnote wird nur bei einer Genehmigung vergeben.",
     "RATIONALE_REQUIRED": "Geben Sie die Begründung der Ablehnung an.",
-    "MESSAGE_REQUIRED": "Schreiben Sie, was der Studierende nachreichen soll."
+    "MESSAGE_REQUIRED": "Schreiben Sie, was der Studierende nachreichen soll.",
+    "FILE_IN_USE": "Diese Datei gehört zu einem eingereichten Antrag und kann nicht gelöscht werden.",
+    "SEMESTER_NOT_FOUND": "Dieses Semester wurde nicht gefunden."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -542,7 +544,7 @@
   "student_period_not_started": "Der Antragszeitraum hat noch nicht begonnen. Anträge sind ab {{date}} möglich.",
   "student_period_none": "Kein offener Antragszeitraum.",
   "student_period_over": "Kein offener Antragszeitraum. Der letzte Tag für Anträge war der {{date}}.",
-  "student_period_last_days": "Der Antragszeitraum endet am {{closes}}. Anträge, die bis zum {{ends}} nicht geprüft sind, werden automatisch geschlossen.",
+  "student_period_last_days": "Der Antragszeitraum endet am {{closes}}. Anträge, die bis zum {{ends}} nicht geprüft sind, werden automatisch geschlossen. Nicht abgeschickte Entwürfe werden am Semesterende gelöscht.",
   "student_draft_paused_closed": "Die automatische Speicherung ist aus, solange keine Anträge eingereicht werden können.",
   "admin_overview_title": "Anträge nach Studiengang",
   "admin_overview_line": "{{programme}}: {{pending}} ausstehend, {{needsInfo}} warten auf die Antwort der Studierenden, letzter Semestertag: {{date}}",
@@ -550,5 +552,13 @@
   "admin_overview_no_semester": "Derzeit läuft kein Semester.",
   "admin_overview_reviewer": "Gutachter/in: {{name}}",
   "admin_overview_no_reviewer": "Kein aktiver Gutachter: Neue Anträge werden niemandem zugewiesen und niemand wird benachrichtigt. Laden Sie einen Gutachter für diesen Studiengang ein.",
-  "admin_overview_failed": "Die Übersicht der Studiengänge konnte nicht geladen werden."
+  "admin_overview_failed": "Die Übersicht der Studiengänge konnte nicht geladen werden.",
+  "reviewer_status_rejected_system": "Abgelehnt · System",
+  "reviewer_semester_label": "Semester:",
+  "reviewer_semester_current": "Aktuelles Semester",
+  "reviewer_semester_current_named": "Aktuelles Semester ({{name}})",
+  "reviewer_semester_past_option": "{{name}} (Ende: {{date}}) – nur Ansicht",
+  "reviewer_past_banner": "Vergangenes Semester – nur Ansicht: {{name}}. Sie können alles ansehen, aber nichts ändern.",
+  "reviewer_empty_past": "In diesem Semester gibt es in diesem Reiter keine Anträge.",
+  "reviewer_read_only_details": "Vergangenes Semester – nur Ansicht. Es kann keine Entscheidung getroffen oder geändert werden."
 }

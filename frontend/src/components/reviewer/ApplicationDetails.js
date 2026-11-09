@@ -9,6 +9,8 @@ import { formatDate } from '../../dates';
 import { gradeText } from '../../grades';
 import NotesConversation from './NotesConversation';
 import HistoryTable from './HistoryTable';
+import Chip, { STATUS_ICONS } from './Chip';
+import { respondByLevel, statusCue } from '../../reviewerList';
 
 // An opened row (reviewer Group 4): the student, the target course, every fulfilled course with
 // its institution and files, each institution's grading system, and the credit comparison.
@@ -19,8 +21,14 @@ import HistoryTable from './HistoryTable';
 const sectionTitle = { margin: '0 0 8px', fontSize: '15px', color: 'var(--text-strong)' };
 const box = { padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '6px', backgroundColor: 'var(--surface-2)' };
 const muted = { color: 'var(--text-secondary)', fontSize: '14px' };
+// The decision buttons (reviewer group L2): Approve green, Request information amber, Reject red
+const decisionButton = (cue) => ({
+    backgroundColor: `var(--cue-btn-${cue})`, color: `var(--cue-btn-${cue}-text)`, border: `1px solid var(--cue-btn-${cue})`,
+    cursor: 'pointer', padding: '8px 14px', borderRadius: '4px', fontWeight: 'bold', font: 'inherit',
+});
 
-const ApplicationDetails = ({ appId, searchParams, onDecide }) => {
+// readOnly (reviewer group L3): a past semester's application; the server says so too (read_only)
+const ApplicationDetails = ({ appId, searchParams, onDecide, readOnly = false }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -134,9 +142,12 @@ const ApplicationDetails = ({ appId, searchParams, onDecide }) => {
             {(details.status === 'approved' || details.status === 'rejected') && (
                 <section style={box}>
                     <h4 style={sectionTitle}>{t('reviewer_decision_heading')}</h4>
-                    <div>
-                        <strong style={{ color: details.status === 'approved' ? 'var(--ok-text)' : 'var(--error-text)' }}>{t(`status_${details.status}`)}</strong>
-                        {details.status === 'approved' && <> · {t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</>}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                        {(() => {
+                            const cue = statusCue(details.status, details.decision.decided_by_role);
+                            return <Chip cue={cue.cue} icon={STATUS_ICONS[cue.cue]}>{t(cue.labelKey)}</Chip>;
+                        })()}
+                        {details.status === 'approved' && <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</span>}
                     </div>
                     <div style={muted}>
                         {t('reviewer_decided_line', {
@@ -158,18 +169,29 @@ const ApplicationDetails = ({ appId, searchParams, onDecide }) => {
                 </section>
             )}
 
-            {details.status === 'needs_info' && details.respond_by && (
-                <p role="note" style={{ margin: 0, padding: '8px 10px', borderRadius: '5px', backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)' }}>
-                    {t('reviewer_waiting_for_student', { date: formatDate(details.respond_by, language) })}
+            {details.status === 'needs_info' && details.respond_by && !(readOnly || details.read_only) && (() => {
+                const late = respondByLevel(details.respond_by) === 'late';
+                const cue = late ? 'rejected' : 'needs-info';
+                return (
+                    <p role="note" style={{ margin: 0, padding: '8px 10px', borderRadius: '5px', backgroundColor: `var(--cue-${cue}-bg)`, color: `var(--cue-${cue}-text)`, borderLeft: `4px solid var(--cue-${cue}-border)` }}>
+                        <span aria-hidden="true">{late ? '⚠ ' : '⏰ '}</span>
+                        {t('reviewer_waiting_for_student', { date: formatDate(details.respond_by, language) })}
+                    </p>
+                );
+            })()}
+
+            {/* Only a pending application of a running semester can be decided (utils/decisions.js and the
+                past-semester rule on the server) */}
+            {(readOnly || details.read_only) && (
+                <p role="note" style={{ margin: 0, color: 'var(--cue-system-text)', fontSize: '14px' }}>
+                    <span aria-hidden="true">🔒 </span>{t('reviewer_read_only_details')}
                 </p>
             )}
-
-            {/* Only a pending application can be decided (utils/decisions.js on the server) */}
-            {details.status === 'pending' && (
+            {details.status === 'pending' && !(readOnly || details.read_only) && (
                 <section style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    <button type="button" onClick={() => onDecide('approved')} style={{ backgroundColor: 'var(--brand)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--brand)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_approve')}</button>
-                    <button type="button" onClick={() => onDecide('needs_info')} style={{ backgroundColor: 'var(--request)', color: 'white', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--request)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_request_info')}</button>
-                    <button type="button" onClick={() => onDecide('rejected')} style={{ backgroundColor: 'var(--surface)', color: 'var(--link)', cursor: 'pointer', padding: '8px 14px', border: '1px solid var(--link)', borderRadius: '4px', fontWeight: 'bold' }}>{t('reviewer_reject')}</button>
+                    <button type="button" onClick={() => onDecide('approved')} style={decisionButton('approve')}><span aria-hidden="true">✓ </span>{t('reviewer_approve')}</button>
+                    <button type="button" onClick={() => onDecide('needs_info')} style={decisionButton('info')}><span aria-hidden="true">❓ </span>{t('reviewer_request_info')}</button>
+                    <button type="button" onClick={() => onDecide('rejected')} style={decisionButton('reject')}><span aria-hidden="true">✗ </span>{t('reviewer_reject')}</button>
                 </section>
             )}
         </div>

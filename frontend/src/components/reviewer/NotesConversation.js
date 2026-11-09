@@ -8,11 +8,13 @@ import FileLink from './FileLink';
 // history in time order, each kind in its own box style, with author, date and time (Budapest),
 // and the files a reply added inside that reply's box. Read from application_events.
 
+// Colour cues (reviewer group L2): a light tint and a coloured left border per kind; the kind's
+// name, the author and the date stay as text
 const BOX_STYLES = {
-    student: { background: 'var(--warning-bg)', border: 'var(--yellow)', color: 'var(--warning-text)', icon: '📝' },
-    resubmit: { background: 'var(--info-bg)', border: 'var(--teal)', color: 'var(--info-text)', icon: '🔄' },
-    reviewer: { background: 'var(--danger-bg)', border: 'var(--red)', color: 'var(--danger-text)', icon: '🧾' },
-    system: { background: 'var(--surface)', border: 'var(--grey)', color: 'var(--text)', icon: '⚙️' },
+    student: { background: 'var(--cue-note-student-bg)', border: 'var(--cue-note-student-border)', color: 'var(--text)', icon: '📝' },
+    resubmit: { background: 'var(--cue-note-resubmit-bg)', border: 'var(--cue-note-resubmit-border)', color: 'var(--text)', icon: '🔄' },
+    reviewer: { background: 'var(--cue-note-reviewer-bg)', border: 'var(--cue-note-reviewer-border)', color: 'var(--text)', icon: '🧾' },
+    system: { background: 'var(--cue-note-system-bg)', border: 'var(--cue-note-system-border)', color: 'var(--text)', icon: '⚙️' },
 };
 
 // Long text wraps downwards (also long words and URLs); more than about 5 lines collapses

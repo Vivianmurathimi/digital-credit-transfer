@@ -8,7 +8,7 @@ const notifyReviewer = require('../utils/notifyReviewer');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
-const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
+const { getSubmissionState, refuseUnlessSubmitting, semesterEndedSql } = require('../utils/semesters');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { programmeScopeOf, lockProgramme, resolveReviewerView } = require('../utils/reviewers');
 const { DECIDABLE_STATUS, checkDecision, refusalFor } = require('../utils/decisions');
@@ -25,6 +25,9 @@ const alreadyApplied = (res) => sendError(res, 409, 'ALREADY_APPLIED', 'There is
 
 // The statuses a reviewer or the superadmin may set, and when: utils/decisions.js (reviewer Group 6).
 // "withdrawn" is set only by the student (the withdraw route below).
+
+// Past semesters are read-only (reviewer group L3): every status change is refused with this
+const SEMESTER_ENDED_REFUSAL = ['SEMESTER_ENDED', 'The semester has ended, so the application can no longer be changed'];
 
 // A student may withdraw an application while it is waiting: under review or waiting for their reply
 const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
@@ -240,16 +243,20 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                     decided_by_role       = CASE WHEN $7::boolean THEN $8::varchar END,
                     decided_at            = CASE WHEN $7::boolean THEN now() END,
                     decision_rationale    = CASE WHEN $7::boolean THEN $2::text END
-                 WHERE id = $4 AND status = $9 AND ($10::int IS NULL OR programme_id = $10)
+                 WHERE id = $4 AND status = $9 AND ($10::int IS NULL OR programme_id = $10) AND NOT ${semesterEndedSql()}
                  RETURNING student_id, info_deadline`,
                 [status, note, req.user.id, id, status === 'needs_info', finalGrade, isDecision, actorRole, DECIDABLE_STATUS, programmeScopeOf(req.user)]
             );
             if (rows.length === 0) {
-                // Not changed: not found (or another programme's), or no longer pending
+                // Not changed: not found (or another programme's), its semester has ended (past
+                // semesters are read-only, reviewer group L3), or no longer pending
                 const current = await client.query(
-                    'SELECT status FROM applications WHERE id = $1 AND ($2::int IS NULL OR programme_id = $2)', [id, programmeScopeOf(req.user)]
+                    `SELECT status, ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND ($2::int IS NULL OR programme_id = $2)`,
+                    [id, programmeScopeOf(req.user)]
                 );
-                return current.rows.length === 0 ? { notFound: true } : { refused: refusalFor(current.rows[0].status) };
+                if (current.rows.length === 0) return { notFound: true };
+                if (current.rows[0].semester_ended) return { refused: SEMESTER_ENDED_REFUSAL };
+                return { refused: refusalFor(current.rows[0].status) };
             }
             await addEvent(client, {
                 applicationId: id, kind: status === 'needs_info' ? 'info_requested' : 'decided',
@@ -284,17 +291,19 @@ router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), as
         const result = await inTransaction(async (client) => {
             const { rowCount } = await client.query(
                 `UPDATE applications SET status = 'withdrawn', info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
-                 WHERE id = $1 AND student_id = $2 AND status = ANY($3)`,
+                 WHERE id = $1 AND student_id = $2 AND status = ANY($3) AND NOT ${semesterEndedSql()}`,
                 [id, req.user.id, WITHDRAWABLE_STATUSES]
             );
             if (rowCount === 0) {
-                const own = await client.query('SELECT 1 FROM applications WHERE id = $1 AND student_id = $2', [id, req.user.id]);
-                return own.rows.length === 0 ? 'not_found' : 'not_allowed';
+                const own = await client.query(`SELECT ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND student_id = $2`, [id, req.user.id]);
+                if (own.rows.length === 0) return 'not_found';
+                return own.rows[0].semester_ended ? 'semester_ended' : 'not_allowed';
             }
             await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: 'student', actorId: req.user.id, status: 'withdrawn' });
             return 'withdrawn';
         });
         if (result === 'not_found') return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        if (result === 'semester_ended') return sendError(res, 409, ...SEMESTER_ENDED_REFUSAL);
         if (result === 'not_allowed') return sendError(res, 409, 'CANNOT_WITHDRAW', 'Only an application under review or waiting for your reply can be withdrawn');
         res.json({ success: true });
 

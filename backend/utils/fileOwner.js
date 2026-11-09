@@ -47,10 +47,20 @@ const findFilesNotOwnedBy = async (fileNames, userId) => {
  * @param {{ query: Function }} db
  * @returns {Promise<boolean>}
  */
-const isFileInProgramme = async (db, fileName, programmeId) => {
+const isFileInProgramme = async (db, fileName, programmeId) => findApplicationWithFile(db, fileName, programmeId);
+
+/**
+ * Whether any submitted application (any status, any semester, any programme) uses the file
+ * (reviewer group L3). Such a file can't be deleted, so past semesters keep their evidence.
+ * Files that are only in a draft are not counted.
+ */
+const isFileInUse = (db, fileName) => findApplicationWithFile(db, fileName, null);
+
+// programmeId null: every programme
+const findApplicationWithFile = async (db, fileName, programmeId) => {
     const { rows } = await db.query(
         `SELECT 1 FROM applications a
-         WHERE a.programme_id = $2 AND (
+         WHERE ($2::int IS NULL OR a.programme_id = $2) AND (
                EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]'::jsonb END) c
                        WHERE c->>'file' = $1 OR c->>'syllabus_file' = $1)
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.institutions) = 'array' THEN a.institutions ELSE '[]'::jsonb END) i
@@ -68,4 +78,4 @@ const isFileInProgramme = async (db, fileName, programmeId) => {
 const splitFileList = (value) =>
     String(value || '').split(',').map((name) => name.trim()).filter(Boolean);
 
-module.exports = { getFileOwner, findFilesNotOwnedBy, isFileInProgramme, splitFileList };
+module.exports = { getFileOwner, findFilesNotOwnedBy, isFileInProgramme, isFileInUse, splitFileList };

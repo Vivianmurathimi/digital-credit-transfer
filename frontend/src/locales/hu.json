@@ -346,8 +346,8 @@
   "reviewer_credits_fulfilled": "Teljesített: {{fulfilled}} ECTS / Szükséges: {{required}} ECTS",
   "reviewer_credits_fulfilled_only": "Teljesített: {{fulfilled}} ECTS (a PTE-kurzushoz nincs kredit rögzítve)",
   "reviewer_credits_required": "Szükséges: {{required}} ECTS",
-  "reviewer_credits_enough": "Elegendő",
-  "reviewer_credits_not_enough": "Nem elegendő",
+  "reviewer_credits_enough": "Kredit: elegendő",
+  "reviewer_credits_not_enough": "Kredit: nem elegendő",
   "reviewer_credits_manual": "Eltérő kreditrendszerek – kézi összevetés szükséges",
   "reviewer_no_notes": "Még nincs megjegyzés.",
   "reviewer_show_more": "Több mutatása",
@@ -482,7 +482,9 @@
     "INVALID_FINAL_GRADE": "A végső jegy csak 2, 3, 4 vagy 5 lehet.",
     "GRADE_ONLY_ON_APPROVE": "Végső jegyet csak elfogadáskor lehet adni.",
     "RATIONALE_REQUIRED": "Adja meg az elutasítás indokát.",
-    "MESSAGE_REQUIRED": "Írja meg, mit küldjön még a hallgató."
+    "MESSAGE_REQUIRED": "Írja meg, mit küldjön még a hallgató.",
+    "FILE_IN_USE": "Ez a fájl egy beküldött kérelemhez tartozik, ezért nem törölhető.",
+    "SEMESTER_NOT_FOUND": "Ez a félév nem található."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -542,7 +544,7 @@
   "student_period_not_started": "A jelentkezési időszak még nem kezdődött el. Kérelmet ettől a naptól adhat be: {{date}}.",
   "student_period_none": "Nincs nyitott jelentkezési időszak.",
   "student_period_over": "Nincs nyitott jelentkezési időszak. A kérelembeadás utolsó napja: {{date}}.",
-  "student_period_last_days": "A jelentkezési időszak utolsó napja: {{closes}}. A bírálat határideje: {{ends}}; az addig el nem bírált kérelmeket a rendszer automatikusan lezárja.",
+  "student_period_last_days": "A jelentkezési időszak utolsó napja: {{closes}}. A bírálat határideje: {{ends}}; az addig el nem bírált kérelmeket a rendszer automatikusan lezárja. Az el nem küldött piszkozatok a félév végén törlődnek.",
   "student_draft_paused_closed": "Az automatikus mentés ki van kapcsolva, amíg nem lehet kérelmet beadni.",
   "admin_overview_title": "Kérelmek szakonként",
   "admin_overview_line": "{{programme}}: {{pending}} elbírálásra vár, {{needsInfo}} a hallgató válaszára vár, a félév utolsó napja: {{date}}",
@@ -550,5 +552,13 @@
   "admin_overview_no_semester": "Jelenleg nincs futó félév.",
   "admin_overview_reviewer": "Bíráló: {{name}}",
   "admin_overview_no_reviewer": "Nincs aktív bíráló: az új kérelmeket senki nem kapja meg, és senki nem kap értesítést. Hívjon meg bírálót ehhez a szakhoz.",
-  "admin_overview_failed": "A szakok áttekintése nem tölthető be."
+  "admin_overview_failed": "A szakok áttekintése nem tölthető be.",
+  "reviewer_status_rejected_system": "Elutasítva · Rendszer",
+  "reviewer_semester_label": "Félév:",
+  "reviewer_semester_current": "Aktuális félév",
+  "reviewer_semester_current_named": "Aktuális félév ({{name}})",
+  "reviewer_semester_past_option": "{{name}} (vége: {{date}}) – csak megtekintés",
+  "reviewer_past_banner": "Korábbi félév – csak megtekintés: {{name}}. Minden megnézhető, de semmi sem módosítható.",
+  "reviewer_empty_past": "Ebben a félévben nincs kérelem ezen a fülön.",
+  "reviewer_read_only_details": "Korábbi félév – csak megtekintés. Döntés nem hozható és nem módosítható."
 }

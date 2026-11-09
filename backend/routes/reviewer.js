@@ -6,6 +6,7 @@ const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
 const { resolveReviewerView } = require('../utils/reviewers');
 const { getFileOwner, splitFileList } = require('../utils/fileOwner');
+const { semesterEndedSql } = require('../utils/semesters');
 
 // The reviewer dashboard (reviewer Groups 3 and 4). Always one reviewer's view: the logged-in
 // reviewer's, or (for the superadmin impersonating them) the reviewer in ?as_reviewer=<id>.
@@ -24,13 +25,18 @@ const CURRENT_SEMESTER = 'SELECT id, name FROM semester_bounds WHERE opens_at <=
  * other_count: the student's other listed applications in the same semester (so only what this reviewer sees).
  * fulfilled_course_names: only for the search; the details come from GET /reviewer/applications/:id.
  */
-const LIST_QUERY = `
+// The current view: open applications of any semester, decided ones of the current semester
+const CURRENT_VIEW = `a.programme_id = $1
+          AND (a.status IN ('pending', 'needs_info')
+               OR (a.status IN ('approved', 'rejected') AND a.semester_id = (SELECT id FROM cur)))`;
+// A past semester (reviewer group L3, read-only): every application of it except withdrawn ones
+const PAST_VIEW = "a.programme_id = $1 AND a.semester_id = $2 AND a.status <> 'withdrawn'";
+
+const listQuery = (view) => `
     WITH cur AS (${CURRENT_SEMESTER}),
     visible AS (
         SELECT a.* FROM applications a
-        WHERE a.programme_id = $1
-          AND (a.status IN ('pending', 'needs_info')
-               OR (a.status IN ('approved', 'rejected') AND a.semester_id = (SELECT id FROM cur)))
+        WHERE ${view}
     ),
     listed AS (
         SELECT v.*, COALESCE(r.resubmit_count, 0) AS resubmit_count,
@@ -54,8 +60,43 @@ const LIST_QUERY = `
     JOIN users u ON u.id = l.student_id
     LEFT JOIN users decider ON decider.id = l.decided_by
     ORDER BY l.last_action_at, l.id`;
+const LIST_QUERY = listQuery(CURRENT_VIEW);
+const PAST_LIST_QUERY = listQuery(PAST_VIEW);
 
-// GET /api/reviewer/applications[?as_reviewer=<id>]: the header and the list
+// Ended semesters with at least one (not withdrawn) application of the programme, newest first
+const PAST_SEMESTERS_QUERY = `
+    SELECT s.id, s.name, to_char(s.ends_on, 'YYYY-MM-DD') AS ends_on, count(a.id)::int AS applications
+    FROM semester_bounds s
+    JOIN applications a ON a.semester_id = s.id AND a.programme_id = $1 AND a.status <> 'withdrawn'
+    WHERE s.ends_at <= now()
+    GROUP BY s.id, s.name, s.ends_on
+    ORDER BY s.ends_on DESC`;
+
+// ?semester=<id>: a whole number; anything else is treated like a semester that doesn't exist
+const readSemesterId = (value) => {
+    if (value === undefined) return null;
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : 0;
+};
+
+// GET /api/reviewer/semesters[?as_reviewer=<id>]: the past semesters the reviewer can look at (reviewer group L3)
+router.get('/reviewer/semesters', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+        const view = await resolveReviewerView(pool, req);
+        if (view.error) return sendError(res, view.error[0], view.error[1], view.error[2]);
+        const current = (await pool.query(CURRENT_SEMESTER)).rows[0] || null;
+        const { rows } = await pool.query(PAST_SEMESTERS_QUERY, [view.reviewer.programme_id]);
+        res.json({ success: true, current, past: rows });
+    } catch (err) {
+        console.error('❌ Reviewer semesters error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// GET /api/reviewer/applications[?as_reviewer=<id>][&semester=<id>]: the header and the list.
+// With semester: that past semester's applications of the reviewer's programme, read-only
+// (read_only: true). A semester that doesn't exist or hasn't ended: 404 SEMESTER_NOT_FOUND.
 router.get('/reviewer/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
@@ -64,6 +105,14 @@ router.get('/reviewer/applications', verifyToken, requireRole('reviewer', 'super
         const { reviewer } = view;
 
         const programme = (await pool.query('SELECT code, name_en, name_hu, name_de FROM programmes WHERE id = $1', [reviewer.programme_id])).rows[0];
+        const semesterId = readSemesterId(req.query.semester);
+        if (semesterId !== null) {
+            const past = (await pool.query('SELECT id, name FROM semester_bounds WHERE id = $1 AND ends_at <= now()', [semesterId])).rows[0];
+            if (!past) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No past semester with this id');
+            const { rows } = await pool.query(PAST_LIST_QUERY, [reviewer.programme_id, past.id]);
+            return res.json({ success: true, reviewer: { id: reviewer.id, name: reviewer.name, programme }, semester: past, read_only: true, applications: rows });
+        }
+
         const semester = (await pool.query(CURRENT_SEMESTER)).rows[0] || null;
         const { rows } = await pool.query(LIST_QUERY, [reviewer.programme_id]);
 
@@ -71,6 +120,7 @@ router.get('/reviewer/applications', verifyToken, requireRole('reviewer', 'super
             success: true,
             reviewer: { id: reviewer.id, name: reviewer.name, programme },
             semester,
+            read_only: false,
             applications: rows,
         });
     } catch (err) {
@@ -104,10 +154,12 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
             `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
                     a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
                     a.decision_rationale, a.info_deadline AS respond_by,
+                    ${semesterEndedSql('a')} AS read_only, sem.id AS semester_id, sem.name AS semester_name,
                     u.name AS student_name, u.neptun_code, p.code AS programme_code, p.name_en, p.name_hu, p.name_de
              FROM applications a
              JOIN users u ON u.id = a.student_id
              JOIN programmes p ON p.id = a.programme_id
+             LEFT JOIN semesters sem ON sem.id = a.semester_id
              LEFT JOIN users decider ON decider.id = a.decided_by
              WHERE a.id = $1 AND a.programme_id = $2 AND a.status <> 'withdrawn'`,
             [id, view.reviewer.programme_id]
@@ -181,6 +233,9 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer', 's
                         : null,
                 },
                 respond_by: found.respond_by,
+                // Its semester has ended (reviewer group L3): shown read-only, every change is refused
+                semester: found.semester_id ? { id: found.semester_id, name: found.semester_name } : null,
+                read_only: found.read_only,
             },
         });
     } catch (err) {

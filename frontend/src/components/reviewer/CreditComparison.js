@@ -1,15 +1,12 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { creditComparison } from '../../reviewerList';
+import Chip from './Chip';
 
 // Fulfilled credits against the target course (reviewer Group 4). All ECTS: the total against
 // what is required, with Enough / Not enough. Any other credit system: every course's credits
 // with its system, to be compared by hand.
-const badge = (ok) => ({
-    display: 'inline-block', marginLeft: '8px', padding: '2px 10px', borderRadius: '10px', fontWeight: 'bold', fontSize: '13px',
-    backgroundColor: ok ? 'var(--success-bg)' : 'var(--danger-bg)', color: ok ? 'var(--success-text)' : 'var(--danger-text)',
-    border: `1px solid ${ok ? 'var(--success-border)' : 'var(--danger-border)'}`,
-});
+// Colour cues (reviewer group L2): green "Credits: enough", red "Credits: not enough", grey "compare manually".
 
 const CreditComparison = ({ courses, requiredCredits, formatCredits, creditSystemName }) => {
     const { t } = useTranslation();
@@ -24,7 +21,11 @@ const CreditComparison = ({ courses, requiredCredits, formatCredits, creditSyste
                         : t('reviewer_credits_fulfilled', { fulfilled: formatCredits(result.total), required: formatCredits(result.required) })}
                 </span>
                 {result.enough !== null && (
-                    <span style={badge(result.enough)}>{result.enough ? `✓ ${t('reviewer_credits_enough')}` : `✗ ${t('reviewer_credits_not_enough')}`}</span>
+                    <span style={{ marginLeft: '8px' }}>
+                        {result.enough
+                            ? <Chip cue="approved" icon="✓">{t('reviewer_credits_enough')}</Chip>
+                            : <Chip cue="rejected" icon="✗">{t('reviewer_credits_not_enough')}</Chip>}
+                    </span>
                 )}
             </div>
         );
@@ -40,8 +41,8 @@ const CreditComparison = ({ courses, requiredCredits, formatCredits, creditSyste
             {requiredCredits !== null && requiredCredits !== undefined && (
                 <div>{t('reviewer_credits_required', { required: formatCredits(requiredCredits) })}</div>
             )}
-            <div role="note" style={{ marginTop: '6px', padding: '8px 10px', borderRadius: '5px', backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', fontWeight: 'bold' }}>
-                ⚠ {t('reviewer_credits_manual')}
+            <div role="note" style={{ marginTop: '6px' }}>
+                <Chip cue="neutral" icon="⚖">{t('reviewer_credits_manual')}</Chip>
             </div>
         </div>
     );

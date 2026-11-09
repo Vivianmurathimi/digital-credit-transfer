@@ -1385,6 +1385,116 @@ const run = async () => {
         report(rows.every((p) => (p.reviewer === null) === withoutReviewer.includes(p.code)), 'Programmes without an active reviewer are shown without one', withoutReviewer.join(', ') || 'none');
     }
 
+    section('4j. Past semesters (reviewer group L3): read-only, own programme only, files kept');
+    {
+        const programmeOfB = d.studentB.programme_id; // the test reviewer's programme
+        const programmeOfA = d.studentA.programme_id;
+        const crossProgramme = programmeOfA !== programmeOfB;
+        const stamp = Date.now().toString(36);
+        const pdf = Buffer.from('%PDF-1.4\n% security check\n%%EOF\n');
+        const testFiles = [];
+        // A file owned by student A, stored like an upload
+        const storeFile = async (label) => {
+            const name = `security-check-${stamp}-${label}.pdf`;
+            await minioClient.putObject(EVIDENCE_BUCKET, name, pdf, pdf.length, {
+                'Content-Type': 'application/pdf', 'X-Amz-Meta-Uploader-Id': String(d.studentA.id), 'X-Amz-Meta-Uploader-Role': 'student',
+            });
+            testFiles.push(name);
+            return name;
+        };
+        let seq = 0;
+        const pastApp = async (programmeId, status, semesterId, file = null) => {
+            seq += 1;
+            const code = `SECP${stamp}${seq}`.toUpperCase();
+            const decided = status === 'approved' || status === 'rejected';
+            const { rows } = await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
+                     decided_by_role, decided_at, final_grade)
+                 VALUES ($1, $2, '[]', $3, $4, $5, $6::varchar, $7, CASE WHEN $8 THEN 'admin' END, CASE WHEN $8 THEN now() END,
+                         CASE WHEN $6::varchar = 'approved' THEN 4 END)
+                 RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify(file ? [{ course_name: 'Past semester check', credits: 1, file }] : []),
+                    JSON.stringify([{ course_code: code, course_name: 'Security check past', credits: 1 }]), code, status, semesterId, decided]
+            );
+            tempApplicationIds.push(rows[0].id);
+            return rows[0].id;
+        };
+        const newSemester = async (year) => {
+            const { rows } = await pool.query(
+                `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, $2, $3, $4) RETURNING id`,
+                [`Security check L3 ${year} ${stamp}`, `${year}-02-01`, `${year}-02-10`, `${year}-06-30`]
+            );
+            tempSemesterIds.push(rows[0].id);
+            return rows[0].id;
+        };
+
+        try {
+            const past = await newSemester(2002); // has applications of both programmes
+            const otherOnly = await newSemester(2003); // only the other programme's
+            const fileOwn = await storeFile('own');
+            const fileOther = await storeFile('other');
+            const decidedOwn = await pastApp(programmeOfB, 'approved', past, fileOwn);
+            const pendingOwn = await pastApp(programmeOfB, 'pending', past); // left open (the job would close it)
+            const withdrawnOwn = await pastApp(programmeOfB, 'withdrawn', past);
+            const otherApp = crossProgramme ? await pastApp(programmeOfA, 'rejected', past, fileOther) : null;
+            if (crossProgramme) await pastApp(programmeOfA, 'rejected', otherOnly);
+
+            // The semester list
+            const semesters = await call('GET', 'reviewer/semesters', { token: R });
+            const pastIds = (semesters.body?.past || []).map((x) => x.id);
+            report(semesters.status === 200 && pastIds.includes(past) && (!crossProgramme || !pastIds.includes(otherOnly)),
+                "Past semesters: only those with the reviewer's own programme's applications", `${pastIds.length} listed`);
+            await expect('Student lists the reviewer semesters', call('GET', 'reviewer/semesters', { token: A }), 403, 'FORBIDDEN_ROLE');
+
+            // The list of a past semester
+            const list = await call('GET', `reviewer/applications?semester=${past}`, { token: R });
+            const ids = (list.body?.applications || []).map((r) => r.id);
+            report(list.status === 200 && list.body.read_only === true && ids.includes(decidedOwn) && ids.includes(pendingOwn)
+                && !ids.includes(withdrawnOwn) && (!otherApp || !ids.includes(otherApp)),
+            "Past semester list: read-only, own programme only, no withdrawn", `${ids.length} row(s)`);
+            const currentId = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1')).rows[0]?.id;
+            if (currentId) await expect('A semester that has not ended as a past semester', call('GET', `reviewer/applications?semester=${currentId}`, { token: R }), 404, 'SEMESTER_NOT_FOUND');
+            await expect('A semester id that is not a number', call('GET', 'reviewer/applications?semester=abc', { token: R }), 404, 'SEMESTER_NOT_FOUND');
+            await expect('A semester that does not exist', call('GET', 'reviewer/applications?semester=999999999', { token: R }), 404, 'SEMESTER_NOT_FOUND');
+            const asReviewer = await call('GET', `reviewer/applications?semester=${past}&as_reviewer=${d.reviewer.id}`, { token: S });
+            report(asReviewer.status === 200 && JSON.stringify((asReviewer.body?.applications || []).map((r) => r.id).sort()) === JSON.stringify([...ids].sort()),
+                'Superadmin as the reviewer gets the same past semester list', `${asReviewer.status}`);
+
+            // Details
+            const details = await call('GET', `reviewer/applications/${decidedOwn}`, { token: R });
+            report(details.status === 200 && details.body.application.read_only === true && details.body.application.semester?.id === past,
+                'Past semester details open, marked read-only', `${details.status}`);
+            if (otherApp) await expect("Another programme's past-semester details", call('GET', `reviewer/applications/${otherApp}`, { token: R }), 404, 'APPLICATION_NOT_FOUND');
+
+            // No change of any kind, for anyone
+            await expect('Reviewer decides a pending past-semester application', call('PUT', `applications/${pendingOwn}/status`, { token: R, json: { status: 'approved', final_grade: 4 } }), 409, 'SEMESTER_ENDED');
+            await expect('Reviewer requests information on it', call('PUT', `applications/${pendingOwn}/status`, { token: R, json: { status: 'needs_info', note: 'x' } }), 409, 'SEMESTER_ENDED');
+            await expect('Superadmin rejects it', call('PUT', `applications/${pendingOwn}/status`, { token: S, json: { status: 'rejected', note: 'x' } }), 409, 'SEMESTER_ENDED');
+            await expect('Reviewer changes a decided past-semester application', call('PUT', `applications/${decidedOwn}/status`, { token: R, json: { status: 'rejected', note: 'x' } }), 409, 'SEMESTER_ENDED');
+            await expect('The student withdraws a pending past-semester application', call('PUT', `applications/${pendingOwn}/withdraw`, { token: A }), 409, 'SEMESTER_ENDED');
+            const after = (await pool.query('SELECT status FROM applications WHERE id = ANY($1) ORDER BY id', [[decidedOwn, pendingOwn]])).rows.map((r) => r.status);
+            const history = (await pool.query('SELECT count(*)::int AS n FROM application_events WHERE application_id = ANY($1)', [[decidedOwn, pendingOwn]])).rows[0].n;
+            report(JSON.stringify(after) === JSON.stringify(['approved', 'pending']) && history === 0, 'The refused changes saved nothing (status and history)', after.join(', '));
+            if (otherApp) await expect("Reviewer decides another programme's past application", call('PUT', `applications/${otherApp}/status`, { token: R, json: { status: 'approved', final_grade: 4 } }), 404, 'APPLICATION_NOT_FOUND');
+
+            // Files of past semesters still open, for the right reviewer only
+            await expect("Reviewer opens a past-semester file of their programme", call('GET', `uploads/${encodeURIComponent(fileOwn)}`, { token: R }), 200);
+            if (crossProgramme) await expect("Reviewer opens another programme's past-semester file", call('GET', `uploads/${encodeURIComponent(fileOther)}`, { token: R }), 404, 'FILE_NOT_FOUND');
+
+            // A file a submitted application uses can't be deleted; an unused one can
+            await expect('Student deletes a file used by a submitted application', call('DELETE', `uploads/${encodeURIComponent(fileOwn)}`, { token: A }), 409, 'FILE_IN_USE');
+            report((await getFileOwner(fileOwn)).exists, 'The file is still there');
+            const unused = await storeFile('unused');
+            await expect('Student deletes an unused file of their own', call('DELETE', `uploads/${encodeURIComponent(unused)}`, { token: A }), 200);
+            await expect("Student deletes another student's file", call('DELETE', `uploads/${encodeURIComponent(fileOwn)}`, { token: B }), 403, 'NOT_OWNER');
+        } finally {
+            const removedApps = await removeTempApplications();
+            const restored = await restoreSemesters();
+            for (const name of testFiles) await minioClient.removeObject(EVIDENCE_BUCKET, name).catch(() => {});
+            console.log(`(removed ${removedApps} temporary application(s), ${testFiles.length} test file(s); ${restored})`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

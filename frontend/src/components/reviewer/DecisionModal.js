@@ -17,9 +17,14 @@ const NOTE_LABELS = { approved: 'reviewer_decision_note_optional', rejected: 're
 // After these answers the list is out of date (someone else decided, the student withdrew...)
 const STALE_CODES = ['ALREADY_DECIDED', 'WAITING_FOR_STUDENT', 'APPLICATION_WITHDRAWN', 'APPLICATION_NOT_FOUND'];
 
-const button = (primary) => ({
+// The confirm button has the decision's colour (reviewer group L2): approve green, reject red,
+// request information amber; Continue / Close stay school blue
+const CONFIRM_CUES = { approved: 'approve', rejected: 'reject', needs_info: 'info' };
+const button = (primary, cue = null) => ({
     padding: '8px 15px', cursor: 'pointer', borderRadius: '4px', fontWeight: 'bold',
-    ...(primary ? { backgroundColor: 'var(--brand)', color: 'white', border: 'none' } : { border: '1px solid var(--border-strong)', backgroundColor: 'var(--surface)', color: 'var(--text)' }),
+    ...(cue ? { backgroundColor: `var(--cue-btn-${cue})`, color: `var(--cue-btn-${cue}-text)`, border: 'none' }
+        : primary ? { backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none' }
+            : { border: '1px solid var(--border-strong)', backgroundColor: 'var(--surface)', color: 'var(--text)' }),
 });
 const fieldError = { color: 'var(--error-text)', fontSize: '13px', marginTop: '4px' };
 
@@ -85,7 +90,7 @@ const DecisionModal = ({ app, type, onClose, onDone }) => {
             <div
                 ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="decision-title"
                 onKeyDown={(e) => { if (e.key === 'Escape') close(); }}
-                style={{ backgroundColor: 'var(--surface)', color: 'var(--text)', padding: '25px', borderRadius: '10px', width: '480px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 5px 15px rgba(0,0,0,0.3)', outline: 'none' }}
+                style={{ backgroundColor: 'var(--surface)', color: 'var(--text)', padding: '25px', borderRadius: '10px', width: '480px', maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 5px 15px var(--shadow-modal)', outline: 'none' }}
             >
                 <h3 id="decision-title" style={{ marginTop: 0, color: 'var(--link)' }}>{t(TITLES[type])}</h3>
                 <p style={{ marginTop: 0, color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>{course} · {app.student_name}</p>
@@ -105,7 +110,7 @@ const DecisionModal = ({ app, type, onClose, onDone }) => {
                             </fieldset>
                         )}
                         {type === 'needs_info' && (
-                            <p role="note" style={{ padding: '8px 10px', borderRadius: '5px', backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', fontWeight: 'bold' }}>{deadline}</p>
+                            <p role="note" style={{ padding: '8px 10px', borderRadius: '5px', backgroundColor: 'var(--cue-needs-info-bg)', color: 'var(--cue-needs-info-text)', borderLeft: '4px solid var(--cue-needs-info-border)', fontWeight: 'bold' }}><span aria-hidden="true">⏰ </span>{deadline}</p>
                         )}
                         <label htmlFor="decision-note" style={{ fontWeight: 'bold', fontSize: '14px' }}>{t(NOTE_LABELS[type])}</label>
                         <textarea
@@ -138,7 +143,7 @@ const DecisionModal = ({ app, type, onClose, onDone }) => {
                             ) : (
                                 <>
                                     <button type="button" onClick={() => setStep('form')} disabled={saving} style={button(false)}>{t('reviewer_decision_back')}</button>
-                                    <button type="button" onClick={save} disabled={saving} style={{ ...button(true), cursor: saving ? 'wait' : 'pointer' }}>{t('reviewer_confirm_decision')}</button>
+                                    <button type="button" onClick={save} disabled={saving} style={{ ...button(true, CONFIRM_CUES[type]), cursor: saving ? 'wait' : 'pointer' }}>{t('reviewer_confirm_decision')}</button>
                                 </>
                             )}
                         </div>

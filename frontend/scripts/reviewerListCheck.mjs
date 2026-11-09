@@ -119,5 +119,19 @@ const fakeT = (key) => ({ grade_name_4: 'good', grade_name_2: 'pass' })[key];
 report(grades.gradeText(4, fakeT, 'hu') === '4 (jó)' && grades.gradeText(4, fakeT, 'en') === '4 (jó – good)' && grades.gradeText(null, fakeT, 'en') === '—',
     'Grade labels: the Hungarian name always, the local one next to it', grades.gradeText(4, fakeT, 'en'));
 
+// Colour cues (reviewer group L2)
+report(same([0, 6, 7, 13, 14, 40].map(list.waitingLevel), ['normal', 'normal', 'warn', 'warn', 'late', 'late']),
+    'Waiting time: under 7 days normal, 7-13 amber, 14+ red', [0, 6, 7, 13, 14, 40].map(list.waitingLevel).join(' '));
+// "Now" 10:00 Budapest on 10 Nov; deadlines at 23:59:59 Budapest
+const now = new Date('2026-11-10T09:00:00Z');
+const deadline = (day) => new Date(`${day}T22:59:59Z`);
+report(same(['2026-11-13', '2026-11-12', '2026-11-11', '2026-11-10'].map((d) => list.respondByLevel(deadline(d), now)), ['warn', 'warn', 'late', 'late']),
+    'Respond by: amber, red when the deadline is tomorrow or today');
+report(list.daysUntil(new Date('2026-11-10T23:30:00Z'), now) === 1, 'Days left are Budapest calendar days (23:30 UTC is already the next day there)');
+report(same(list.statusCue('rejected', 'system'), { cue: 'system', labelKey: 'reviewer_status_rejected_system' })
+    && list.statusCue('rejected', 'reviewer').cue === 'rejected' && list.statusCue('needs_info').cue === 'needs-info'
+    && list.statusCue('approved').cue === 'approved' && list.statusCue('pending').labelKey === 'status_pending',
+    'Status chips: a system rejection has its own cue and says System');
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nAll checks passed');
 process.exit(failed ? 1 : 0);

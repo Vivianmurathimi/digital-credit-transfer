@@ -136,13 +136,60 @@ TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d 
 - [ ] **After step 7:** the closed applications show as not reviewed before the semester closed.
 - [ ] **Accents:** printed correctly (Dániel Kiss, Ferenc Molnár).
 
-## 9. Both themes and all three languages
+## 9. All three languages (the app has a light theme only)
 
 Go through the reviewer list, a details page, the decision panel (both steps), the admin banner, the accept page and the student's My Status:
 
-- [ ] in the **light** theme and the **dark** theme: text readable, warnings visible, no white boxes in dark mode
 - [ ] in **English**, **Magyar** and **Deutsch**: no English left in HU/DE, dates in the language's format, and grade names in the language next to the Hungarian name
 - [ ] on a phone-sized window (browser developer tools): the list and the decision panel fit without sideways scrolling
+
+## 10. Colour cues (reviewer group L2)
+
+Colour is never the only signal: each cue below also has its text or an icon.
+
+- [ ] **Status chips:**
+  - "⏳ Pending" is blue, "❓ Needs Info" amber, "✓ Approved" green, "✗ Rejected" red.
+  - Anna's SEC300 shows "⚙ Rejected · System" in muted red-grey.
+  - Bence has a violet "🔄 Resubmitted" chip next to "Pending".
+- [ ] **Waiting time:**
+  - Anna's CS202 ("Waiting 2 days") is plain text.
+  - Dániel's CS401 is an amber "⏱ Waiting 9 days" chip.
+  - Ferenc's CE320 (Civil reviewer) is a red "⚠ Waiting 16 days" chip.
+- [ ] **Respond by:** Csilla's row (deadline tomorrow) shows a red "⚠ Student must respond by …" chip. Her details show the same in a red-tinted box. With 2 or more days left it is amber with ⏰.
+- [ ] **Credits:**
+  - Anna's CS202 (6 of 6 ECTS): green "✓ Credits: enough".
+  - Bence (4 of 5): red "✗ Credits: not enough".
+  - A different credit system: a grey "⚖ … compare manually" chip.
+- [ ] **Conversation:** student notes blue, reviewer messages teal, replies violet, automatic reasons grey-red, each with a coloured left border. The kind, author and date stay as text.
+- [ ] **Tabs:** each has a blue count badge. The active tab is tinted, underlined, bold and starts with ✓.
+- [ ] **Rows:** hovering tints a row. The open row stays light blue with a blue left border.
+- [ ] **Decision buttons:** "✓ Approve" green, "❓ Request Info" amber, "✗ Reject" red. In the panel, the final confirm button has the same colour.
+- [ ] **No colour without meaning:** read the page as if in greyscale (e.g. the browser's or the system's greyscale filter). Every state is still clear from its text or icon.
+
+## 11. Past semesters, read-only (reviewer group L3)
+
+The demo's previous semester has Bence's approved CS101 (CS) and Eszter's CE101, rejected by System (Civil).
+
+- [ ] **The selector:** as the CS reviewer, there is a "Semester:" selector above the tabs.
+  - It shows "Current semester (Demo – current semester)" and "Demo – previous semester (ended …) – read only".
+  - The Civil reviewer sees the same selector with their own past application.
+- [ ] **Choosing the previous semester:**
+  - A grey 🔒 "Past semester – read only" banner appears, the header names that semester, and the Completed tab opens.
+  - Only Bence's CS101 is listed, with "✓ Approved". No Civil application is listed.
+- [ ] **Its details:** courses, institution, files (they open), notes, history, and the decision: grade 5, decided by Dr. Szabó, and the date.
+  - There are no decision buttons; instead a 🔒 note says nothing can be changed.
+  - Search still works (e.g. "bence").
+- [ ] **Back to "Current semester":** the normal list with decision buttons is back.
+- [ ] **Civil reviewer:** Eszter's CE101 shows "⚙ Rejected · System" with the reason in the reviewer's language.
+- [ ] **Admin impersonating** Dr. Szabó sees the same selector and the same read-only view.
+- [ ] **Changes are refused even without the UI** (from `backend`, with `npm run demo:start` running):
+  ```
+  TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d '{"email":"demo.reviewer.cs@mik.pte.hu","password":"Demo1234!"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
+  curl -s -X PUT localhost:5050/api/applications/12/status -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"rejected","note":"x"}'
+  ```
+  The answer is `SEMESTER_ENDED` (409). Use the id `demo:seed` printed for "approved, grade 5, previous semester".
+- [ ] **Files can't be deleted:** a file of a submitted application can't be deleted by its student. The security check covers this (409 `FILE_IN_USE`); in the browser, removing a row in a new draft still works.
+- [ ] **The draft warning:** in the student form during the application period's last 7 days, the warning ends with "Unsent drafts are deleted when the semester ends." To see it in the demo, the current semester's application period would have to end within 7 days.
 
 ## When done
 

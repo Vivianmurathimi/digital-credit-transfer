@@ -5,7 +5,7 @@ const multer = require('multer');
 const minioClient = require('../minio');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
-const { getFileOwner, isFileInProgramme } = require('../utils/fileOwner');
+const { getFileOwner, isFileInProgramme, isFileInUse } = require('../utils/fileOwner');
 const pool = require('../db');
 const crypto = require('crypto');
 const sendError = require('../utils/sendError');
@@ -112,7 +112,8 @@ router.post('/', verifyToken, requireRole('student'), receiveFile, async (req, r
 });
 
 /**
- * DELETE ROUTE — students only, and only their OWN uploaded files.
+ * DELETE ROUTE — students only, only their OWN uploaded files, and only files no submitted
+ * application uses (those are evidence: 409 FILE_IN_USE).
  * Nobody else can delete a student's evidence, so the audit trail stays intact.
  */
 router.delete('/:filename', verifyToken, requireRole('student'), async (req, res) => {
@@ -124,6 +125,11 @@ router.delete('/:filename', verifyToken, requireRole('student'), async (req, res
 
         if (ownerId !== req.user.id) {
             return sendError(res, 403, 'NOT_OWNER', 'You can only delete your own files');
+        }
+        // A file a submitted application uses (any status, any semester) stays: it is that
+        // application's evidence, also for past semesters (reviewer group L3)
+        if (await isFileInUse(pool, req.params.filename)) {
+            return sendError(res, 409, 'FILE_IN_USE', 'This file belongs to a submitted application and cannot be deleted');
         }
 
         await minioClient.removeObject(BUCKET_NAME, req.params.filename);

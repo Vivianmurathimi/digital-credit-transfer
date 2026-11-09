@@ -37,6 +37,8 @@ const STUDENT_FILES = [
     'components/reviewer/NotesConversation.js', 'components/reviewer/HistoryTable.js',
     // The admin's banner per programme (reviewer Group 7)
     'components/ReviewerOverview.js',
+    // The semester selector (reviewer group L3)
+    'components/reviewer/SemesterSelect.js',
 ];
 
 const problems = [];

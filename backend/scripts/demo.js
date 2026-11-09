@@ -15,7 +15,7 @@
  * The demo data (every account's password: Demo1234!):
  *   - two programmes (Computer Science Engineering, Civil Engineering), one active reviewer each
  *   - a previous semester (ended) and the current one, with the PTE courses of both programmes
- *   - 7 students and applications in every state: pending, resubmitted (pending after the student's
+ *   - 7 students and applications in every state: pending (also waiting 9 and 16 days), resubmitted (pending after the student's
  *     reply), needs info with the deadline tomorrow, approved with a grade, rejected by the reviewer,
  *     rejected by the admin, rejected by the system (no reply by the deadline, and not reviewed
  *     before the semester closed), withdrawn
@@ -358,12 +358,35 @@ const seed = async (pool) => {
         submittedAt: daysAgo(1), note: 'Fluid mechanics, completed in Zagreb.', events: [], final: { status: 'pending' },
     });
 
+    // Waiting long (reviewer group L2 colour cues): amber from 7 days, red from 14
+    await add('pending, waiting 9 days', {
+        student: 'daniel', semester: 'current', target: 'CS401', institution: INSTITUTIONS.bme,
+        previous: course('Software Engineering', 'BMEVIIIAB07', 5, '5'),
+        submittedAt: daysAgo(9), note: '', events: [], final: { status: 'pending' },
+    });
+    await add('pending, waiting 16 days', {
+        student: 'ferenc', semester: 'current', target: 'CE320', institution: INSTITUTIONS.bratislava,
+        previous: course('Building Materials', 'B-MAT1', 5, 'A'),
+        submittedAt: daysAgo(16), note: '', events: [], final: { status: 'pending' },
+    });
+
     await add('withdrawn', {
         student: 'gabor', semester: 'current', target: 'CE320', institution: INSTITUTIONS.zagreb,
         previous: course('Building Materials', 'BM-110', 5, 'dobar (3)'),
         submittedAt: daysAgo(5), note: '',
         events: [{ actor: users.gabor, role: 'student', kind: 'withdrawn', status: 'withdrawn', at: daysAgo(3) }],
         final: { status: 'withdrawn' },
+    });
+
+    // A decided application of the previous semester for the CS reviewer's read-only view (reviewer group L3)
+    const bPastDecided = await (async () => (await pool.query("SELECT (ends_at - interval '30 days') AS d FROM semester_bounds WHERE id = $1", [semesters.previous])).rows[0].d)();
+    await add('approved, grade 5, previous semester', {
+        student: 'bence', semester: 'previous', target: 'CS101', institution: INSTITUTIONS.milano,
+        previous: course('Fondamenti di Informatica', '085877', 6, '30/30'),
+        submittedAt: daysAgo(170), note: '',
+        events: [{ ...rv('CS'), kind: 'decided', status: 'approved', at: bPastDecided, note: 'Equivalent content, full credits.' }],
+        final: { status: 'approved', grade: 5, reviewerNote: 'Equivalent content, full credits.', reviewedBy: reviewerOf('CS').id, reviewedAt: bPastDecided,
+            decidedBy: reviewerOf('CS').id, decidedByRole: 'reviewer', decidedAt: bPastDecided, rationale: 'Equivalent content, full credits.' },
     });
 
     await add('rejected by the system (not reviewed before the semester closed), previous semester', {

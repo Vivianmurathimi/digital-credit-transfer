@@ -346,8 +346,8 @@
   "reviewer_credits_fulfilled": "Fulfilled: {{fulfilled}} ECTS / Required: {{required}} ECTS",
   "reviewer_credits_fulfilled_only": "Fulfilled: {{fulfilled}} ECTS (the PTE course has no credits recorded)",
   "reviewer_credits_required": "Required: {{required}} ECTS",
-  "reviewer_credits_enough": "Enough",
-  "reviewer_credits_not_enough": "Not enough",
+  "reviewer_credits_enough": "Credits: enough",
+  "reviewer_credits_not_enough": "Credits: not enough",
   "reviewer_credits_manual": "Different credit systems – compare manually",
   "reviewer_no_notes": "No notes yet.",
   "reviewer_show_more": "Show more",
@@ -482,7 +482,9 @@
     "INVALID_FINAL_GRADE": "The final grade must be 2, 3, 4 or 5.",
     "GRADE_ONLY_ON_APPROVE": "A final grade is only given with an approval.",
     "RATIONALE_REQUIRED": "Give the reason for the rejection.",
-    "MESSAGE_REQUIRED": "Write what the student should send."
+    "MESSAGE_REQUIRED": "Write what the student should send.",
+    "FILE_IN_USE": "This file belongs to a submitted application and can't be deleted.",
+    "SEMESTER_NOT_FOUND": "This semester could not be found."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
@@ -542,7 +544,7 @@
   "student_period_not_started": "The application period has not started yet. You can apply from {{date}}.",
   "student_period_none": "No open application period.",
   "student_period_over": "No open application period. The last day to apply was {{date}}.",
-  "student_period_last_days": "The application period ends on {{closes}}. Applications not reviewed by {{ends}} are closed automatically.",
+  "student_period_last_days": "The application period ends on {{closes}}. Applications not reviewed by {{ends}} are closed automatically. Unsent drafts are deleted when the semester ends.",
   "student_draft_paused_closed": "Autosave is off while applications cannot be submitted.",
   "admin_overview_title": "Applications by programme",
   "admin_overview_line": "{{programme}}: {{pending}} pending, {{needsInfo}} waiting for the student's reply, semester ends {{date}}",
@@ -550,5 +552,13 @@
   "admin_overview_no_semester": "No semester is running.",
   "admin_overview_reviewer": "Reviewer: {{name}}",
   "admin_overview_no_reviewer": "No active reviewer: new applications are not assigned and nobody is notified. Invite a reviewer for this programme.",
-  "admin_overview_failed": "The overview of the programmes could not be loaded."
+  "admin_overview_failed": "The overview of the programmes could not be loaded.",
+  "reviewer_status_rejected_system": "Rejected · System",
+  "reviewer_semester_label": "Semester:",
+  "reviewer_semester_current": "Current semester",
+  "reviewer_semester_current_named": "Current semester ({{name}})",
+  "reviewer_semester_past_option": "{{name}} (ended {{date}}) – read only",
+  "reviewer_past_banner": "Past semester – read only: {{name}}. You can look at everything, but nothing can be changed.",
+  "reviewer_empty_past": "No applications in this tab for this semester.",
+  "reviewer_read_only_details": "Past semester – read only. No decision can be made or changed."
 }
