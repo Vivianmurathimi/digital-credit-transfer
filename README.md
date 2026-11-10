@@ -86,4 +86,11 @@ password. After that, admins invite each other from the dashboard.
 
 From `backend`: `npm test`, `npm run security-check` (with the backend running), `npm run check:domains`.
 From `frontend`: `npm run check:translations`, `npm run check:contrast`, `npm run check:form-rules`,
-`npm run check:reviewer-list`, `CI=true npm test`, `npm run build`.
+`npm run check:reviewer-list`, `npm run check:admin-menu`, `CI=true npm test`, `npm run build`.
+
+## The admin menu
+
+Admins land on `/admin` (Overview). Each area has its own address: `/admin/semesters`,
+`/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/reviewers`,
+`/admin/students`, `/admin/admins`, `/admin/domains`. Whether students can register or submit is
+decided only by the active semester's dates, Close now / Reopen until, and late access.

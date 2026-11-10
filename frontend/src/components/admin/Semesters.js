@@ -12,7 +12,59 @@ import { card, input, label, smallButton, td, th } from './adminStyles';
 // (programmes with no course or no reviewer) are shown in the confirmation; they don't block it.
 
 const STATUS_CUES = { setup: 'pending', active: 'approved', closed: 'neutral' };
-const EMPTY = { name: '', opens_at: '', closes_at: '', end_date: '' };
+const EMPTY = { name: '', opens_at: '', closes_at: '', end_date: '', last_days: 3 };
+
+// The active semester's period controls (admin round Group 5): Close now (with an optional reason
+// for students) and Reopen until (a new closing time in the future). The server checks both.
+const PeriodControls = ({ semester, onChange }) => {
+    const { t, i18n } = useTranslation();
+    const language = i18n.resolvedLanguage || i18n.language;
+    const [reason, setReason] = useState('');
+    const [until, setUntil] = useState('');
+    const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
+    const isOpen = semester.started && !semester.period_over;
+    const run = async (request, done) => {
+        setError('');
+        setNotice('');
+        try {
+            await request();
+            setNotice(done);
+            setReason('');
+            setUntil('');
+            onChange();
+        } catch (err) { setError(getErrorMessage(err, t, 'period_action_failed')); }
+    };
+    const state = !semester.started ? t('period_admin_not_started', { date: formatDateTime(semester.opens_at, language) })
+        : isOpen ? t('period_admin_open', { date: formatDateTime(semester.closes_at, language) })
+            : semester.close_reason !== null ? t('period_admin_closed_by_admin', { date: formatDateTime(semester.closes_at, language) })
+                : t('period_admin_closed', { date: formatDateTime(semester.closes_at, language) });
+    return (
+        <div style={{ marginTop: '15px', padding: '12px', backgroundColor: 'var(--surface-2)', borderRadius: '6px' }}>
+            <h3 style={{ marginTop: 0 }}>{t('period_admin_title', { name: semester.name })}</h3>
+            <p role="status" style={{ marginTop: 0, fontWeight: 'bold' }}>{state}</p>
+            {semester.close_reason && <p style={{ marginTop: 0 }}>{t('period_admin_reason', { reason: semester.close_reason })}</p>}
+            <p style={{ marginTop: 0, fontSize: '13px', color: 'var(--text-muted)' }}>{t('period_admin_last_days', { count: semester.last_days })}</p>
+            {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
+            {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', alignItems: 'end' }}>
+                {isOpen ? (
+                    <form onSubmit={(e) => { e.preventDefault(); if (window.confirm(t('period_confirm_close'))) run(() => http.post(`admin/semesters/${semester.id}/close-now`, { json: { reason } }).json(), t('period_closed_done')); }}>
+                        <label htmlFor="period-reason" style={label}>{t('period_reason_label')}</label>
+                        <input id="period-reason" type="text" value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} style={input} placeholder={t('period_reason_placeholder')} />
+                        <button type="submit" style={{ ...smallButton(true), marginTop: '8px' }}>{t('period_close_now_button')}</button>
+                    </form>
+                ) : semester.started && (
+                    <form onSubmit={(e) => { e.preventDefault(); run(() => http.post(`admin/semesters/${semester.id}/reopen`, { json: { until } }).json(), t('period_reopened_done')); }}>
+                        <label htmlFor="period-until" style={label}>{t('period_reopen_label')}</label>
+                        <input id="period-until" type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} style={input} />
+                        <button type="submit" disabled={!until} style={{ ...smallButton(), marginTop: '8px' }}>{t('period_reopen_button')}</button>
+                    </form>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const Semesters = ({ semesters, onChange }) => {
     const { t, i18n } = useTranslation();
@@ -25,14 +77,15 @@ const Semesters = ({ semesters, onChange }) => {
         setError('');
         setNotice('');
         setForm(semester
-            ? { id: semester.id, name: semester.name, opens_at: toBudapestInput(semester.opens_at), closes_at: toBudapestInput(semester.closes_at), end_date: semester.end_date }
+            ? { id: semester.id, name: semester.name, opens_at: toBudapestInput(semester.opens_at), closes_at: toBudapestInput(semester.closes_at), end_date: semester.end_date, last_days: semester.last_days }
             : EMPTY);
     };
 
     const save = async (e) => {
         e.preventDefault();
         setError('');
-        const { id, ...json } = form;
+        const { id, ...fields } = form;
+        const json = { ...fields, last_days: Number(fields.last_days) };
         try {
             if (id) await http.put(`admin/semesters/${id}`, { json }).json();
             else await http.post('admin/semesters', { json }).json();
@@ -80,6 +133,7 @@ const Semesters = ({ semesters, onChange }) => {
                     {field('opens_at', 'datetime-local', 'semesters_opens_label')}
                     {field('closes_at', 'datetime-local', 'semesters_closes_label')}
                     {field('end_date', 'date', 'semesters_end_label')}
+                    {field('last_days', 'number', 'semesters_last_days_label')}
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <button type="submit" style={{ ...smallButton(), backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none' }}>{t('semesters_save_button')}</button>
                         <button type="button" onClick={() => setForm(null)} style={smallButton()}>{t('staff_cancel')}</button>
@@ -121,6 +175,8 @@ const Semesters = ({ semesters, onChange }) => {
                     </tbody>
                 </table>
             </div>
+            {/* The active semester's application period (admin round Group 5) */}
+            {semesters.filter((s) => s.status === 'active').map((s) => <PeriodControls key={s.id} semester={s} onChange={onChange} />)}
         </section>
     );
 };

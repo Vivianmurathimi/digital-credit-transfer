@@ -248,6 +248,15 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Second import: a changed course, missing courses (one used by an application); delete the used one / hide it and delete the unused one | `409 DELETE_IN_USE`, nothing saved / hidden (data kept) and deleted; the submitted application unchanged |
 | | | Programmes & Courses: counts; delete a programme or course in use; unknown status | `409 DELETE_IN_USE` / `400 INVALID_STATUS` |
 | | | Hide a course / student A's programme | not offered in the course list / at registration (`400 INVALID_PROGRAMME`); status `programme_hidden`; submit refused (`403`); existing applications still listed |
+| 4o | **Application period (admin round Group 5)** | Close now, Reopen, late access and summary routes without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | The public period (registration page) | no ids, no late access |
+| | | Close now (reason over 300 characters / with a reason / again) | `400 REASON_TOO_LONG` / `closed_by_admin` with the reason / `409 PERIOD_NOT_OPEN` |
+| | | While closed, direct API calls: submit, save a draft, register | `403 SUBMISSIONS_CLOSED` / `403 SUBMISSIONS_CLOSED` / `403 APPLICATIONS_CLOSED` |
+| | | While closed: reply to a needs-info application; withdraw a pending one | `200` / `200`, recorded as the student |
+| | | Reopen until: broken time, past, after the semester end, a future time | `400 INVALID_TIME` / `400 TIME_NOT_IN_FUTURE` / `400 END_BEFORE_CLOSE` / open again, reason cleared, new closing time |
+| | | Late access: no addresses, past deadline; a mixed list (good, bad format, unlisted domain, staff address) | `400` / each address answered on its own |
+| | | With late access while closed: register (other case), status, submit; revoke; revoke again | `200`, deadline shown, period check passed / refused at once (`403`) / `alreadyRevoked` |
+| | | The admin summary (menu badges) | matches the database |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |

@@ -40,6 +40,8 @@ return (
             <Route path="/login" element={<GuestOnly><Login /></GuestOnly>} />
             <Route path="/register" element={<GuestOnly><Register /></GuestOnly>} />
             <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+            {/* The admin menu: one URL per section (admin round Group 5) */}
+            <Route path="/admin/*" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/verify/:token" element={<VerifyEmail />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password/:token" element={<ResetPassword />} />

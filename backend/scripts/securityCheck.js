@@ -90,9 +90,8 @@ const restoreDrafts = async () => {
     return rows.length;
 };
 
-// ---------- section 4e: the current semester's days and the admin toggle (put back at the end, also after a crash) ----------
+// ---------- section 4e: the active semester's times (put back at the end, also after a crash) ----------
 let semesterBackup = null;
-let toggleBackup = null;
 const tempSemesterIds = [];
 // A semester from Budapest days (admin round Group 4: opening 00:00, closing 23:59); closed ones end on their last day
 const INSERT_SEMESTER_SQL = `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date, closed_at)
@@ -103,14 +102,9 @@ const restoreSemesters = async () => {
     if (semesterBackup) {
         const b = semesterBackup;
         semesterBackup = null;
-        await pool.query('UPDATE semesters SET applications_open_at = $2, applications_close_at = $3, end_date = $4 WHERE id = $1',
-            [b.id, b.applications_open_at, b.applications_close_at, b.end_date]);
+        await pool.query('UPDATE semesters SET applications_open_at = $2, applications_close_at = $3, end_date = $4, close_reason = $5, last_days_warning_days = $6 WHERE id = $1',
+            [b.id, b.applications_open_at, b.applications_close_at, b.end_date, b.close_reason, b.last_days_warning_days]);
         done.push('semester times put back');
-    }
-    if (toggleBackup !== null) {
-        await pool.query('UPDATE system_settings SET is_submissions_open = $1', [toggleBackup]);
-        toggleBackup = null;
-        done.push('admin toggle put back');
     }
     if (tempSemesterIds.length > 0) {
         // Their applications are removed first (removeTempApplications)
@@ -154,6 +148,7 @@ const restoreReviewerAccess = async () => {
 // Decisions email the student, so section 4h decides only on applications of a temporary student
 // whose address ends in @security-check.invalid (Mailtrap catches it; no real student is emailed).
 const removeTestStudents = async () => {
+    await pool.query('DELETE FROM late_access WHERE email LIKE $1', [`%${TEST_DOMAIN}`]);
     const { rows } = await pool.query("SELECT id FROM users WHERE role = 'student' AND email LIKE $1", [`%${TEST_DOMAIN}`]);
     if (rows.length === 0) return 0;
     const ids = rows.map((r) => r.id);
@@ -271,9 +266,8 @@ const expect = async (name, request, status, code) => {
 // The semester students apply in now: the current one, or before it starts the coming one (SQL, Group 3)
 const SEMESTER_NOW = '(SELECT id FROM semester_bounds WHERE ends_at > now() ORDER BY opens_at LIMIT 1)';
 
-// Whether students can submit now: the semester's application period and the admin toggle (Group 3);
-// an older backend only sends the toggle
-const canSubmitNow = (settings) => (settings.body?.submission ? settings.body.submission.canSubmit === true : settings.body?.isOpen === true);
+// Whether students can submit now (the application period, admin round Group 5)
+const canSubmitNow = (settings) => settings.body?.submission?.canSubmit === true;
 
 const tokenFor = (user) => signSessionToken({ id: user.id, role: user.role });
 // An acting session (admin round Group 1), started through the API like the admin dashboard does
@@ -388,7 +382,7 @@ const run = async () => {
         ['POST', 'applications'], ['PUT', `applications/${d.appOfB.id}/status`], ['PUT', `applications/${d.appOfB.id}/resubmit`],
         ['POST', 'uploads'], ['GET', `uploads/${fileB}`], ['DELETE', `uploads/${fileB}`],
         ['GET', 'users'], ['GET', 'users/staff'], ['PUT', `users/${d.studentB.id}/language`],
-        ['GET', 'pte-courses'], ['GET', 'settings/status'], ['PUT', 'settings/toggle'],
+        ['GET', 'pte-courses'], ['GET', 'settings/status'],
         ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'],
         ['POST', 'refresh-token'], ['GET', 'me'],
         ['POST', 'users/invites'], ['GET', 'users/invites'], ['POST', 'users/invites/1/resend'],
@@ -412,10 +406,8 @@ const run = async () => {
     await expect('Student: all applications', call('GET', 'applications', { token: A }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: change an application status', call('PUT', `applications/${d.appOfB.id}/status`, { token: A, json: { status: 'approved' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: user list', call('GET', 'users', { token: A }), 403, 'FORBIDDEN_ROLE');
-    await expect('Student: open/close submissions', call('PUT', 'settings/toggle', { token: A, json: { isOpen: false } }), 403, 'FORBIDDEN_ROLE');
     await expect('Student: term archive', call('GET', 'archive', { token: A }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: staff list', call('GET', 'users/staff', { token: R }), 403, 'FORBIDDEN_ROLE');
-    await expect('Reviewer: open/close submissions', call('PUT', 'settings/toggle', { token: R, json: { isOpen: false } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: generate a term book', call('POST', 'archive/generate', { token: R, json: { from: '2025-01-01', to: '2025-06-30' } }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: upload as a student', call('POST', 'uploads', { token: R }), 403, 'FORBIDDEN_ROLE');
     await expect('Reviewer: invite a reviewer', call('POST', 'users/invites', { token: R, json: { email: 'x@security-check.invalid', role: 'reviewer', programme_code: d.programmeCodes[0] } }), 403, 'FORBIDDEN_ROLE');
@@ -902,24 +894,25 @@ const run = async () => {
     } else {
         let semesterId = (await pool.query("SELECT id FROM semester_bounds WHERE status = 'active'")).rows[0]?.id;
         if (semesterId) {
-            semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, end_date FROM semesters WHERE id = $1', [semesterId])).rows[0];
+            semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, end_date, close_reason, last_days_warning_days FROM semesters WHERE id = $1', [semesterId])).rows[0];
         } else {
             const day = (await pool.query("SELECT (d - 10)::text AS f, (d + 20)::text AS u, (d + 40)::text AS e FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t")).rows[0];
             semesterId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check ${Date.now()}`, day.f, day.u, day.e, 'active'])).rows[0].id;
             tempSemesterIds.push(semesterId);
         }
-        toggleBackup = (await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1')).rows[0].is_submissions_open;
 
         // Days relative to today in Budapest
         const setDays = (from, until, ends) => pool.query(
             `UPDATE semesters SET applications_open_at = (d + $2::int)::timestamp AT TIME ZONE 'Europe/Budapest',
-                 applications_close_at = ((d + $3::int)::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', end_date = d + $4::int
+                 applications_close_at = ((d + $3::int)::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', end_date = d + $4::int,
+                 close_reason = NULL, last_days_warning_days = 7
              FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t WHERE id = $1`,
             [semesterId, from, until, ends]
         ).then(() => true, (err) => (err.code === '23P01' ? false : Promise.reject(err)));
-        const periodCase = async (label, days, toggle, expectedState, submitStatus, submitCode) => {
+        // closeNow: the admin's Close now (admin round Group 5; it replaced the old toggle)
+        const periodCase = async (label, days, closeNow, expectedState, submitStatus, submitCode) => {
             if (!(await setDays(...days))) return skip(`Submitting ${label}`, 'those days would overlap another semester');
-            await pool.query('UPDATE system_settings SET is_submissions_open = $1', [toggle]);
+            if (closeNow) await expect('Close now (with a reason)', call('POST', `admin/semesters/${semesterId}/close-now`, { token: S, json: { reason: 'Security check' } }), 200);
             const status = await call('GET', 'settings/status', { token: A });
             report(status.body?.submission?.state === expectedState, `Application period ${label}: state "${expectedState}"`, status.body?.submission?.state);
             // An empty form: refused by the period check, or (when submitting is possible) by the field checks
@@ -929,12 +922,12 @@ const run = async () => {
             }
             return undefined;
         };
-        await periodCase('before it starts', [10, 20, 40], true, 'not_started', 403, 'APPLICATION_PERIOD_NOT_STARTED');
-        await periodCase('during it', [-10, 20, 40], true, 'open', 400);
-        await periodCase('in its last 7 days', [-10, 3, 40], true, 'last_days', 400);
-        await periodCase('after it (semester still running)', [-20, -1, 40], true, 'period_over', 403, 'NO_APPLICATION_PERIOD');
-        await periodCase('while the admin has closed it', [-10, 20, 40], false, 'closed_by_admin', 403, 'SUBMISSIONS_CLOSED');
-        await pool.query('UPDATE system_settings SET is_submissions_open = true');
+        await periodCase('before it starts', [10, 20, 40], false, 'not_started', 403, 'APPLICATION_PERIOD_NOT_STARTED');
+        await periodCase('during it', [-10, 20, 40], false, 'open', 400);
+        await periodCase('in its last days (7 set here)', [-10, 3, 40], false, 'last_days', 400);
+        await periodCase('after it (semester still running)', [-20, -1, 40], false, 'period_over', 403, 'NO_APPLICATION_PERIOD');
+        await periodCase('after Close now', [-10, 20, 40], true, 'closed_by_admin', 403, 'SUBMISSIONS_CLOSED');
+        await setDays(-10, 20, 40);
 
         // Earlier semesters: a temporary past semester with two applications of student A
         const pastId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check past ${Date.now()}`, '2001-02-01', '2001-03-01', '2001-06-30', 'closed'])).rows[0].id;
@@ -1570,7 +1563,7 @@ const run = async () => {
         const programmeOfB = d.studentB.programme_id;
         // 403 for students and reviewers on every admin-only route (401 without a token: section 1)
         const adminOnly = [
-            ['GET', 'users'], ['GET', 'users/staff'], ['PUT', `users/${d.admin.id}/deactivate-admin`], ['PUT', 'settings/toggle'],
+            ['GET', 'users'], ['GET', 'users/staff'], ['PUT', `users/${d.admin.id}/deactivate-admin`], ['POST', 'admin/semesters/1/close-now'],
             ['GET', 'archive'], ['POST', 'archive/generate'], ['GET', 'archive/x.pdf/download'], ['GET', 'admin/reviewer-overview'],
             ['POST', 'users/invites'], ['GET', 'users/invites'], ['POST', 'users/invites/1/resend'],
             ['DELETE', 'users/invites/1'], ['PUT', `users/${d.reviewer.id}/remove-reviewer`], ['POST', 'acting/start'],
@@ -1585,8 +1578,8 @@ const run = async () => {
         await expect('Deactivate an admin with id "abc"', call('PUT', 'users/abc/deactivate-admin', { token: S }), 400, 'INVALID_ID');
         await expect('Deactivate an admin with id "0"', call('PUT', 'users/0/deactivate-admin', { token: S }), 400, 'INVALID_ID');
         await expect('Invite with an unknown role', call('POST', 'users/invites', { token: S, json: { email: 'x@security-check.invalid', role: 'owner' } }), 400, 'INVALID_ROLE');
-        await expect('Open/close with "yes" instead of true/false', call('PUT', 'settings/toggle', { token: S, json: { isOpen: 'yes' } }), 400, 'INVALID_IS_OPEN');
-        await expect('Open/close without a value', call('PUT', 'settings/toggle', { token: S, json: {} }), 400, 'INVALID_IS_OPEN');
+        await expect('The old open/close toggle is gone', call('PUT', 'settings/toggle', { token: S, json: { isOpen: false } }), 404);
+        await expect('Close now with a reason that is not text', call('POST', 'admin/semesters/1/close-now', { token: S, json: { reason: 42 } }), 400, 'INVALID_REASON');
         await expect('Term book with a broken date', call('POST', 'archive/generate', { token: S, json: { from: '2026-13-01', to: '2026-12-31' } }), 400, 'INVALID_DATES');
         await expect('Term book download with a strange name', call('GET', 'archive/..%2Fsecret/download', { token: S }), 400, 'INVALID_ARCHIVE_NAME');
         await expect('Resend an invite with id "abc"', call('POST', 'users/invites/abc/resend', { token: S }), 400, 'INVALID_ID');
@@ -2067,6 +2060,128 @@ const run = async () => {
         report((await pool.query('SELECT count(*)::int AS n FROM programmes WHERE code = $1', [code])).rows[0].n === 0, '(the temporary programme and semester were removed)');
     }
 
+    section('4o. Application period (admin round Group 5): Close now, Reopen until, late access, the closed period, the admin summary');
+    {
+        const stamp = Date.now().toString(36);
+        const routes = [['POST', 'admin/semesters/1/close-now'], ['POST', 'admin/semesters/1/reopen'], ['GET', 'admin/late-access'],
+            ['POST', 'admin/late-access'], ['DELETE', 'admin/late-access/1'], ['GET', 'admin/summary']];
+        for (const [method, path] of routes) {
+            await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+            await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+        }
+        const publicPeriod = await call('GET', 'settings/period');
+        report(publicPeriod.status === 200 && publicPeriod.body.period && !('lateAccess' in publicPeriod.body.period) && !JSON.stringify(publicPeriod.body).includes('"id"'),
+            'The public period (registration page): no ids, no late access', `${publicPeriod.status}`);
+
+        const active = (await pool.query("SELECT id FROM semesters WHERE status = 'active'")).rows[0];
+        if (!active) {
+            skip('All application period controls', 'no active semester in this database');
+        } else {
+            const sid = active.id;
+            semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, end_date, close_reason, last_days_warning_days FROM semesters WHERE id = $1', [sid])).rows[0];
+            const day = (offset) => pool.query(`SELECT to_char((now() AT TIME ZONE 'Europe/Budapest')::date + $1::int, 'YYYY-MM-DD') AS d`, [offset]).then((r) => r.rows[0].d);
+            const endDay = await day(40);
+            await pool.query(
+                `UPDATE semesters SET applications_open_at = ((now() AT TIME ZONE 'Europe/Budapest')::date - 10)::timestamp AT TIME ZONE 'Europe/Budapest',
+                     applications_close_at = (((now() AT TIME ZONE 'Europe/Budapest')::date + 20)::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest',
+                     end_date = $2::date, close_reason = NULL WHERE id = $1`,
+                [sid, endDay]
+            );
+            const stateOf = async (token) => (await call('GET', 'settings/status', { token })).body?.submission;
+
+            // Close now
+            await expect('Close now with a 301-character reason', call('POST', `admin/semesters/${sid}/close-now`, { token: S, json: { reason: 'x'.repeat(301) } }), 400, 'REASON_TOO_LONG');
+            await expect('Close now', call('POST', `admin/semesters/${sid}/close-now`, { token: S, json: { reason: 'Technical maintenance' } }), 200);
+            const closed = await stateOf(A);
+            report(closed?.state === 'closed_by_admin' && closed.canSubmit === false && closed.semester.closeReason === 'Technical maintenance',
+                'Closed at once, with the reason shown to students', `${closed?.state}`);
+            await expect('Submitting while closed (direct API call)', call('POST', 'applications', { token: A, json: {} }), 403, 'SUBMISSIONS_CLOSED');
+            await expect('Saving a draft while closed', call('PUT', 'drafts/mine', { token: A, json: { version: 1, data: {} } }), 403, 'SUBMISSIONS_CLOSED');
+            await expect('Registering while closed (direct API call)', call('POST', 'register', { json: { name: 'Closed', email: `closed-${stamp}${TEST_DOMAIN}`, password: 'LongEnough1', neptun_code: 'ZZZ996', programme_code: d.programmeCodes[0] } }), 403, 'APPLICATIONS_CLOSED');
+            report((await call('GET', 'settings/period')).body?.period?.state === 'closed_by_admin', 'The registration page knows it is closed');
+            await expect('Close now while already closed', call('POST', `admin/semesters/${sid}/close-now`, { token: S, json: {} }), 409, 'PERIOD_NOT_OPEN');
+            report((await stateOf(R)) !== undefined, 'Reviewers keep working (their status still answers)');
+
+            // A closed-period student: the needs-info application can still be answered, a pending one withdrawn
+            let seq = 0;
+            const tempOfA = async (status) => {
+                seq += 1;
+                const c = `SECO${stamp}${seq}`.toUpperCase();
+                const id = (await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                    [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: c, course_name: 'Period check', credits: 1 }]), c, status, sid]
+                )).rows[0].id;
+                tempApplicationIds.push(id);
+                return id;
+            };
+            const waiting = await tempOfA('needs_info');
+            await expect('While closed: reply to the needs-info application', call('PUT', `applications/${waiting}/resubmit`, { token: A, json: { student_resubmit_note: 'Here is the syllabus.' } }), 200);
+            const pendingOfA = await tempOfA('pending');
+            await expect('While closed: withdraw a pending application', call('PUT', `applications/${pendingOfA}/withdraw`, { token: A }), 200);
+            const withdrawnBy = (await pool.query("SELECT actor_role, actor_id FROM application_events WHERE application_id = $1 AND kind = 'withdrawn'", [pendingOfA])).rows[0];
+            report(withdrawnBy?.actor_role === 'student' && withdrawnBy.actor_id === d.studentA.id, 'Recorded as the student\'s own withdrawal');
+
+            // Reopen until
+            await expect('Reopen with a broken time', call('POST', `admin/semesters/${sid}/reopen`, { token: S, json: { until: 'tomorrow' } }), 400, 'INVALID_TIME');
+            await expect('Reopen until a time in the past', call('POST', `admin/semesters/${sid}/reopen`, { token: S, json: { until: `${await day(-1)}T10:00` } }), 400, 'TIME_NOT_IN_FUTURE');
+            await expect('Reopen until after the semester ends', call('POST', `admin/semesters/${sid}/reopen`, { token: S, json: { until: `${await day(45)}T10:00` } }), 400, 'END_BEFORE_CLOSE');
+            await expect('Reopen until a future time', call('POST', `admin/semesters/${sid}/reopen`, { token: S, json: { until: `${await day(5)}T23:59` } }), 200);
+            const reopened = await stateOf(A);
+            report(['open', 'last_days'].includes(reopened?.state) && reopened.canSubmit && !reopened.semester.closeReason, 'Open again for everyone, the reason cleared', `${reopened?.state}`);
+            const closesNow = (await pool.query("SELECT to_char(applications_close_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD HH24:MI') AS c FROM semesters WHERE id = $1", [sid])).rows[0].c;
+            report(closesNow === `${await day(5)} 23:59`, 'The closing time is the new one (Budapest time)', closesNow);
+            await expect('Last-days warning of 61 days', call('PUT', `admin/semesters/${sid}`, { token: S, json: { name: 'x', opens_at: '2026-01-01T00:00', closes_at: '2026-01-02T00:00', end_date: '2026-02-01', last_days: 61 } }), 400, 'INVALID_LAST_DAYS');
+
+            // Late access while closed
+            await call('POST', `admin/semesters/${sid}/close-now`, { token: S, json: {} });
+            const lateEmail = `late-${stamp}${TEST_DOMAIN}`;
+            const deadline = `${await day(2)}T23:59`;
+            await expect('Late access without addresses', call('POST', 'admin/late-access', { token: S, json: { emails: ' ', deadline } }), 400, 'NO_EMAILS');
+            await expect('Late access with a past deadline', call('POST', 'admin/late-access', { token: S, json: { emails: lateEmail, deadline: `${await day(-1)}T10:00` } }), 400, 'TIME_NOT_IN_FUTURE');
+            const granted = await call('POST', 'admin/late-access', { token: S, json: { emails: `${lateEmail.toUpperCase()}, not-an-email, x-${stamp}@unlisted.invalid, ${d.reviewer.email}`, deadline, language: 'en' } });
+            const result = Object.fromEntries((granted.body?.results || []).map((r) => [r.email, r]));
+            report(granted.status === 201 && result[lateEmail]?.ok === true && result['not-an-email']?.code === 'INVALID_EMAIL'
+                && result[`x-${stamp}@unlisted.invalid`]?.code === 'EMAIL_DOMAIN_NOT_ALLOWED' && result[d.reviewer.email]?.code === 'NOT_A_STUDENT_EMAIL',
+            'Late access: granted (lowercased); bad address, unlisted domain and staff address each refused on their own', JSON.stringify(granted.body?.results));
+            const registered = await call('POST', 'register', { json: { name: 'Late Student', email: lateEmail.toUpperCase(), password: 'LongEnough1', neptun_code: `L${stamp.slice(-5).toUpperCase()}`.slice(0, 6).replace(/[^A-Z0-9]/g, 'X').padEnd(6, 'X'), programme_code: d.programmeCodes[0] } });
+            report(registered.status === 200, 'With late access, registering while closed works (address matched without case)', `${registered.status} ${registered.code || ''}`);
+            const lateStudent = (await pool.query('SELECT id FROM users WHERE email = $1', [lateEmail])).rows[0];
+            if (lateStudent) {
+                await pool.query('UPDATE users SET is_verified = true WHERE id = $1', [lateStudent.id]);
+                const L = tokenFor({ id: lateStudent.id, role: 'student' });
+                const lateState = await stateOf(L);
+                report(lateState?.canSubmit === true && !!lateState.lateAccess?.deadline && lateState.state === 'closed_by_admin', 'They can submit until their deadline, which is shown');
+                await expect('Submitting with late access passes the period check', call('POST', 'applications', { token: L, json: {} }), 400);
+                report((await stateOf(A))?.canSubmit === false, 'Other students still cannot');
+                const list = await call('GET', 'admin/late-access', { token: S });
+                const grant = (list.body?.grants || []).find((g) => g.email === lateEmail);
+                report(grant?.status === 'active' && grant.registered === true && grant.granted_by_name, 'The admin sees the grant: active, registered, who granted it');
+                await expect('Revoke the late access', call('DELETE', `admin/late-access/${grant?.id}`, { token: S }), 200);
+                report((await stateOf(L))?.canSubmit === false, 'Revoking takes effect at once');
+                await expect('Submitting after it was revoked', call('POST', 'applications', { token: L, json: {} }), 403, 'SUBMISSIONS_CLOSED');
+                const again = await call('DELETE', `admin/late-access/${grant?.id}`, { token: S });
+                report(again.status === 200 && again.body.alreadyRevoked === true, 'Revoking again changes nothing');
+            }
+            await expect('Revoke a grant that does not exist', call('DELETE', 'admin/late-access/999999999', { token: S }), 404, 'LATE_ACCESS_NOT_FOUND');
+
+            // The admin menu's summary matches the database
+            const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary;
+            const truth = (await pool.query(
+                `SELECT (SELECT count(*)::int FROM applications WHERE semester_id = $1 AND status = 'pending') AS pending,
+                        (SELECT count(*)::int FROM allowed_domains) AS domains`, [sid]
+            )).rows[0];
+            report(summary?.pending === truth.pending && summary?.domains === truth.domains && summary?.activeSemester?.id === sid,
+                'The admin summary (menu badges) matches the database', `${summary?.pending}/${truth.pending}`);
+
+            const removedApps = await removeTempApplications();
+            const restored = await restoreSemesters();
+            const removedStudents = await removeTestStudents();
+            console.log(`(removed ${removedApps} temporary application(s) and ${removedStudents} student(s) with their late access; ${restored})`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -2210,7 +2325,7 @@ const finish = async (ok) => {
     try {
         await restoreSemesters();
     } catch (err) {
-        console.error('Could not put back the semester days and the admin toggle:', err.message);
+        console.error('Could not put back the semester times:', err.message);
     }
     try {
         await restoreDrafts();
