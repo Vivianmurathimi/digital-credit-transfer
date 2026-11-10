@@ -94,14 +94,18 @@ const restoreDrafts = async () => {
 let semesterBackup = null;
 let toggleBackup = null;
 const tempSemesterIds = [];
+// A semester from Budapest days (admin round Group 4: opening 00:00, closing 23:59); closed ones end on their last day
+const INSERT_SEMESTER_SQL = `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date, closed_at)
+    VALUES ($1, $5::varchar, $2::date::timestamp AT TIME ZONE 'Europe/Budapest', ($3::date::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', $4::date,
+            CASE WHEN $5::varchar = 'closed' THEN ($4::date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' END) RETURNING id`;
 const restoreSemesters = async () => {
     const done = [];
     if (semesterBackup) {
         const b = semesterBackup;
         semesterBackup = null;
-        await pool.query('UPDATE semesters SET applications_open_on = $2, applications_close_on = $3, ends_on = $4 WHERE id = $1',
-            [b.id, b.applications_open_on, b.applications_close_on, b.ends_on]);
-        done.push('semester days put back');
+        await pool.query('UPDATE semesters SET applications_open_at = $2, applications_close_at = $3, end_date = $4 WHERE id = $1',
+            [b.id, b.applications_open_at, b.applications_close_at, b.end_date]);
+        done.push('semester times put back');
     }
     if (toggleBackup !== null) {
         await pool.query('UPDATE system_settings SET is_submissions_open = $1', [toggleBackup]);
@@ -191,6 +195,26 @@ const removeTestDomain = async () => {
     addedTestDomain = false;
 };
 
+// ---------- section 4n: a temporary programme, semester and hidden items (put back at the end, also after a crash) ----------
+const catalogueBackup = { programmeCodes: [], semesterIds: [], hiddenProgrammes: [], hiddenCourses: [] };
+const restoreCatalogue = async () => {
+    const b = catalogueBackup;
+    if (b.hiddenProgrammes.length) await pool.query("UPDATE programmes SET status = 'active' WHERE id = ANY($1)", [b.hiddenProgrammes.splice(0)]);
+    if (b.hiddenCourses.length) await pool.query("UPDATE courses SET status = 'active' WHERE id = ANY($1)", [b.hiddenCourses.splice(0)]);
+    if (b.programmeCodes.length) {
+        const codes = b.programmeCodes.splice(0);
+        await pool.query('DELETE FROM applications WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
+        await pool.query('DELETE FROM courses WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
+        await pool.query('DELETE FROM programmes WHERE code = ANY($1)', [codes]);
+    }
+    if (b.semesterIds.length) {
+        const ids = b.semesterIds.splice(0);
+        await pool.query('DELETE FROM applications WHERE semester_id = ANY($1)', [ids]);
+        await pool.query('DELETE FROM courses WHERE semester_id = ANY($1)', [ids]);
+        await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [ids]);
+    }
+};
+
 // ---------- small helpers ----------
 
 const results = { pass: 0, fail: 0, skip: 0 };
@@ -221,6 +245,18 @@ const call = async (method, path, { token, json, headers = {} } = {}) => {
     let body = null;
     try { body = JSON.parse(text); } catch { /* not JSON (e.g. a file) */ }
     return { status: res.status, code: body && body.code, body, headers: res.headers };
+};
+
+// Sends a multipart form (the CSV import): fields plus one file
+const callForm = async (path, { token, fields = {}, file = null, fileName = 'catalogue.csv' } = {}) => {
+    const body = new FormData();
+    Object.entries(fields).forEach(([key, value]) => body.append(key, String(value)));
+    if (file !== null) body.append('file', new Blob([file], { type: 'text/csv' }), fileName);
+    const res = await fetch(`${API}/${path}`, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body });
+    const text = await res.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch { /* not JSON */ }
+    return { status: res.status, code: json && json.code, body: json };
 };
 
 // Checks status (and code, if given)
@@ -783,7 +819,7 @@ const run = async () => {
         // Only the fields a student may see: an explicit list, never internal columns
         const STUDENT_FIELDS = ['decided_at', 'decided_by', 'decision_reason', 'fulfilled_courses_json', 'id', 'info_deadline', 'last_resubmitted_at',
             'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
-            'semester_name', 'current_semester',
+            'semester_name', 'current_semester', 'course_no_longer_offered',
             // reviewer Group 6: the final grade and the reason given with a decision (never who decided)
             'final_grade', 'decision_rationale'];
         const listB = await call('GET', 'applications/mine', { token: B });
@@ -864,21 +900,20 @@ const run = async () => {
         report(false, 'The backend reports the application period', 'RESTART THE BACKEND');
         skip('All application period tests', 'the backend runs older code');
     } else {
-        let semesterId = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now()')).rows[0]?.id;
+        let semesterId = (await pool.query("SELECT id FROM semester_bounds WHERE status = 'active'")).rows[0]?.id;
         if (semesterId) {
-            semesterBackup = (await pool.query('SELECT id, applications_open_on, applications_close_on, ends_on FROM semesters WHERE id = $1', [semesterId])).rows[0];
+            semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, end_date FROM semesters WHERE id = $1', [semesterId])).rows[0];
         } else {
-            semesterId = (await pool.query(
-                `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on)
-                 SELECT 'Security check ' || now(), d - 10, d + 20, d + 40 FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t RETURNING id`
-            )).rows[0].id;
+            const day = (await pool.query("SELECT (d - 10)::text AS f, (d + 20)::text AS u, (d + 40)::text AS e FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t")).rows[0];
+            semesterId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check ${Date.now()}`, day.f, day.u, day.e, 'active'])).rows[0].id;
             tempSemesterIds.push(semesterId);
         }
         toggleBackup = (await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1')).rows[0].is_submissions_open;
 
         // Days relative to today in Budapest
         const setDays = (from, until, ends) => pool.query(
-            `UPDATE semesters SET applications_open_on = d + $2::int, applications_close_on = d + $3::int, ends_on = d + $4::int
+            `UPDATE semesters SET applications_open_at = (d + $2::int)::timestamp AT TIME ZONE 'Europe/Budapest',
+                 applications_close_at = ((d + $3::int)::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', end_date = d + $4::int
              FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t WHERE id = $1`,
             [semesterId, from, until, ends]
         ).then(() => true, (err) => (err.code === '23P01' ? false : Promise.reject(err)));
@@ -902,10 +937,7 @@ const run = async () => {
         await pool.query('UPDATE system_settings SET is_submissions_open = true');
 
         // Earlier semesters: a temporary past semester with two applications of student A
-        const pastId = (await pool.query(
-            `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on)
-             VALUES ('Security check past ' || now(), '2001-02-01', '2001-03-01', '2001-06-30') RETURNING id`
-        )).rows[0].id;
+        const pastId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check past ${Date.now()}`, '2001-02-01', '2001-03-01', '2001-06-30', 'closed'])).rows[0].id;
         tempSemesterIds.push(pastId);
         const appliedCodes = new Set((await pool.query(
             "SELECT target_course_code FROM applications WHERE student_id = $1 AND status IN ('pending', 'needs_info', 'approved')", [d.studentA.id]
@@ -1156,7 +1188,7 @@ const run = async () => {
     {
         const programmeOfB = d.studentB.programme_id;
         const programmeOfA = d.studentA.programme_id;
-        const current = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1')).rows[0];
+        const current = (await pool.query("SELECT id FROM semester_bounds WHERE status = 'active' LIMIT 1")).rows[0];
         const oldDecisions = (await pool.query("SELECT count(*)::int AS n FROM applications WHERE status IN ('approved', 'rejected') AND decided_at IS NULL")).rows[0].n;
         console.log(`(decided applications without decision columns, shown as "—": ${oldDecisions})`);
 
@@ -1182,10 +1214,7 @@ const run = async () => {
                 tempApplicationIds.push(rows[0].id);
                 return rows[0].id;
             };
-            const past = (await pool.query(
-                "INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, '2001-02-01', '2001-02-10', '2001-06-30') RETURNING id",
-                [`Security check past ${Date.now()}`]
-            )).rows[0].id;
+            const past = (await pool.query(INSERT_SEMESTER_SQL, [`Security check past ${Date.now()}`, '2001-02-01', '2001-02-10', '2001-06-30', 'closed'])).rows[0].id;
             tempSemesterIds.push(past);
 
             const open = await temp(programmeOfB, 'pending', current.id);
@@ -1462,10 +1491,7 @@ const run = async () => {
             return rows[0].id;
         };
         const newSemester = async (year) => {
-            const { rows } = await pool.query(
-                `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, $2, $3, $4) RETURNING id`,
-                [`Security check L3 ${year} ${stamp}`, `${year}-02-01`, `${year}-02-10`, `${year}-06-30`]
-            );
+            const { rows } = await pool.query(INSERT_SEMESTER_SQL, [`Security check L3 ${year} ${stamp}`, `${year}-02-01`, `${year}-02-10`, `${year}-06-30`, 'closed']);
             tempSemesterIds.push(rows[0].id);
             return rows[0].id;
         };
@@ -1494,7 +1520,7 @@ const run = async () => {
             report(list.status === 200 && list.body.read_only === true && ids.includes(decidedOwn) && ids.includes(pendingOwn)
                 && !ids.includes(withdrawnOwn) && (!otherApp || !ids.includes(otherApp)),
             "Past semester list: read-only, own programme only, no withdrawn", `${ids.length} row(s)`);
-            const currentId = (await pool.query('SELECT id FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1')).rows[0]?.id;
+            const currentId = (await pool.query("SELECT id FROM semester_bounds WHERE status = 'active' LIMIT 1")).rows[0]?.id;
             if (currentId) await expect('A semester that has not ended as a past semester', call('GET', `reviewer/applications?semester=${currentId}`, { token: R }), 404, 'SEMESTER_NOT_FOUND');
             await expect('A semester id that is not a number', call('GET', 'reviewer/applications?semester=abc', { token: R }), 404, 'SEMESTER_NOT_FOUND');
             await expect('A semester that does not exist', call('GET', 'reviewer/applications?semester=999999999', { token: R }), 404, 'SEMESTER_NOT_FOUND');
@@ -1909,6 +1935,138 @@ const run = async () => {
         console.log(`(removed ${removed} temporary student(s) with their applications and programme changes)`);
     }
 
+    section('4n. Semesters and catalogue (admin round Group 4): semesters, Neptun import preview and confirm, Keep / Hide / Delete, hidden items');
+    {
+        const stamp = Date.now().toString(36).toUpperCase().slice(-5);
+        const code = `SC${stamp}`.slice(0, 20);
+        const routes = [['GET', 'admin/semesters'], ['POST', 'admin/semesters'], ['PUT', 'admin/semesters/1'], ['POST', 'admin/semesters/1/activate'],
+            ['GET', 'admin/semesters/1/warnings'], ['GET', 'admin/catalogue?semester_id=1'], ['PUT', 'admin/programmes/1/status'],
+            ['DELETE', 'admin/programmes/1'], ['PUT', 'admin/courses/1/status'], ['DELETE', 'admin/courses/1']];
+        for (const [method, path] of routes) {
+            await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+            await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+        }
+        await expect('No token: import preview', callForm('admin/catalogue/preview', {}), 401, 'NO_TOKEN');
+        await expect('Reviewer: import preview', callForm('admin/catalogue/preview', { token: R, file: 'x' }), 403, 'FORBIDDEN_ROLE');
+
+        // Semesters: input checks, a setup semester far ahead, only one active
+        const semester = (json) => call('POST', 'admin/semesters', { token: S, json });
+        const good = { name: `Security check ${stamp}`, opens_at: '2097-02-01T08:00', closes_at: '2097-02-28T23:59', end_date: '2097-06-30' };
+        await expect('Semester without a name', semester({ ...good, name: ' ' }), 400, 'INVALID_SEMESTER_NAME');
+        await expect('Semester with a broken time', semester({ ...good, opens_at: '2097-02-30T08:00' }), 400, 'INVALID_TIME');
+        await expect('Semester closing before it opens', semester({ ...good, closes_at: '2097-01-01T08:00' }), 400, 'CLOSE_BEFORE_OPEN');
+        await expect('Semester ending before applications close', semester({ ...good, end_date: '2097-02-01' }), 400, 'END_BEFORE_CLOSE');
+        const created = await semester(good);
+        const semesterId = created.body?.semester?.id;
+        if (semesterId) catalogueBackup.semesterIds.push(semesterId);
+        const opensBp = created.body?.semester?.opens_at;
+        report(created.status === 201 && created.body.semester.status === 'setup' && opensBp === new Date('2097-02-01T07:00:00Z').toISOString(),
+            'New semester: in setup, times stored in UTC from Budapest time (08:00 Budapest = 07:00 UTC in winter)', `${created.status} ${opensBp}`);
+        await expect('A second semester with the same name', semester({ ...good, opens_at: '2096-02-01T08:00', closes_at: '2096-02-28T23:59', end_date: '2096-06-30' }), 409, 'SEMESTER_NAME_TAKEN');
+        await expect('A semester overlapping it', semester({ ...good, name: `Overlap ${stamp}` }), 409, 'SEMESTERS_OVERLAP');
+        const active = (await pool.query("SELECT id FROM semesters WHERE status = 'active'")).rows[0];
+        if (active) await expect('Activate while another semester is active', call('POST', `admin/semesters/${semesterId}/activate`, { token: S }), 409, 'ANOTHER_SEMESTER_ACTIVE');
+        else skip('Activate while another semester is active', 'no active semester in this database');
+        report((await pool.query("SELECT count(*)::int AS n FROM semesters WHERE status = 'active'")).rows[0].n <= 1, 'At most one active semester (database rule)');
+        const warnings = await call('GET', `admin/semesters/${semesterId}/warnings`, { token: S });
+        report(warnings.status === 200 && warnings.body.warnings.every((w) => w.no_courses), 'Warnings: the new semester has no courses yet for each programme', `${warnings.body?.warnings?.length}`);
+
+        // Import: preview saves nothing; a bad row is reported by number and doesn't block the others
+        const header = 'programme_code;programme_name_hu;programme_name_en;programme_name_de;course_code;course_name;credits';
+        const row = (c, name, credits, hu = 'Biztonsági teszt') => `${code};${hu};Security check;Sicherheitstest;${c};${name};${credits}`;
+        const file1 = `﻿${[header, row('SC1', 'First', 5), row('SC2', 'Second', 'x'), row('SC3', 'Third', 4), row('SC4', 'Fourth', 3, 'Más név'), row('SC5', 'Fifth', 6)].join('\r\n')}\r\n`;
+        const programmesBefore = (await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n;
+        const preview1 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file1 });
+        const p1 = preview1.body?.preview || {};
+        report(preview1.status === 200 && p1.newProgrammes?.some((p) => p.code === code) && p1.newCourses?.length === 3
+            && p1.errors?.some((e) => e.row === 3 && e.code === 'CREDITS_NOT_A_NUMBER') && p1.errors?.some((e) => e.row === 5 && e.code === 'PROGRAMME_NAME_CONFLICT'),
+        'Preview: new programme, 3 valid courses, bad rows 3 and 5 reported by number', `${preview1.status} ${p1.newCourses?.length} ${JSON.stringify(p1.errors)}`);
+        report(p1.missingProgrammes?.length > 0 && p1.missingProgrammes.every((p) => p.default === 'keep'), 'Programmes not in the file default to Keep');
+        report((await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n === programmesBefore, 'The preview saved nothing');
+        await expect('Preview without a file', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId } }), 400, 'NO_FILE');
+        await expect('Preview of a file that is not UTF-8', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: Buffer.from([0x41, 0xff, 0x3b]) }), 400, 'NOT_UTF8');
+        await expect('Preview of a file without the columns', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: 'a;b\n1;2' }), 400, 'MISSING_COLUMNS');
+        await expect('Confirm with another file than the preview', callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: 'x'.repeat(64) }, file: file1 }), 409, 'PREVIEW_MISMATCH');
+        const confirmed1 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p1.hash, decisions: '{}' }, file: file1 });
+        catalogueBackup.programmeCodes.push(code);
+        report(confirmed1.status === 200 && confirmed1.body.summary.programmesAdded === 1 && confirmed1.body.summary.coursesAdded === 3 && confirmed1.body.summary.rowsSkipped === 2,
+            'Confirm: 1 programme and 3 courses saved, 2 rows skipped', `${confirmed1.status} ${JSON.stringify(confirmed1.body?.summary || confirmed1.body)}`);
+        const realHidden = (await pool.query("SELECT count(*)::int AS n FROM programmes WHERE status = 'hidden' AND code <> $1", [code])).rows[0].n;
+        report(realHidden === 0, 'Keep (the default) left every other programme as it was');
+
+        // Second file: SC1 changed, SC3 and SC5 missing (default Hide); an application uses SC3
+        const courseId = async (c) => (await pool.query('SELECT c.id FROM courses c JOIN programmes p ON p.id = c.programme_id WHERE p.code = $1 AND c.course_code = $2 AND c.semester_id = $3', [code, c, semesterId])).rows[0]?.id;
+        const sc3 = await courseId('SC3');
+        const sc5 = await courseId('SC5');
+        const programmeId = (await pool.query('SELECT id FROM programmes WHERE code = $1', [code])).rows[0].id;
+        const snapshot = [{ course_id: sc3, course_code: 'SC3', course_name: 'Third', credits: 4 }];
+        const usingApp = (await pool.query(
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
+             VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4) RETURNING id`,
+            [d.studentA.id, programmeId, JSON.stringify(snapshot), semesterId]
+        )).rows[0].id;
+        const file2 = `${[header, row('SC1', 'First, renamed', 6)].join('\n')}\n`;
+        const preview2 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file2 });
+        const p2 = preview2.body?.preview || {};
+        const missing3 = p2.missingCourses?.find((c) => c.id === sc3);
+        const missing5 = p2.missingCourses?.find((c) => c.id === sc5);
+        report(p2.changedCourses?.some((c) => c.course_code === 'SC1' && c.before.credits === 5 && c.after.credits === 6), 'Preview: the changed course, old and new values');
+        report(missing3?.default === 'hide' && missing5?.default === 'hide', 'Courses missing from a programme in the file default to Hide');
+        report(missing3?.canDelete === false && missing3.blockedBy.includes('HAS_APPLICATIONS') && missing5?.canDelete === true, 'Delete is refused (with the reason) only for the course in use');
+        const refused = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc3]: 'delete' } }) }, file: file2 });
+        report(refused.status === 409 && refused.code === 'DELETE_IN_USE' && (await pool.query('SELECT credits FROM courses WHERE id = (SELECT id FROM courses WHERE course_code = $1 AND semester_id = $2)', ['SC1', semesterId])).rows[0].credits === 5,
+            'Deleting a course in use is refused and nothing is saved', `${refused.status} ${refused.code}`);
+        const confirmed2 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc5]: 'delete' } }) }, file: file2 });
+        const after = Object.fromEntries((await pool.query('SELECT id, status, credits FROM courses WHERE id = ANY($1)', [[sc3, sc5]])).rows.map((r) => [r.id, r]));
+        report(confirmed2.status === 200 && after[sc3]?.status === 'hidden' && !after[sc5], 'Confirm: the course in use is hidden (all data kept), the unused one deleted', `${confirmed2.status}`);
+        const kept = (await pool.query('SELECT target_courses, status FROM applications WHERE id = $1', [usingApp])).rows[0];
+        const keptCourse = kept.target_courses?.[0] || {};
+        report(kept.target_courses?.length === 1 && Object.entries(snapshot[0]).every(([key, value]) => keptCourse[key] === value) && kept.status === 'pending',
+            'The import never changed the submitted application', JSON.stringify(kept.target_courses));
+
+        // Programmes & Courses page and its Delete rule
+        const page = await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S });
+        const own = page.body?.programmes?.find((p) => p.code === code);
+        report(page.status === 200 && own && own.applications === 1 && own.canDelete === false, 'The page counts the applications and refuses Delete for a programme in use');
+        await expect('Delete a programme in use', call('DELETE', `admin/programmes/${programmeId}?semester_id=${semesterId}`, { token: S }), 409, 'DELETE_IN_USE');
+        await expect('Delete a course in use', call('DELETE', `admin/courses/${sc3}`, { token: S }), 409, 'DELETE_IN_USE');
+        await expect('Change a status to something unknown', call('PUT', `admin/courses/${sc3}/status`, { token: S, json: { status: 'gone' } }), 400, 'INVALID_STATUS');
+
+        // Student side: hidden courses and programmes are never offered
+        const current = (await pool.query("SELECT id FROM semesters WHERE status = 'active'")).rows[0];
+        const courseOfA = current && (await pool.query("SELECT id FROM courses WHERE programme_id = $1 AND semester_id = $2 AND status = 'active' LIMIT 1", [d.studentA.programme_id, current.id])).rows[0];
+        if (!courseOfA) {
+            skip('Hidden course and programme for students', 'no active semester course for student A');
+        } else {
+            catalogueBackup.hiddenCourses.push(courseOfA.id);
+            await expect('Hide a course', call('PUT', `admin/courses/${courseOfA.id}/status`, { token: S, json: { status: 'hidden' } }), 200);
+            const list = await call('GET', 'pte-courses', { token: A });
+            report(list.status === 200 && !list.body.courses.some((c) => c.id === courseOfA.id), 'A hidden course is not offered to the student');
+            await expect('Show it again', call('PUT', `admin/courses/${courseOfA.id}/status`, { token: S, json: { status: 'active' } }), 200);
+            catalogueBackup.hiddenCourses.splice(0);
+
+            const codeOfA = (await pool.query('SELECT code FROM programmes WHERE id = $1', [d.studentA.programme_id])).rows[0].code;
+            catalogueBackup.hiddenProgrammes.push(d.studentA.programme_id);
+            await expect('Hide student A\'s programme', call('PUT', `admin/programmes/${d.studentA.programme_id}/status`, { token: S, json: { status: 'hidden' } }), 200);
+            const publicList = await call('GET', 'programmes');
+            report(!publicList.body.programmes.some((p) => p.code === codeOfA), 'A hidden programme is not offered at registration');
+            await expect('Register with a hidden programme', call('POST', 'register', { json: { name: 'Hidden', email: `hidden-${stamp}${TEST_DOMAIN}`, password: 'LongEnough1', neptun_code: 'ZZZ997', programme_code: codeOfA } }), 400, 'INVALID_PROGRAMME');
+            const status = await call('GET', 'settings/status', { token: A });
+            report(status.body?.submission?.state === 'programme_hidden' && status.body.submission.canSubmit === false, 'Its students see that no new application is possible');
+            const blocked = await call('POST', 'applications', { token: A, json: { target_course_ids: [courseOfA.id] } });
+            report(blocked.status === 403 && ['PROGRAMME_HIDDEN', 'SUBMISSIONS_CLOSED', 'NO_APPLICATION_PERIOD', 'APPLICATION_PERIOD_NOT_STARTED'].includes(blocked.code),
+                'Its students cannot submit (refused by the server)', `${blocked.status} ${blocked.code}`);
+            const mine = await call('GET', 'applications/mine', { token: A });
+            report(mine.status === 200, 'They still see their existing applications');
+            await expect('Show the programme again', call('PUT', `admin/programmes/${d.studentA.programme_id}/status`, { token: S, json: { status: 'active' } }), 200);
+            catalogueBackup.hiddenProgrammes.splice(0);
+        }
+
+        await restoreCatalogue();
+        report((await pool.query('SELECT count(*)::int AS n FROM programmes WHERE code = $1', [code])).rows[0].n === 0, '(the temporary programme and semester were removed)');
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -2026,6 +2184,11 @@ const finish = async (ok) => {
         await removeTestStudents();
     } catch (err) {
         console.error('Could not remove the temporary test student:', err.message);
+    }
+    try {
+        await restoreCatalogue();
+    } catch (err) {
+        console.error('Could not put back the catalogue of section 4n:', err.message);
     }
     try {
         await removeTestDomain();

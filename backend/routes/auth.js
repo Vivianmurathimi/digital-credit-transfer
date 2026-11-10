@@ -58,7 +58,8 @@ router.post('/register', async (req, res) => {
                 return sendError(res, 400, 'INVALID_NEPTUN', 'Neptun code must be 6 letters or digits');
             }
             const programme = typeof programme_code === 'string'
-                ? await pool.query('SELECT id FROM programmes WHERE code = $1', [programme_code])
+                // Hidden programmes are not offered at registration (admin round Group 4)
+                ? await pool.query("SELECT id FROM programmes WHERE code = $1 AND status = 'active'", [programme_code])
                 : { rows: [] };
             if (programme.rows.length === 0) {
                 return sendError(res, 400, 'INVALID_PROGRAMME', 'Unknown study programme');

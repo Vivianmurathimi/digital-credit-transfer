@@ -21,3 +21,13 @@ export const formatDay = (day, language) => (day
     ? new Intl.DateTimeFormat(LOCALES[language] || LOCALES.en, { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric' })
         .format(new Date(`${day}T00:00:00Z`))
     : '');
+
+// A moment (UTC, ISO) as the Budapest wall-clock value of an <input type="datetime-local">:
+// "2026-09-01T08:00". The server reads it back as Budapest time (admin round Group 4).
+export const toBudapestInput = (at) => {
+    if (!at) return '';
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+        timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(at)).map((p) => [p.type, p.value]));
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+};

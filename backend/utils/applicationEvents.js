@@ -47,7 +47,9 @@ const STUDENT_APPLICATION_QUERY = `
            a.final_grade, CASE WHEN a.status IN ('approved', 'rejected') THEN a.decision_rationale END AS decision_rationale,
            r.resubmit_count, r.last_resubmitted_at,
            d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
-           sb.name AS semester_name, COALESCE(sb.opens_at <= now() AND sb.ends_at > now(), false) AS current_semester
+           sb.name AS semester_name, COALESCE(sb.status = 'active', false) AS current_semester,
+           -- The chosen PTE course was hidden or removed later (admin round Group 4): "no longer offered"
+           NOT EXISTS (SELECT 1 FROM courses oc WHERE oc.id::text = a.target_courses->0->>'course_id' AND oc.status = 'active') AS course_no_longer_offered
     FROM applications a
     LEFT JOIN semester_bounds sb ON sb.id = a.semester_id
     LEFT JOIN LATERAL (

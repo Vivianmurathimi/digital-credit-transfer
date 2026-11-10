@@ -73,7 +73,8 @@ router.get('/me', verifyToken, async (req, res) => {
 // Study programmes for the registration form: public (no login), names in EN/HU/DE
 router.get('/programmes', async (req, res) => {
     try {
-        const result = await pool.query('SELECT code, name_en, name_hu, name_de FROM programmes ORDER BY code');
+        // Only active programmes are offered (admin round Group 4: hidden ones are not)
+        const result = await pool.query("SELECT code, name_en, name_hu, name_de FROM programmes WHERE status = 'active' ORDER BY code");
         res.json({ success: true, programmes: result.rows });
     } catch (err) {
         console.error('Fetch programmes error:', err.message);
@@ -102,7 +103,8 @@ router.get('/pte-courses', verifyToken, async (req, res) => {
                 `SELECT c.id, c.course_code, c.course_name, c.credits
                  FROM courses c
                  JOIN users u ON u.programme_id = c.programme_id
-                 WHERE u.id = $1 AND c.semester_id = $2
+                 JOIN programmes p ON p.id = u.programme_id AND p.status = 'active'
+                 WHERE u.id = $1 AND c.semester_id = $2 AND c.status = 'active'
                  ORDER BY c.course_code`,
                 [req.user.id, semester ? semester.id : null]
             )

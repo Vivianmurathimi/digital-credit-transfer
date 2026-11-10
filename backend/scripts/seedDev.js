@@ -25,13 +25,14 @@ const { listPendingMigrations } = require('../utils/migrations');
 const { normalizeCourseCode } = require('../utils/applicationForm');
 const { addEvent } = require('../utils/applicationEvents');
 const { createSemester, adoptIntoSemester } = require('../utils/semesters');
+const { importFixture } = require('../utils/neptun/fixture');
 
-// A current semester for development: applications open from 30 days ago until 30 days from
+// A current (active) semester for development: applications open from 30 days ago until 30 days from
 // now, ending in 90 days (Budapest days). Kept if one is already current (courses and
 // applications without a semester still join it); if the dates would overlap a semester created
 // by hand, nothing is created and the seed says so.
 const ensureDevSemester = async () => {
-    const current = await pool.query('SELECT id, name FROM semester_bounds WHERE opens_at <= now() AND ends_at > now()');
+    const current = await pool.query("SELECT id, name FROM semester_bounds WHERE status = 'active'");
     if (current.rows.length > 0) {
         const { adoptedCourses, adoptedApplications } = await adoptIntoSemester(pool, current.rows[0].id);
         if (adoptedCourses || adoptedApplications) console.log(`Added to "${current.rows[0].name}": ${adoptedCourses} course(s), ${adoptedApplications} application(s) without a semester.`);
@@ -43,7 +44,7 @@ const ensureDevSemester = async () => {
     )).rows[0];
     try {
         const { id } = await createSemester(pool, {
-            name: `Development semester ${days.today}`, applyFrom: days.apply_from, applyUntil: days.apply_until, ends: days.ends,
+            name: `Development semester ${days.today}`, applyFrom: days.apply_from, applyUntil: days.apply_until, ends: days.ends, status: 'active',
         });
         console.log(`Semester created: applications ${days.apply_from} to ${days.apply_until}, ends ${days.ends}.`);
         return id;
@@ -57,29 +58,7 @@ const ensureDevSemester = async () => {
 const DEV_PASSWORD = 'Test1234!';
 const { EVIDENCE_BUCKET } = require('../config/buckets');
 
-const COURSES = {
-    CS: [
-        ['CS101', 'Introduction to Computer Science', 5],
-        ['CS202', 'Data Structures and Algorithms', 6],
-        ['CS305', 'Database Management Systems', 5],
-        ['CS310', 'Web Engineering and Modern UI', 4],
-        ['CS401', 'Software Engineering Architecture', 5],
-        ['CS415', 'Artificial Intelligence', 4],
-        ['CS450', 'Machine Learning & Data Mining', 6],
-        ['MATH205', 'Linear Algebra for CS', 4],
-        ['MATH310', 'Discrete Mathematics', 3],
-        ['MGMT201', 'IT Project Management', 4],
-        ['SEC300', 'Cybersecurity Fundamentals', 5],
-        ['NET201', 'Computer Networks', 4],
-    ],
-    CIVIL: [
-        ['CE101', 'Engineering Mechanics', 5],
-        ['CE210', 'Structural Analysis', 6],
-        ['CE230', 'Geotechnical Engineering', 5],
-        ['CE310', 'Hydraulics and Water Resources', 4],
-        ['CE320', 'Construction Materials', 4],
-    ],
-};
+// The courses come from backend/fixtures/demo-neptun.csv (admin round Group 4), imported like the admin's Neptun import
 
 // role, name, email, programme code, Neptun code, sample application (students only).
 // The addresses use reserved example domains that can never be real (admin round Group 3):
@@ -131,22 +110,15 @@ const seed = async () => {
         (await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id])
     );
 
-    const pte = await pool.query(
+    await pool.query(
         "INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary') ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id"
     );
-    const pteId = pte.rows[0].id;
+
 
     const semesterId = await ensureDevSemester();
-    let newCourses = 0;
-    for (const [programme, courses] of Object.entries(COURSES)) {
-        for (const [code, name, credits] of courses) {
-            const result = await pool.query(
-                'INSERT INTO courses (university_id, programme_id, course_code, course_name, credits, semester_id) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING',
-                [pteId, programmeIds[programme], code, name, credits, semesterId]
-            );
-            newCourses += result.rowCount;
-        }
-    }
+    // The catalogue from the fixture file; nothing already there is hidden or deleted
+    const imported = semesterId ? await importFixture(pool, semesterId) : { coursesAdded: 0 };
+    const newCourses = imported.coursesAdded;
 
     // Test students may register from the example domain (never in production: see the guard above)
     await pool.query('INSERT INTO allowed_domains (domain) VALUES ($1) ON CONFLICT (domain) DO NOTHING', [STUDENT_DOMAIN]);

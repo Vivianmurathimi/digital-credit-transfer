@@ -71,8 +71,9 @@ before(async () => {
     assert.equal(students.length, 2, 'needs two students with a programme (npm run seed:dev)');
     draftBackup = (await pool.query('SELECT * FROM application_drafts WHERE student_id = ANY($1)', [draftStudents()])).rows;
     semesterId = (await pool.query(
-        `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on)
-         VALUES ($1, '2099-09-01', '2099-09-30', $2) RETURNING id`,
+        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
+         VALUES ($1, 'setup', '2099-09-01'::timestamp AT TIME ZONE 'Europe/Budapest',
+                 ('2099-09-30'::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', $2) RETURNING id`,
         [`Semester test ${Date.now()}`, ENDS_ON]
     )).rows[0].id;
 });
@@ -89,24 +90,29 @@ after(async () => {
 });
 
 test('the application period in Budapest time, to the second (summer time in September)', async () => {
-    const state = async (iso) => (await getSubmissionState(pool, new Date(iso))).state;
-    // 1 Sep 00:00 Budapest (UTC+2) = 31 Aug 22:00 UTC
+    // Judged as the active semester (only the active one counts, admin round Group 4)
+    const state = async (iso) => (await getSubmissionState(pool, new Date(iso), { semesterId })).state;
+    // Opens 1 Sep 00:00 Budapest (UTC+2) = 31 Aug 22:00 UTC
     assert.equal(await state('2099-08-31T21:59:59Z'), 'not_started');
     assert.equal(await state('2099-08-31T22:00:00Z'), 'open');
-    // Last 7 days: from 24 Sep 00:00 Budapest
-    assert.equal(await state('2099-09-23T21:59:59Z'), 'open');
-    assert.equal(await state('2099-09-23T22:00:00Z'), 'last_days');
-    // Last day until 30 Sep 23:59:59 Budapest
-    assert.equal(await state('2099-09-30T21:59:59Z'), 'last_days');
-    assert.equal(await state('2099-09-30T22:00:00Z'), 'period_over');
+    // Last 7 days: from 23 Sep 23:59 Budapest (7 days before the closing time)
+    assert.equal(await state('2099-09-23T21:58:59Z'), 'open');
+    assert.equal(await state('2099-09-23T21:59:00Z'), 'last_days');
+    // Closes 30 Sep 23:59 Budapest (a closing day becomes 23:59, migration 016)
+    assert.equal(await state('2099-09-30T21:58:59Z'), 'last_days');
+    assert.equal(await state('2099-09-30T21:59:00Z'), 'period_over');
 });
 
-test('the semester ends at midnight Budapest time on the day winter time starts; afterwards: between semesters', async () => {
-    const state = async (date) => (await getSubmissionState(pool, date)).state;
+test('a semester in setup is never open, whatever its dates (the admin activates it)', async () => {
+    const s = await getSubmissionState(pool, new Date('2099-09-10T10:00:00Z'));
+    assert.notEqual(s.semester?.id === semesterId && s.canSubmit, true, 'the setup semester does not take applications');
+});
+
+test('the semester ends at midnight Budapest time on the day winter time starts', async () => {
+    const state = async (date) => (await getSubmissionState(pool, date, { semesterId })).state;
     assert.equal(await state(new Date(ENDS_AT.getTime() - SECOND)), 'period_over', 'last second of the semester');
-    // With no later semester, after this one there is none current and none coming
-    assert.equal(await state(ENDS_AT), 'between_semesters');
-    const s = await getSubmissionState(pool, new Date(ENDS_AT.getTime() - SECOND));
+    assert.equal(await state(ENDS_AT), 'period_over', 'after its end it never opens again');
+    const s = await getSubmissionState(pool, new Date(ENDS_AT.getTime() - SECOND), { semesterId });
     assert.equal(s.semester.endsOn, ENDS_ON);
     assert.equal(s.canSubmit, false);
 });

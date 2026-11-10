@@ -121,18 +121,7 @@ const uploadFile = async (student, originalName, title, lines) => {
     return fileName;
 };
 
-const COURSES = {
-    CS: [
-        ['CS101', 'Introduction to Computer Science', 5], ['CS202', 'Data Structures and Algorithms', 6],
-        ['CS305', 'Database Management Systems', 5], ['CS310', 'Web Engineering and Modern UI', 4],
-        ['CS401', 'Software Engineering Architecture', 5], ['MATH205', 'Linear Algebra for CS', 4],
-        ['SEC300', 'Cybersecurity Fundamentals', 5], ['NET201', 'Computer Networks', 4],
-    ],
-    CIVIL: [
-        ['CE101', 'Engineering Mechanics', 5], ['CE210', 'Structural Analysis', 6], ['CE230', 'Geotechnical Engineering', 5],
-        ['CE310', 'Hydraulics and Water Resources', 4], ['CE320', 'Construction Materials', 4],
-    ],
-};
+// The courses come from backend/fixtures/demo-neptun.csv (admin round Group 4), imported like the admin's Neptun import
 
 const STAFF = [
     { key: 'admin', role: 'superadmin', name: 'Demo Admin', email: 'demo.admin@staff.example', language: 'en' },
@@ -152,13 +141,13 @@ const STUDENTS = [
 const seed = async (pool) => {
     const { runPendingMigrations } = require('../utils/migrations');
     const { createSemester } = require('../utils/semesters');
+    const { importFixture } = require('../utils/neptun/fixture');
 
     const applied = await runPendingMigrations();
     console.log(`Migrations applied: ${applied.length}`);
 
     const programmes = Object.fromEntries((await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id]));
-    for (const code of Object.keys(COURSES)) if (!programmes[code]) throw new Error(`Programme ${code} is missing (migration 002)`);
-    const pteId = (await pool.query("INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary') RETURNING id")).rows[0].id;
+    await pool.query("INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary')");
 
     // Semesters (Budapest days): the previous one ended 60 days ago; the current one takes
     // applications from 30 days ago to 30 days from now and ends in 90 days
@@ -168,20 +157,15 @@ const seed = async (pool) => {
          FROM (SELECT (now() AT TIME ZONE 'Europe/Budapest')::date AS d) t`
     )).rows[0];
     const semesters = {
-        previous: (await createSemester(pool, { name: 'Demo – previous semester', applyFrom: day.p_from, applyUntil: day.p_until, ends: day.p_ends })).id,
-        current: (await createSemester(pool, { name: 'Demo – current semester', applyFrom: day.c_from, applyUntil: day.c_until, ends: day.c_ends })).id,
+        previous: (await createSemester(pool, { name: 'Demo – previous semester', applyFrom: day.p_from, applyUntil: day.p_until, ends: day.p_ends, status: 'closed' })).id,
+        current: (await createSemester(pool, { name: 'Demo – current semester', applyFrom: day.c_from, applyUntil: day.c_until, ends: day.c_ends, status: 'active' })).id,
     };
+    // Both semesters' catalogue from the fixture file (the same import as the admin screen)
     const courses = {};
     for (const [semester, semesterId] of Object.entries(semesters)) {
-        for (const [programme, list] of Object.entries(COURSES)) {
-            for (const [code, name, credits] of list) {
-                const { rows } = await pool.query(
-                    'INSERT INTO courses (university_id, programme_id, course_code, course_name, credits, semester_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-                    [pteId, programmes[programme], code, name, credits, semesterId]
-                );
-                courses[`${semester}:${code}`] = { course_id: rows[0].id, course_code: code, course_name: name, credits };
-            }
-        }
+        await importFixture(pool, semesterId);
+        const { rows } = await pool.query('SELECT id, course_code, course_name, credits FROM courses WHERE semester_id = $1', [semesterId]);
+        for (const c of rows) courses[`${semester}:${c.course_code}`] = { course_id: c.id, course_code: c.course_code, course_name: c.course_name, credits: c.credits };
     }
 
     // Students register from the reserved example domain (never on a real list: demo:seed refuses
@@ -406,7 +390,7 @@ const seed = async (pool) => {
         `SELECT to_char(($1::timestamptz AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_deadline,
                 to_char(ends_on - 6, 'YYYY-MM-DD') AS week_before, to_char(ends_on, 'YYYY-MM-DD') AS last_day,
                 to_char(ends_on + 1, 'YYYY-MM-DD') AS after_end
-         FROM semesters WHERE id = $2`,
+         FROM semester_bounds WHERE id = $2`,
         [cDeadline, semesters.current]
     )).rows[0];
     return { users, made, semesters: day, moments };
