@@ -177,7 +177,7 @@ const remindReviewersBeforeSemesterEnd = async ({ now, remind = remindReviewer, 
          FROM recorded
          JOIN users r ON r.id = recorded.reviewer_id
          JOIN programmes p ON p.id = recorded.programme_id
-         JOIN semesters s ON s.id = recorded.semester_id`,
+         JOIN semester_bounds s ON s.id = recorded.semester_id`,
         [now, only]
     );
     for (const reminder of rows) {

@@ -112,6 +112,7 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
             <h2 id="detail-title" ref={headingRef} tabIndex={-1} style={{ marginTop: 0, color: 'var(--link)', fontSize: '20px' }}>
                 {target ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits }) : t('student_detail_title')}
             </h2>
+            {application?.course_no_longer_offered && <p style={{ marginTop: 0 }}><span style={{ display: 'inline-block', marginLeft: '6px', padding: '1px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', backgroundColor: 'var(--cue-neutral-bg)', color: 'var(--cue-neutral-text)', border: '1px solid var(--cue-neutral-border)' }}>{t('student_course_no_longer_offered')}</span></p>}
 
             {!application && !error && <p role="status">{t('student_detail_loading')}</p>}
             {error && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold' }}>{error}</p>}

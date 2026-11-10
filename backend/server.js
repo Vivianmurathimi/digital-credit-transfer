@@ -26,6 +26,7 @@ const archiveRoutes = require('./routes/archive');
 const draftRoutes = require('./routes/drafts');
 const actingRoutes = require('./routes/acting');
 const adminStudentRoutes = require('./routes/adminStudents');
+const adminCatalogueRoutes = require('./routes/adminCatalogue');
 const { startJobs } = require('./jobs/scheduler');
 
 const app = express();
@@ -76,6 +77,7 @@ app.use('/api', dataRoutes);
 app.use('/api', staffInviteRoutes); // reviewer and admin invites, removal and deactivation (reviewer Group 2, admin round Group 2)
 app.use('/api', reviewerRoutes); // the reviewer dashboard (reviewer Groups 3 and 4)
 app.use('/api', actingRoutes); // the admin acting as a student or reviewer (admin round Group 1)
+app.use('/api', adminCatalogueRoutes); // semesters and the Neptun catalogue (admin round Group 4)
 app.use('/api', adminStudentRoutes); // allowed domains and students' programmes (admin round Group 3)
 app.use('/api', adminOverviewRoutes); // the admin's per-programme overview (reviewer Group 7)
 app.use('/api', applicationRoutes);

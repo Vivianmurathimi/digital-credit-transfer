@@ -241,6 +241,13 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Register from a listed domain (with `role: superadmin` in the request); remove the domain; register again; log in with the existing account; add it back | a student / `400 EMAIL_DOMAIN_NOT_ALLOWED`, nothing created / login `200` / `201` |
 | | | Search: 1 character; by Neptun code; `%_` taken literally; a reviewer's email | `400 INVALID_SEARCH` / found / literal / no result |
 | | | Change programme: same, unknown, none, a reviewer, bad id; then a real change | `400` / `404 STUDENT_NOT_FOUND`; pending and needs-info withdrawn as admin with `PROGRAMME_CHANGED`, approved kept, draft deleted, change recorded (not editable), profile and My Status updated |
+| 4n | **Semesters and catalogue (admin round Group 4)** | Semester, catalogue and import routes without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | Semester: no name, broken time, closing before opening, ending before closing; same name; overlapping dates; activate while another is active | `400` / `409 SEMESTER_NAME_TAKEN` / `409 SEMESTERS_OVERLAP` / `409 ANOTHER_SEMESTER_ACTIVE`; times stored in UTC from Budapest time |
+| | | Import preview with a BOM, CRLF, a non-numeric credit and a programme name conflict | bad rows reported by number, the valid rows kept, programmes not in the file default to Keep, **nothing saved** |
+| | | Preview without a file, not UTF-8, missing columns; confirm with another file | `400 NO_FILE` / `400 NOT_UTF8` / `400 MISSING_COLUMNS` / `409 PREVIEW_MISMATCH` |
+| | | Second import: a changed course, missing courses (one used by an application); delete the used one / hide it and delete the unused one | `409 DELETE_IN_USE`, nothing saved / hidden (data kept) and deleted; the submitted application unchanged |
+| | | Programmes & Courses: counts; delete a programme or course in use; unknown status | `409 DELETE_IN_USE` / `400 INVALID_STATUS` |
+| | | Hide a course / student A's programme | not offered in the course list / at registration (`400 INVALID_PROGRAMME`); status `programme_hidden`; submit refused (`403`); existing applications still listed |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |

@@ -13,6 +13,11 @@ router.get('/status', verifyToken, async (req, res) => {
     try {
         const result = await pool.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
         const submission = publicSubmissionState(await getSubmissionState());
+        // A student of a hidden programme can't start new applications (admin round Group 4)
+        if (req.user.role === 'student') {
+            const programme = (await pool.query('SELECT p.status FROM users u JOIN programmes p ON p.id = u.programme_id WHERE u.id = $1', [req.user.id])).rows[0];
+            if (programme?.status === 'hidden') Object.assign(submission, { state: 'programme_hidden', canSubmit: false });
+        }
         res.json({ success: true, isOpen: result.rows[0].is_submissions_open, submission });
     } catch (err) {
         sendError(res, 500, 'SERVER_ERROR', 'Failed to fetch system status');

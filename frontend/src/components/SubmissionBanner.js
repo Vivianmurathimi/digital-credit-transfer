@@ -4,7 +4,7 @@ import i18n from '../i18n';
 import { formatDay } from '../dates';
 
 // Codes the server answers when submitting (or saving a draft) isn't possible right now (Group 3)
-export const CLOSED_CODES = ['SUBMISSIONS_CLOSED', 'NO_APPLICATION_PERIOD', 'APPLICATION_PERIOD_NOT_STARTED'];
+export const CLOSED_CODES = ['SUBMISSIONS_CLOSED', 'NO_APPLICATION_PERIOD', 'APPLICATION_PERIOD_NOT_STARTED', 'PROGRAMME_HIDDEN'];
 
 const boxStyle = (warning) => ({
     backgroundColor: warning ? 'var(--warning-bg)' : 'var(--danger-bg)',
@@ -30,6 +30,8 @@ const SubmissionBanner = ({ submission }) => {
     else if (state === 'not_started') text = t('student_period_not_started', { date: day(semester.opensOn) });
     else if (state === 'period_over') text = t('student_period_over', { date: day(semester.closesOn) });
     else if (state === 'closed_by_admin') text = t('student_submissions_closed');
+    // The student's programme was hidden by the admin (admin round Group 4)
+    else if (state === 'programme_hidden') text = t('errors.PROGRAMME_HIDDEN');
     else text = t('student_period_none');
 
     return <div role="status" style={boxStyle(state === 'last_days')}>{text}</div>;

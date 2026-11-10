@@ -5,6 +5,23 @@ programme's reviewer decides; the admin manages access, domains and students.
 `backend/` is the Express API (PostgreSQL, MinIO), `frontend/` the React app.
 More detail on the reviewer side: [backend/REVIEWER.md](backend/REVIEWER.md).
 
+## Before a migration: back up the database
+
+Some migrations convert and then drop old columns (e.g. 016, the semester times). Each migration
+runs in one transaction and checks its row counts, but always take a backup first. From the
+project folder, with the database in the Docker container `credit_system_db`:
+
+```
+docker exec credit_system_db pg_dump -U user -Fc credit_db > backup-credit_db-$(date +%Y%m%d-%H%M).dump
+```
+
+(Without Docker: `pg_dump -h localhost -U <DB_USER> -Fc <DB_NAME> > backup.dump`, values from
+`backend/.env`.) Backups (`*.dump`) are ignored by Git. To restore one:
+
+```
+docker exec -i credit_system_db pg_restore -U user -d credit_db --clean --if-exists < backup-credit_db-YYYYMMDD-HHMM.dump
+```
+
 ## Running it
 
 From `backend`:

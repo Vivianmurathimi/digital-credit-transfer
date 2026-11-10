@@ -52,6 +52,9 @@ router.put('/mine', verifyToken, requireRole('student'), async (req, res) => {
     }
     try {
         if (refuseUnlessSubmitting(res, await getSubmissionState())) return undefined;
+        // A hidden programme takes no new applications, so no draft either (admin round Group 4)
+        const programme = (await pool.query('SELECT p.status FROM users u JOIN programmes p ON p.id = u.programme_id WHERE u.id = $1', [req.user.id])).rows[0];
+        if (programme?.status === 'hidden') return sendError(res, 403, 'PROGRAMME_HIDDEN', 'Your programme takes no new applications at the moment');
         const result = await pool.query(
             `INSERT INTO application_drafts (student_id, version, data, updated_at) VALUES ($1, $2, $3, now())
              ON CONFLICT (student_id) DO UPDATE SET version = EXCLUDED.version, data = EXCLUDED.data, updated_at = now()

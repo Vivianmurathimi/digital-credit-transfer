@@ -1,0 +1,18 @@
+programme_code;programme_name_hu;programme_name_en;programme_name_de;course_code;course_name;credits
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS101;Introduction to Computer Science;5
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS202;Data Structures and Algorithms;6
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS305;Database Management Systems;5
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS310;Web Engineering and Modern UI;4
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS401;Software Engineering Architecture;5
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS415;Artificial Intelligence;4
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;CS450;Machine Learning & Data Mining;6
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;MATH205;Linear Algebra for CS;4
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;MATH310;Discrete Mathematics;3
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;MGMT201;IT Project Management;4
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;SEC300;Cybersecurity Fundamentals;5
+CS;Mérnökinformatikus;Computer Science Engineering;Ingenieurinformatik;NET201;Computer Networks;4
+CIVIL;Építőmérnök;Civil Engineering;Bauingenieurwesen;CE101;Engineering Mechanics;5
+CIVIL;Építőmérnök;Civil Engineering;Bauingenieurwesen;CE210;Structural Analysis;6
+CIVIL;Építőmérnök;Civil Engineering;Bauingenieurwesen;CE230;Geotechnical Engineering;5
+CIVIL;Építőmérnök;Civil Engineering;Bauingenieurwesen;CE310;Hydraulics and Water Resources;4
+CIVIL;Építőmérnök;Civil Engineering;Bauingenieurwesen;CE320;Construction Materials;4

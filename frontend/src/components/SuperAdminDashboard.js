@@ -9,6 +9,7 @@ import { formatDateTime } from '../dates';
 import StaffAccess from './StaffAccess';
 import AllowedDomains from './AllowedDomains';
 import StudentProgrammes from './StudentProgrammes';
+import SemesterCatalogue from './admin/SemesterCatalogue';
 import DecisionModal from './reviewer/DecisionModal';
 import Chip from './reviewer/Chip';
 
@@ -145,6 +146,9 @@ const SuperAdminDashboard = ({ onActingStarted }) => {
 
             {/* Allowed email domains for student registration, warns when empty (admin round Group 3) */}
             <AllowedDomains />
+
+            {/* Semesters, the Neptun import, Programmes & Courses (admin round Group 4) */}
+            <SemesterCatalogue />
 
             {/* Act as a student or reviewer (admin round Group 1) */}
             <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>

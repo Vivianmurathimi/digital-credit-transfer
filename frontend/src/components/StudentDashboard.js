@@ -873,7 +873,11 @@ const StudentDashboard = ({ userId }) => {
                                         : app.status === 'withdrawn' && app.decision_reason ? t(`student_reason_${app.decision_reason}`, { defaultValue: '' }) : '';
                             return (
                             <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
-                                <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
+                                <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>
+                                    {course}
+                                    {/* The course was hidden or removed later (admin round Group 4) */}
+                                    {app.course_no_longer_offered && <span style={{ display: 'inline-block', marginLeft: '6px', padding: '1px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', backgroundColor: 'var(--cue-neutral-bg)', color: 'var(--cue-neutral-text)', border: '1px solid var(--cue-neutral-border)' }}>{t('student_course_no_longer_offered')}</span>}
+                                </td>
                                 <td data-label={t('student_column_status')} style={{ padding: '12px', verticalAlign: 'top' }}>
                                     <span style={{ display: 'inline-block', fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(app.status) }}>
                                         {statusLabel(app.status)}

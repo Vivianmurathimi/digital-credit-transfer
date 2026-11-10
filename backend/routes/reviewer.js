@@ -13,7 +13,8 @@ const { semesterEndedSql } = require('../utils/semesters');
 // Every query is limited to that reviewer's programme.
 
 // The semester running now (from its first application day to its last day), like the student side
-const CURRENT_SEMESTER = 'SELECT id, name FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1';
+// The current semester is the active one (admin round Group 4)
+const CURRENT_SEMESTER = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";
 
 /**
  * What the dashboard lists, in one query:
@@ -68,7 +69,7 @@ const PAST_SEMESTERS_QUERY = `
     SELECT s.id, s.name, to_char(s.ends_on, 'YYYY-MM-DD') AS ends_on, count(a.id)::int AS applications
     FROM semester_bounds s
     JOIN applications a ON a.semester_id = s.id AND a.programme_id = $1 AND a.status <> 'withdrawn'
-    WHERE s.ends_at <= now()
+    WHERE s.ends_at <= now() OR s.status = 'closed'
     GROUP BY s.id, s.name, s.ends_on
     ORDER BY s.ends_on DESC`;
 
@@ -105,7 +106,7 @@ router.get('/reviewer/applications', verifyToken, requireRole('reviewer'), async
         const programme = (await pool.query('SELECT code, name_en, name_hu, name_de FROM programmes WHERE id = $1', [reviewer.programme_id])).rows[0];
         const semesterId = readSemesterId(req.query.semester);
         if (semesterId !== null) {
-            const past = (await pool.query('SELECT id, name FROM semester_bounds WHERE id = $1 AND ends_at <= now()', [semesterId])).rows[0];
+            const past = (await pool.query("SELECT id, name FROM semester_bounds WHERE id = $1 AND (ends_at <= now() OR status = 'closed')", [semesterId])).rows[0];
             if (!past) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No past semester with this id');
             const { rows } = await pool.query(PAST_LIST_QUERY, [reviewer.programme_id, past.id]);
             return res.json({ success: true, reviewer: { id: reviewer.id, name: reviewer.name, programme }, semester: past, read_only: true, applications: rows });

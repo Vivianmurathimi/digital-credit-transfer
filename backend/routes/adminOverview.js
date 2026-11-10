@@ -17,7 +17,7 @@ router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), a
     try {
         const semester = (await pool.query(
             `SELECT name, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
-             FROM semester_bounds WHERE opens_at <= now() AND ends_at > now() LIMIT 1`
+             FROM semester_bounds WHERE status = 'active' LIMIT 1`
         )).rows[0] || null;
         const { rows } = await pool.query(
             `SELECT p.code, p.name_en, p.name_hu, p.name_de, r.name AS reviewer_name,

@@ -5,7 +5,7 @@ const sendError = require('./sendError');
 // draft saving and the form's banner all use this.
 //
 // States:
-//   not_started        a semester is coming, its application period hasn't begun
+//   not_started        no active semester yet (one in setup), or the active one's period hasn't begun
 //   open               inside the application period, admin toggle open
 //   last_days          the same, in its last 7 days (the form warns about the semester end)
 //   closed_by_admin    inside the application period, but the admin closed submissions
@@ -29,24 +29,29 @@ const REFUSALS = {
  * @returns {Promise<{ state: string, canSubmit: boolean, semester: null | { id, name, opensOn, closesOn, endsOn } }>}
  *   semester: the current one, or the coming one when not started; dates as 'YYYY-MM-DD' (Budapest days)
  */
-const getSubmissionState = async (db = pool, now = new Date()) => {
-    // Semesters can't overlap, so the first one not ended yet is the current or the coming one
+const getSubmissionState = async (db = pool, now = new Date(), { semesterId = null } = {}) => {
+    // The ACTIVE semester (admin round Group 4: the admin activates it); without one, the coming
+    // setup semester, only to say when the period starts. Inside the active semester the
+    // application period opens and closes on its own times.
     const { rows } = await db.query(
-        `SELECT id, name,
-                to_char(applications_open_on, 'YYYY-MM-DD') AS opens_on,
-                to_char(applications_close_on, 'YYYY-MM-DD') AS closes_on,
+        `SELECT id, name, status,
+                to_char(opens_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD') AS opens_on,
+                to_char(closes_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD') AS closes_on,
                 to_char(ends_on, 'YYYY-MM-DD') AS ends_on,
-                opens_at <= $1 AS started, closes_at <= $1 AS period_over, last_days_from <= $1 AS last_days
-         FROM semester_bounds WHERE ends_at > $1 ORDER BY opens_at LIMIT 1`,
-        [now]
+                opens_at <= $1 AS started, closes_at <= $1 AS period_over, last_days_from <= $1 AS last_days, ends_at <= $1 AS ended
+         FROM semester_bounds
+         WHERE ($2::int IS NULL AND (status = 'active' OR (status = 'setup' AND ends_at > $1))) OR id = $2
+         ORDER BY (status = 'active') DESC, opens_at LIMIT 1`,
+        [now, semesterId]
     );
     const row = rows[0];
     if (!row) return { state: 'between_semesters', canSubmit: false, semester: null };
 
     const semester = { id: row.id, name: row.name, opensOn: row.opens_on, closesOn: row.closes_on, endsOn: row.ends_on };
     let state;
-    if (!row.started) state = 'not_started';
-    else if (row.period_over) state = 'period_over';
+    // (tests pass semesterId to judge one semester's dates as if it were the active one)
+    if ((row.status !== 'active' && !semesterId) || !row.started) state = 'not_started';
+    else if (row.period_over || row.ended) state = 'period_over';
     else {
         const toggle = await db.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
         if (!toggle.rows[0]?.is_submissions_open) state = 'closed_by_admin';
@@ -94,12 +99,15 @@ const adoptIntoSemester = async (db, semesterId) => {
 };
 
 /**
- * Creates a semester (used by npm run semester:create and the dev seed). Courses that belong to
- * no semester yet are added to it, and so are applications without one submitted during it. Refuses missing or invalid days, days out of order, a name
- * that exists and an overlap with another semester, each with a message saying what is wrong.
+ * Creates a semester (npm run semester:create, the dev seed, the demo and the tests; the admin
+ * screen has its own route). Days are Budapest days: applications from 00:00 on applyFrom until
+ * 23:59 on applyUntil; the semester ends after `ends`. status: setup (default), active (only when
+ * no other one is active) or closed (closedAt = its end). Courses without a semester join it, and
+ * so do applications without one submitted during it. Refuses invalid or out-of-order days, a
+ * name that exists and an overlap, each with a message saying what is wrong.
  * @returns {Promise<{ id: number, adoptedCourses: number, adoptedApplications: number }>}
  */
-const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
+const createSemester = async (db, { name, applyFrom, applyUntil, ends, status = 'setup' }) => {
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 50) throw new Error('The name is missing or longer than 50 characters.');
     for (const [label, value] of [['--apply-from', applyFrom], ['--apply-until', applyUntil], ['--ends', ends]]) {
         if (!isDay(value)) throw new Error(`${label} must be a real day written as YYYY-MM-DD (got "${value ?? ''}").`);
@@ -107,17 +115,24 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
     if (!(applyFrom <= applyUntil && applyUntil <= ends)) {
         throw new Error('The days are out of order: --apply-from <= --apply-until <= --ends.');
     }
+    if (!['setup', 'active', 'closed'].includes(status)) throw new Error('status must be setup, active or closed.');
     try {
         const { rows } = await db.query(
-            'INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, $2, $3, $4) RETURNING id',
-            [name.trim(), applyFrom, applyUntil, ends]
+            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date, closed_at)
+             VALUES ($1, $5::varchar, $2::date::timestamp AT TIME ZONE 'Europe/Budapest',
+                     ($3::date::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', $4::date,
+                     CASE WHEN $5::varchar = 'closed' THEN ($4::date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' END)
+             RETURNING id`,
+            [name.trim(), applyFrom, applyUntil, ends, status]
         );
         return { id: rows[0].id, ...(await adoptIntoSemester(db, rows[0].id)) };
     } catch (err) {
+        if (err.code === '23505' && err.constraint === 'semesters_one_active') throw new Error('Another semester is already active.');
         if (err.code === '23505') throw new Error(`A semester called "${name.trim()}" already exists.`);
         if (err.code === '23P01') {
             const other = await db.query(
-                "SELECT name, applications_open_on::text AS f, ends_on::text AS t FROM semesters WHERE daterange(applications_open_on, ends_on, '[]') && daterange($1::date, $2::date, '[]') LIMIT 1",
+                `SELECT name, to_char(opens_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD') AS f, ends_on::text AS t FROM semester_bounds
+                 WHERE daterange((opens_at AT TIME ZONE 'Europe/Budapest')::date, ends_on, '[]') && daterange($1::date, $2::date, '[]') LIMIT 1`,
                 [applyFrom, ends]
             );
             const o = other.rows[0];
@@ -133,6 +148,9 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends }) => {
  * Applications without a semester never count as ended.
  */
 const semesterEndedSql = (table = 'applications') =>
-    `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND ended.ends_at <= now())`;
+    `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND (ended.ends_at <= now() OR ended.status = 'closed'))`;
 
-module.exports = { semesterEndedSql, getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };
+// SQL for "the current semester" (admin round Group 4): the active one, set by the admin
+const CURRENT_SEMESTER_SQL = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";
+
+module.exports = { CURRENT_SEMESTER_SQL, semesterEndedSql, getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };

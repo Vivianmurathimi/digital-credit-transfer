@@ -64,7 +64,9 @@ before(async () => {
     assert.ok(student, 'needs a student whose programme has an active reviewer (npm run seed:dev)');
     for (const [key, s] of Object.entries(SEMESTERS)) {
         semesterIds[key] = (await pool.query(
-            `INSERT INTO semesters (name, applications_open_on, applications_close_on, ends_on) VALUES ($1, $2, $3, $4) RETURNING id`,
+            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
+             VALUES ($1, 'setup', $2::date::timestamp AT TIME ZONE 'Europe/Budapest', ($3::date::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', $4::date)
+             RETURNING id`,
             [`Reminder test ${key} ${Date.now()}`, s.opens, s.closes, s.endsOn]
         )).rows[0].id;
     }

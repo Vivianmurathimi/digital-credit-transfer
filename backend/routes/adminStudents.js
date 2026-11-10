@@ -158,8 +158,8 @@ router.put('/admin/students/:id/programme', ...adminOnly, requireIdParam('id'), 
             // The student row is locked, so two changes at the same moment run one after the other
             const student = (await client.query('SELECT id, role, programme_id FROM users WHERE id = $1 FOR UPDATE', [req.ids.id])).rows[0];
             if (!student || student.role !== 'student') return { error: [404, 'STUDENT_NOT_FOUND', 'Student not found'] };
-            // Every programme counts as active until programmes get a status (admin round Group 4)
-            const programme = (await client.query('SELECT id, code, name_en, name_hu, name_de FROM programmes WHERE code = $1', [programmeCode.trim()])).rows[0];
+            // Only an active programme (hidden ones take no students, admin round Group 4)
+            const programme = (await client.query("SELECT id, code, name_en, name_hu, name_de FROM programmes WHERE code = $1 AND status = 'active'", [programmeCode.trim()])).rows[0];
             if (!programme) return { error: [400, 'INVALID_PROGRAMME', 'Unknown study programme', 'programme_code'] };
             if (programme.id === student.programme_id) return { error: [400, 'SAME_PROGRAMME', 'The student is already in this programme', 'programme_code'] };
             const from = student.programme_id

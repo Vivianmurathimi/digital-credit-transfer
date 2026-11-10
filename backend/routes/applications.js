@@ -46,6 +46,16 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         const submission = await getSubmissionState();
         if (refuseUnlessSubmitting(res, submission)) return undefined;
 
+        // 0b. A hidden programme takes no new applications; its students keep their existing ones
+        //     (admin round Group 4). Checked before the form, so the student gets the real reason.
+        const own = (await pool.query(
+            'SELECT u.programme_id, p.status AS programme_status FROM users u LEFT JOIN programmes p ON p.id = u.programme_id WHERE u.id = $1',
+            [student_id]
+        )).rows[0];
+        if (own?.programme_status === 'hidden') {
+            return sendError(res, 403, 'PROGRAMME_HIDDEN', 'Your programme takes no new applications at the moment');
+        }
+
         // 1. Every field rule at once (400 with all problems and their field paths)
         const form = validateApplicationForm(req.body);
         if (form.errors.length > 0) return sendValidationErrors(res, form.errors);
@@ -54,10 +64,11 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // 2. Every target course must belong to the student's own programme (read from the database).
         // A course of another programme and an id that doesn't exist get the same answer.
         // The same query gives the snapshot that is saved, so it is exactly what was checked.
-        const programmeId = (await pool.query('SELECT programme_id FROM users WHERE id = $1', [student_id])).rows[0]?.programme_id;
-        // ... and to the current semester (courses are imported per semester)
+        const programmeId = own?.programme_id;
+        // ... and to the current semester (courses are imported per semester), and still offered
+        // (hidden courses can't be picked, admin round Group 4)
         const found = await pool.query(
-            'SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2 AND semester_id = $3',
+            "SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2 AND semester_id = $3 AND status = 'active'",
             [targetIds, programmeId, submission.semester.id]
         );
         if (!programmeId || found.rows.length !== targetIds.length) {
