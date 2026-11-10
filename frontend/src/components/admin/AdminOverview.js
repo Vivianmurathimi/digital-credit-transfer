@@ -1,0 +1,51 @@
+import React from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+import ReviewerOverview from '../ReviewerOverview';
+import { card } from './adminStyles';
+
+// Overview (admin round Group 5): what needs attention, as warning cards that link to their
+// section, and quick counts. Each warning appears only when its condition is true. Below: the
+// per-programme overview (pending, waiting for the student, reviewer, last day) from Group 7.
+
+const warningCard = { backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '12px', borderRadius: '6px', marginBottom: '10px' };
+const countBox = { flex: '1 1 140px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' };
+
+const AdminOverview = ({ summary }) => {
+    const { t } = useTranslation();
+    if (!summary) return null;
+    const warnings = [
+        !summary.activeSemester && { key: 'admin_warning_no_semester', to: '/admin/semesters' },
+        summary.activeSemester && summary.programmesWithoutCourses > 0 && { key: 'admin_warning_no_courses', to: '/admin/catalogue', count: summary.programmesWithoutCourses },
+        summary.programmesWithoutReviewer > 0 && { key: 'admin_warning_no_reviewer', to: '/admin/reviewers', count: summary.programmesWithoutReviewer },
+        summary.domains === 0 && { key: 'domains_empty_warning', to: '/admin/domains' },
+    ].filter(Boolean);
+
+    return (
+        <>
+            <section aria-labelledby="overview-title" style={card}>
+                <h2 id="overview-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t('admin_menu_overview')}</h2>
+                <p style={{ marginTop: 0 }}>
+                    {summary.activeSemester ? t('admin_overview_semester', { name: summary.activeSemester.name }) : t('admin_warning_no_semester')}
+                </p>
+                {warnings.length === 0
+                    ? <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{t('admin_overview_all_good')}</p>
+                    : warnings.map((w) => (
+                        <div key={w.key} role="alert" style={warningCard}>
+                            {t(w.key, { count: w.count })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>
+                        </div>
+                    ))}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>
+                    <div style={countBox}><strong style={{ fontSize: '22px' }}>{summary.pending}</strong><div>{t('admin_count_pending')}</div></div>
+                    <div style={countBox}><strong style={{ fontSize: '22px' }}>{summary.needsInfo}</strong><div>{t('admin_count_needs_info')}</div></div>
+                    <div style={countBox}><strong style={{ fontSize: '22px' }}>{summary.lateAccessActive}</strong><div>{t('admin_count_late_access')}</div></div>
+                    <div style={countBox}><strong style={{ fontSize: '22px' }}>{summary.domains}</strong><div>{t('admin_count_domains')}</div></div>
+                </div>
+            </section>
+            {/* Pending applications and reviewers per programme (reviewer Group 7) */}
+            <ReviewerOverview />
+        </>
+    );
+};
+
+export default AdminOverview;

@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { clearSession, getSessionState } from '../session';
 import { exitActing } from '../acting';
 import { getErrorMessage } from '../errorMessage';
@@ -7,10 +8,17 @@ import { getErrorMessage } from '../errorMessage';
 import ProfileHeader from './ProfileHeader';
 import StudentDashboard from './StudentDashboard';
 import ReviewerDashboard from './ReviewerDashboard';
-import SuperAdminDashboard from './SuperAdminDashboard';
+import AdminLayout from './admin/AdminLayout';
+
+// Where Exit returns the admin: the menu section they started acting from (this tab only)
+const RETURN_KEY = 'actingReturnTo';
+const readReturn = () => { try { return sessionStorage.getItem(RETURN_KEY); } catch { return null; } };
+const saveReturn = (path) => { try { sessionStorage.setItem(RETURN_KEY, path); } catch { /* storage blocked: Overview */ } };
 
 const Dashboard = () => {
     const { t } = useTranslation();
+    const location = useLocation();
+    const navigate = useNavigate();
 
     // RequireAuth has already checked the session; `view` is whose dashboard to show. While the
     // admin acts as a student or reviewer (admin round Group 1), the session itself is that
@@ -24,6 +32,19 @@ const Dashboard = () => {
     if (!session.valid) return null;
     const { userId, role, name: actingName, acting } = session.view;
 
+    // The admin menu lives under /admin (admin round Group 5); everyone else, and the admin while
+    // acting as someone, uses /dashboard. The server checks every request either way.
+    const onAdminPath = location.pathname.startsWith('/admin');
+    if (role === 'superadmin' && !acting && !onAdminPath) return <Navigate to="/admin" replace />;
+    if ((role !== 'superadmin' || acting) && onAdminPath) return <Navigate to="/dashboard" replace />;
+
+    // Acting started from a menu section: remember it for Exit, then show the person's screen
+    const handleActingStarted = (fromPath) => {
+        saveReturn(fromPath);
+        refreshSession();
+        navigate('/dashboard');
+    };
+
     // Removes only the session (keeps e.g. the chosen language) and goes to the login page
     const handleLogout = () => clearSession();
 
@@ -33,6 +54,9 @@ const Dashboard = () => {
         try {
             await exitActing();
             refreshSession();
+            // Back to the admin menu section the acting started from (admin round Group 5)
+            const back = readReturn();
+            navigate(back && back.startsWith('/admin') ? back : '/admin');
         } catch (err) {
             setExitError(getErrorMessage(err, t, 'acting_exit_failed'));
         } finally {
@@ -60,7 +84,7 @@ const Dashboard = () => {
             </div>
 
             {/* keyed by person, so nothing from the previous session's screen is kept */}
-            {role === 'superadmin' && <SuperAdminDashboard key={`superadmin-${userId}`} onActingStarted={refreshSession} />}
+            {role === 'superadmin' && <AdminLayout key={`superadmin-${userId}`} onActingStarted={handleActingStarted} />}
             {role === 'reviewer' && <ReviewerDashboard key={`reviewer-${userId}`} />}
             {role === 'student' && <StudentDashboard key={`student-${userId}`} userId={userId} />}
         </div>

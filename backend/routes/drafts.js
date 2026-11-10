@@ -7,7 +7,7 @@ const sendError = require('../utils/sendError');
 const { sendValidationErrors } = sendError;
 const { getFileOwner } = require('../utils/fileOwner');
 const { checkDraft, draftFileNames, keepOnlyFiles } = require('../utils/drafts');
-const { getSubmissionState, refuseUnlessSubmitting } = require('../utils/semesters');
+const { periodFor, refuseUnlessSubmitting } = require('../utils/applicationPeriod');
 
 // The logged-in student's draft of the application form (Group 7). Like /applications/mine,
 // there is no id in the address: the student comes from the token, so nobody can reach
@@ -51,7 +51,7 @@ router.put('/mine', verifyToken, requireRole('student'), async (req, res) => {
         return sendValidationErrors(res, [error], status);
     }
     try {
-        if (refuseUnlessSubmitting(res, await getSubmissionState())) return undefined;
+        if (refuseUnlessSubmitting(res, await periodFor(pool, { userId: req.user.id }))) return undefined;
         // A hidden programme takes no new applications, so no draft either (admin round Group 4)
         const programme = (await pool.query('SELECT p.status FROM users u JOIN programmes p ON p.id = u.programme_id WHERE u.id = $1', [req.user.id])).rows[0];
         if (programme?.status === 'hidden') return sendError(res, 403, 'PROGRAMME_HIDDEN', 'Your programme takes no new applications at the moment');

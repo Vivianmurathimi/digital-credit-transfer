@@ -1,79 +1,6 @@
-const pool = require('../db');
-const sendError = require('./sendError');
 
-// Whether students can submit right now (Group 3). The one place that decides it: submit,
-// draft saving and the form's banner all use this.
-//
-// States:
-//   not_started        no active semester yet (one in setup), or the active one's period hasn't begun
-//   open               inside the application period, admin toggle open
-//   last_days          the same, in its last 7 days (the form warns about the semester end)
-//   closed_by_admin    inside the application period, but the admin closed submissions
-//   period_over        the semester runs, its application period is over
-//   between_semesters  no current and no coming semester
-// Only "open" and "last_days" allow submitting. All moments are Budapest time (semester_bounds).
-
-const SUBMITTING_STATES = ['open', 'last_days'];
-
-// What a refused submit (or draft save) answers in each state
-const REFUSALS = {
-    not_started: ['APPLICATION_PERIOD_NOT_STARTED', 'The application period has not started yet'],
-    period_over: ['NO_APPLICATION_PERIOD', 'No open application period'],
-    between_semesters: ['NO_APPLICATION_PERIOD', 'No open application period'],
-    closed_by_admin: ['SUBMISSIONS_CLOSED', 'Submissions are currently closed'],
-};
-
-/**
- * @param {{ query: Function }} db  pool or transaction client
- * @param {Date} now  the moment to judge (a fixed time in tests)
- * @returns {Promise<{ state: string, canSubmit: boolean, semester: null | { id, name, opensOn, closesOn, endsOn } }>}
- *   semester: the current one, or the coming one when not started; dates as 'YYYY-MM-DD' (Budapest days)
- */
-const getSubmissionState = async (db = pool, now = new Date(), { semesterId = null } = {}) => {
-    // The ACTIVE semester (admin round Group 4: the admin activates it); without one, the coming
-    // setup semester, only to say when the period starts. Inside the active semester the
-    // application period opens and closes on its own times.
-    const { rows } = await db.query(
-        `SELECT id, name, status,
-                to_char(opens_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD') AS opens_on,
-                to_char(closes_at AT TIME ZONE 'Europe/Budapest', 'YYYY-MM-DD') AS closes_on,
-                to_char(ends_on, 'YYYY-MM-DD') AS ends_on,
-                opens_at <= $1 AS started, closes_at <= $1 AS period_over, last_days_from <= $1 AS last_days, ends_at <= $1 AS ended
-         FROM semester_bounds
-         WHERE ($2::int IS NULL AND (status = 'active' OR (status = 'setup' AND ends_at > $1))) OR id = $2
-         ORDER BY (status = 'active') DESC, opens_at LIMIT 1`,
-        [now, semesterId]
-    );
-    const row = rows[0];
-    if (!row) return { state: 'between_semesters', canSubmit: false, semester: null };
-
-    const semester = { id: row.id, name: row.name, opensOn: row.opens_on, closesOn: row.closes_on, endsOn: row.ends_on };
-    let state;
-    // (tests pass semesterId to judge one semester's dates as if it were the active one)
-    if ((row.status !== 'active' && !semesterId) || !row.started) state = 'not_started';
-    else if (row.period_over || row.ended) state = 'period_over';
-    else {
-        const toggle = await db.query('SELECT is_submissions_open FROM system_settings LIMIT 1');
-        if (!toggle.rows[0]?.is_submissions_open) state = 'closed_by_admin';
-        else state = row.last_days ? 'last_days' : 'open';
-    }
-    return { state, canSubmit: SUBMITTING_STATES.includes(state), semester };
-};
-
-// Answers the refusal for a state that doesn't allow submitting; returns true when it did
-const refuseUnlessSubmitting = (res, submission) => {
-    if (submission.canSubmit) return false;
-    const [code, message] = REFUSALS[submission.state];
-    sendError(res, 403, code, message);
-    return true;
-};
-
-// The part the browser gets (no internal ids)
-const publicSubmissionState = ({ state, canSubmit, semester }) => ({
-    state,
-    canSubmit,
-    semester: semester && { name: semester.name, opensOn: semester.opensOn, closesOn: semester.closesOn, endsOn: semester.endsOn },
-});
+// Semester helpers. Whether someone may register or submit is decided ONLY by
+// utils/applicationPeriod.js (admin round Group 5).
 
 // A real calendar day written as YYYY-MM-DD (2026-02-30 is refused)
 const isDay = (value) => {
@@ -153,4 +80,4 @@ const semesterEndedSql = (table = 'applications') =>
 // SQL for "the current semester" (admin round Group 4): the active one, set by the admin
 const CURRENT_SEMESTER_SQL = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";
 
-module.exports = { CURRENT_SEMESTER_SQL, semesterEndedSql, getSubmissionState, refuseUnlessSubmitting, publicSubmissionState, createSemester, adoptIntoSemester, SUBMITTING_STATES };
+module.exports = { CURRENT_SEMESTER_SQL, semesterEndedSql, createSemester, adoptIntoSemester };

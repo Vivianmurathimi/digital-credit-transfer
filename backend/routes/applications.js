@@ -8,7 +8,8 @@ const notifyReviewer = require('../utils/notifyReviewer');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
-const { getSubmissionState, refuseUnlessSubmitting, semesterEndedSql } = require('../utils/semesters');
+const { semesterEndedSql } = require('../utils/semesters');
+const { periodFor, refuseUnlessSubmitting } = require('../utils/applicationPeriod');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { programmeScopeOf, lockProgramme, resolveReviewerView } = require('../utils/reviewers');
 const { DECIDABLE_STATUS, checkDecision, refusalFor } = require('../utils/decisions');
@@ -43,7 +44,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
     try {
         // 0. Only inside the current semester's application period, with submissions open (Group 3)
-        const submission = await getSubmissionState();
+        // 0. Only while the application period is open for this student (or with their late access,
+        //    admin round Group 5)
+        const submission = await periodFor(pool, { userId: student_id });
         if (refuseUnlessSubmitting(res, submission)) return undefined;
 
         // 0b. A hidden programme takes no new applications; its students keep their existing ones

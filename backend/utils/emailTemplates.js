@@ -297,6 +297,13 @@ const accountTemplates = {
             button: 'Meghívó elfogadása',
             footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
+        lateAccess: {
+            subject: 'Késői hozzáférés – PTE Kreditátvitel',
+            heading: 'Késői hozzáférést kapott',
+            text: (_, deadline) => `Az adminisztrátor késői hozzáférést adott Önnek: ${deadline}-ig (budapesti idő) regisztrálhat és beadhatja kreditátviteli kérelmét, akkor is, ha a jelentkezési időszak lezárult.`,
+            button: 'Tovább a rendszerbe',
+            footer: 'Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
+        },
         adminInvite: {
             subject: 'Meghívó adminisztrátornak – PTE Kreditátvitel',
             heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
@@ -326,6 +333,13 @@ const accountTemplates = {
             text: (programme) => `You have been invited to be the reviewer for the ${programme} programme. Click the button below to set your password and activate your account.`,
             button: 'Accept invitation',
             footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
+        lateAccess: {
+            subject: 'Late access – PTE Credit Transfer',
+            heading: 'You have been given late access',
+            text: (_, deadline) => `The administrator has given you late access: you can register and submit your credit transfer application until ${deadline} (Budapest time), even though the application period is closed.`,
+            button: 'Go to the application system',
+            footer: "If the button doesn't work, copy this link into your browser:",
         },
         adminInvite: {
             subject: 'Administrator invitation – PTE Credit Transfer',
@@ -357,6 +371,13 @@ const accountTemplates = {
             button: 'Einladung annehmen',
             footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
         },
+        lateAccess: {
+            subject: 'Später Zugang – PTE-Kreditübertragung',
+            heading: 'Sie haben späten Zugang erhalten',
+            text: (_, deadline) => `Der Administrator hat Ihnen späten Zugang gewährt: Bis ${deadline} (Budapester Zeit) können Sie sich registrieren und Ihren Antrag auf Kreditübertragung einreichen, auch wenn der Antragszeitraum geschlossen ist.`,
+            button: 'Zum Antragssystem',
+            footer: 'Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
         adminInvite: {
             subject: 'Einladung als Administrator – PTE-Kreditübertragung',
             heading: 'Einladung zum PTE-Kreditübertragungssystem',
@@ -369,17 +390,18 @@ const accountTemplates = {
 
 /**
  * Builds an account email with its link button.
- * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'adminInvite'} type
+ * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'adminInvite'|'lateAccess'} type
  * @param {string} lang  falls back to Hungarian
  * @param {{ url: string, programme?: string }} data  programme: the programme's name (reviewer invite)
  * @returns {{ subject: string, html: string }}
  */
-const buildAccountEmail = (type, lang, { url, programme = '' }) => {
+const buildAccountEmail = (type, lang, { url, programme = '', deadline = null }) => {
     const language = normalizeLanguage(lang);
     const words = accountTemplates[language][type];
     const link = escapeHtml(url);
     const color = type === 'resetPassword' ? '#dc3545' : '#004085';
-    const text = typeof words.text === 'function' ? words.text(programme) : words.text;
+    // lateAccess (admin round Group 5) shows its deadline in Budapest time, in the language
+    const text = typeof words.text === 'function' ? words.text(programme, deadline ? formatDeadline(deadline, language) : '') : words.text;
     // The verification and invite emails show the link as text too; the reset email says what to do if unrequested
     const footer = type === 'resetPassword'
         ? `<p>${escapeHtml(words.footer)}</p>`

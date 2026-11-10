@@ -6,14 +6,13 @@ import Semesters from './Semesters';
 import CatalogueImport from './CatalogueImport';
 import Catalogue from './Catalogue';
 
-// Semesters, the Neptun import and Programmes & Courses (admin round Group 4), sharing one
-// semester list: a change in one part reloads the others.
-const SemesterCatalogue = () => {
+// The Semester and Programmes & Courses sections of the admin menu (admin round Groups 4 and 5).
+// Both need the semester list; a change reloads it (and the menu's badges, through onChange).
+
+const useSemesters = () => {
     const { t } = useTranslation();
     const [semesters, setSemesters] = useState([]);
     const [error, setError] = useState('');
-    const [reloadKey, setReloadKey] = useState(0);
-
     const load = useCallback(async () => {
         try {
             setSemesters((await http.get('admin/semesters').json()).semesters);
@@ -21,16 +20,31 @@ const SemesterCatalogue = () => {
         } catch (err) { setError(getErrorMessage(err, t, 'semesters_load_failed')); }
     }, [t]);
     useEffect(() => { load(); }, [load]);
-    const changed = () => { load(); setReloadKey((k) => k + 1); };
+    return { semesters, error, load };
+};
 
+const LoadError = ({ error }) => (error ? <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p> : null);
+
+// Semester: create, edit, activate; the active one's Close now, Reopen until, last-days warning
+export const SemesterSection = ({ onChange = () => {} }) => {
+    const { semesters, error, load } = useSemesters();
     return (
         <>
-            {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
-            <Semesters semesters={semesters} onChange={changed} />
-            <CatalogueImport semesters={semesters} onImported={changed} />
-            <Catalogue semesters={semesters} reloadKey={reloadKey} />
+            <LoadError error={error} />
+            <Semesters semesters={semesters} onChange={() => { load(); onChange(); }} />
         </>
     );
 };
 
-export default SemesterCatalogue;
+// Programmes & Courses: the Neptun import and the Programmes & Courses page
+export const CatalogueSection = ({ onChange = () => {} }) => {
+    const { semesters, error, load } = useSemesters();
+    const [reloadKey, setReloadKey] = useState(0);
+    return (
+        <>
+            <LoadError error={error} />
+            <CatalogueImport semesters={semesters} onImported={() => { load(); setReloadKey((k) => k + 1); onChange(); }} />
+            <Catalogue semesters={semesters} reloadKey={reloadKey} onChange={onChange} />
+        </>
+    );
+};

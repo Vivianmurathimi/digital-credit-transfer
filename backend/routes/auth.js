@@ -12,6 +12,7 @@ const sendError = require('../utils/sendError');
 const { FRONTEND_URL } = require('../config/urls');
 const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
+const { periodFor } = require('../utils/applicationPeriod');
 
 // --- REGISTER ROUTE ---
 
@@ -45,6 +46,13 @@ router.post('/register', async (req, res) => {
         const lowerEmail = email.trim().toLowerCase();
         if (!(await isAllowedStudentEmail(pool, lowerEmail))) {
             return sendError(res, 400, 'EMAIL_DOMAIN_NOT_ALLOWED', 'Students can only register with an email address from an allowed domain', { field: 'email' });
+        }
+        // Only while the application period is open, or with late access for this exact address
+        // (case-insensitive) until its deadline (admin round Group 5). Verifying the email later,
+        // also after the deadline, is fine; submitting after it is not.
+        const period = await periodFor(pool, { email: lowerEmail });
+        if (!period.canRegister) {
+            return sendError(res, 403, 'APPLICATIONS_CLOSED', 'Applications are closed, so registering is not possible right now');
         }
         const assignedRole = 'student';
 

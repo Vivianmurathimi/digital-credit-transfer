@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getErrorCode, getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 import { programmeName } from '../programmeName';
+import { formatDateTime } from '../dates';
 
 // Registration always creates a student (admin round Groups 2 and 3), so the Neptun code and the
 // programme are always asked. Which email domains may register is the admin's list on the server
@@ -45,11 +46,20 @@ const Register = () => {
     const [fieldErrors, setFieldErrors] = useState({});
     const [isRegistered, setIsRegistered] = useState(false);
 
+    // The application period (admin round Group 5): when closed, the page says so with the next
+    // opening time. The form stays usable, because someone with late access may still register;
+    // the server decides.
+    const [period, setPeriod] = useState(null);
+
     useEffect(() => {
         http.get('programmes').json()
             .then((data) => setProgrammes(data.programmes || []))
             .catch(() => setProgrammesFailed(true));
+        http.get('settings/period').json()
+            .then((data) => setPeriod(data.period))
+            .catch(() => setPeriod(null));
     }, []);
+    const periodLanguage = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
 
     const setFieldError = (field, message) => setFieldErrors((prev) => ({ ...prev, [field]: message }));
 
@@ -94,6 +104,16 @@ const Register = () => {
             ) : (
                 <>
                     <h2 style={{ textAlign: 'center', color: 'var(--success-accent)', marginTop: 0 }}>{t('register_title')}</h2>
+
+                    {period && !period.canRegister && (
+                        <div role="status" style={{ backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', border: '1px solid var(--orange)', padding: '10px', borderRadius: '5px', marginBottom: '15px' }}>
+                            <strong>{t('register_period_closed')}</strong>
+                            {period.state === 'not_started' && period.semester?.opensAt && (
+                                <div>{t('register_period_opens', { date: formatDateTime(period.semester.opensAt, periodLanguage) })}</div>
+                            )}
+                            <div style={{ fontSize: '13px', marginTop: '4px' }}>{t('register_period_late_access')}</div>
+                        </div>
+                    )}
 
                     {error && <div role="alert" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold', textAlign: 'center', border: '1px solid var(--danger-border)' }}>{error}</div>}
 

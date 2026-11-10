@@ -27,7 +27,10 @@ const smallButton = (danger = false) => ({
     backgroundColor: danger ? 'var(--danger-bg)' : 'var(--surface)', color: danger ? 'var(--danger-text)' : 'var(--text)',
 });
 
-const StaffAccess = () => {
+// role (admin menu, admin round Group 5): 'reviewer' (the Reviewers section) or 'superadmin' (the
+// Admins section). It fixes the invite form's role and shows only that role's invites and people.
+// onChange: called after any change (the menu's badges refresh).
+const StaffAccess = ({ role = 'reviewer', onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
 
@@ -37,7 +40,7 @@ const StaffAccess = () => {
     const [statusFilter, setStatusFilter] = useState('');
     const [loadError, setLoadError] = useState('');
 
-    const [form, setForm] = useState({ email: '', role: 'reviewer', programme_code: '', replace: false, language: 'hu' });
+    const [form, setForm] = useState({ email: '', role, programme_code: '', replace: false, language: 'hu' });
     const [formError, setFormError] = useState('');
     const [sending, setSending] = useState(false);
     const [created, setCreated] = useState(null); // { email, link } of the last invite sent or resent
@@ -77,6 +80,7 @@ const StaffAccess = () => {
             setCreated({ email: data.invite.email, link: data.link });
             setForm((prev) => ({ ...prev, email: '', replace: false }));
             loadInvites();
+            onChange();
         } catch (err) {
             setFormError(getErrorMessage(err, t, 'staff_invite_failed'));
         } finally {
@@ -96,9 +100,10 @@ const StaffAccess = () => {
         }
         loadInvites();
         loadStaff();
+        onChange();
     };
 
-    const roleName = (role) => t(role === 'superadmin' ? 'staff_role_admin' : 'staff_role_reviewer');
+    const roleName = (r) => t(r === 'superadmin' ? 'staff_role_admin' : 'staff_role_reviewer');
     const reviewers = staff.filter((person) => person.role === 'reviewer');
     const admins = staff.filter((person) => person.role === 'superadmin');
     const activeAdmins = admins.filter((person) => !person.deactivated_at).length;
@@ -108,8 +113,8 @@ const StaffAccess = () => {
 
     return (
         <section aria-labelledby="staff-access-title" style={card}>
-            <h2 id="staff-access-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t('staff_title')}</h2>
-            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t('staff_intro')}</p>
+            <h2 id="staff-access-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t(role === 'superadmin' ? 'staff_admins_title' : 'staff_reviewers_title')}</h2>
+            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t(role === 'superadmin' ? 'staff_intro_admins' : 'staff_intro')}</p>
             {loadError && <p role="alert" style={{ color: 'var(--error-text)' }}>{loadError}</p>}
 
             {/* Invite */}
@@ -118,13 +123,6 @@ const StaffAccess = () => {
                 <div>
                     <label htmlFor="staff-email" style={label}>{t('staff_email_label')}</label>
                     <input id="staff-email" type="email" value={form.email} maxLength={100} onChange={(e) => setField('email', e.target.value)} style={input} />
-                </div>
-                <div>
-                    <label htmlFor="staff-role" style={label}>{t('staff_role_label')}</label>
-                    <select id="staff-role" value={form.role} onChange={(e) => setField('role', e.target.value)} style={input}>
-                        <option value="reviewer">{t('staff_role_reviewer')}</option>
-                        <option value="superadmin">{t('staff_role_admin')}</option>
-                    </select>
                 </div>
                 {form.role === 'reviewer' && (
                     <div>
@@ -184,9 +182,9 @@ const StaffAccess = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {invites.length === 0 ? (
+                        {invites.filter((i) => i.role === role).length === 0 ? (
                             <tr><td colSpan="6" style={{ ...td, textAlign: 'center', color: 'var(--text-muted)' }}>{t('staff_no_invites')}</td></tr>
-                        ) : invites.map((invite) => (
+                        ) : invites.filter((i) => i.role === role).map((invite) => (
                             <tr key={invite.id}>
                                 <td style={td}>{invite.email}{invite.replace && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('staff_replaces_reviewer')}</div>}</td>
                                 <td style={td}>{roleName(invite.role)}</td>
@@ -208,7 +206,8 @@ const StaffAccess = () => {
             </div>
 
             {/* Reviewers */}
-            <h3 style={{ marginTop: '24px' }}>{t('staff_reviewers_title')}</h3>
+            {role === 'reviewer' && (<>
+            <h3 style={{ marginTop: '24px' }}>{t('staff_reviewers_list_title')}</h3>
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -242,8 +241,11 @@ const StaffAccess = () => {
                 </table>
             </div>
 
+            </>)}
+
             {/* Admins */}
-            <h3 style={{ marginTop: '24px' }}>{t('staff_admins_title')}</h3>
+            {role === 'superadmin' && (<>
+            <h3 style={{ marginTop: '24px' }}>{t('staff_admins_list_title')}</h3>
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -273,6 +275,7 @@ const StaffAccess = () => {
                     </tbody>
                 </table>
             </div>
+            </>)}
         </section>
     );
 };

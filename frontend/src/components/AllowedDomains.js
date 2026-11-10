@@ -11,7 +11,8 @@ import { formatDate } from '../dates';
 const card = { backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--border)', marginBottom: '30px' };
 const warning = { backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '12px', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' };
 
-const AllowedDomains = () => {
+// onChange: called after a change (the admin menu's badges refresh)
+const AllowedDomains = ({ onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const [domains, setDomains] = useState(null);
@@ -34,6 +35,7 @@ const AllowedDomains = () => {
             await http.post('admin/domains', { json: { domain: newDomain } }).json();
             setNewDomain('');
             load();
+            onChange();
         } catch (err) {
             setError(getErrorMessage(err, t, 'domains_add_failed'));
         } finally {
@@ -48,6 +50,7 @@ const AllowedDomains = () => {
             await http.delete(`admin/domains/${row.id}`).json();
         } catch (err) { setError(getErrorMessage(err, t, 'domains_remove_failed')); }
         load();
+        onChange();
     };
 
     return (

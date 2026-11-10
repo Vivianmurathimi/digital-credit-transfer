@@ -10,7 +10,7 @@ import { card, disabledButton, input, label, smallButton, td, th } from './admin
 // with status and how many students and applications use each. Hide and Show at any time (Hide
 // keeps all data); Delete only when nothing uses the item, otherwise greyed out with the reason.
 
-const Catalogue = ({ semesters, reloadKey }) => {
+const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const [semesterId, setSemesterId] = useState('');
     const [data, setData] = useState(null);
@@ -35,6 +35,7 @@ const Catalogue = ({ semesters, reloadKey }) => {
         setError('');
         try { await request(); } catch (err) { setError(getErrorMessage(err, t, 'catalogue_action_failed')); }
         load();
+        onChange();
     };
     const reasonText = (reasons) => reasons.map((r) => t(`catalogue_blocked_${r}`)).join(' ');
     const statusChip = (status) => <Chip cue={status === 'active' ? 'approved' : 'neutral'}>{t(`catalogue_status_${status}`)}</Chip>;

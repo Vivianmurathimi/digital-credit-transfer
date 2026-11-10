@@ -5,7 +5,7 @@ const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
 const { COUNTRY_CODES } = require('../utils/countries');
-const { getSubmissionState } = require('../utils/semesters');
+const { periodFor } = require('../utils/applicationPeriod');
 
 // Used for the superadmin's "act as" lists (admin round Group 1) — superadmins intentionally excluded.
 // Deactivated reviewers are marked, because nobody can act as them.
@@ -97,7 +97,7 @@ router.get('/countries', (req, res) => {
 // student, the student's rule applies); the admin round can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
-        const semester = req.user.role === 'student' ? (await getSubmissionState()).semester : null;
+        const semester = req.user.role === 'student' ? (await periodFor(pool, { userId: req.user.id })).semester : null;
         const result = req.user.role === 'student'
             ? await pool.query(
                 `SELECT c.id, c.course_code, c.course_name, c.credits

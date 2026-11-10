@@ -30,6 +30,8 @@ const isDay = (value) => typeof value === 'string' && DAY.test(value) && isLocal
 const SEMESTER_COLUMNS = `
     s.id, s.name, s.status, s.applications_open_at AS opens_at, s.applications_close_at AS closes_at,
     to_char(s.end_date, 'YYYY-MM-DD') AS end_date, s.closed_at, closer.name AS closed_by_name, s.created_at,
+    s.last_days_warning_days AS last_days, s.close_reason,
+    s.applications_open_at <= now() AS started, s.applications_close_at <= now() AS period_over,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id) AS applications,
     (SELECT count(*)::int FROM courses c WHERE c.semester_id = s.id) AS courses`;
 const readSemester = async (db, id) => (await db.query(
@@ -37,7 +39,9 @@ const readSemester = async (db, id) => (await db.query(
 )).rows[0];
 
 // The checks shared by create and edit; returns [code, message, field] or null
-const checkSemesterInput = ({ name, opens_at: opensAt, closes_at: closesAt, end_date: endDate }) => {
+const checkSemesterInput = ({ name, opens_at: opensAt, closes_at: closesAt, end_date: endDate, last_days: lastDays }) => {
+    // The last-days warning (admin round Group 5): whole days 0-60, default 3
+    if (lastDays !== undefined && !(Number.isInteger(lastDays) && lastDays >= 0 && lastDays <= 60)) return ['INVALID_LAST_DAYS', 'The warning days must be 0 to 60', 'last_days'];
     if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_NAME) return ['INVALID_SEMESTER_NAME', `A name of 1 to ${MAX_NAME} characters`, 'name'];
     if (!isLocalTime(opensAt)) return ['INVALID_TIME', 'Opening time must be a date and time', 'opens_at'];
     if (!isLocalTime(closesAt)) return ['INVALID_TIME', 'Closing time must be a date and time', 'closes_at'];
@@ -80,10 +84,10 @@ router.post('/admin/semesters', ...adminOnly, async (req, res) => {
     if (problem) return sendError(res, 400, problem[0], problem[1], { field: problem[2] });
     try {
         const { rows } = await pool.query(
-            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
-             VALUES ($1, 'setup', $2::timestamp AT TIME ZONE 'Europe/Budapest', $3::timestamp AT TIME ZONE 'Europe/Budapest', $4::date)
+            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date, last_days_warning_days)
+             VALUES ($1, 'setup', $2::timestamp AT TIME ZONE 'Europe/Budapest', $3::timestamp AT TIME ZONE 'Europe/Budapest', $4::date, COALESCE($5::int, 3))
              RETURNING id`,
-            [body.name.trim(), body.opens_at, body.closes_at, body.end_date]
+            [body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null]
         );
         res.status(201).json({ success: true, semester: await readSemester(pool, rows[0].id) });
     } catch (err) {
@@ -102,9 +106,11 @@ router.put('/admin/semesters/:id', ...adminOnly, requireIdParam('id'), async (re
     try {
         const { rowCount } = await pool.query(
             `UPDATE semesters SET name = $2, applications_open_at = $3::timestamp AT TIME ZONE 'Europe/Budapest',
-                 applications_close_at = $4::timestamp AT TIME ZONE 'Europe/Budapest', end_date = $5::date
+                 applications_close_at = $4::timestamp AT TIME ZONE 'Europe/Budapest', end_date = $5::date,
+                 last_days_warning_days = COALESCE($6::int, last_days_warning_days),
+                 close_reason = NULL -- new times: the dates are in charge again (clears an earlier Close now)
              WHERE id = $1 AND status <> 'closed'`,
-            [req.ids.id, body.name.trim(), body.opens_at, body.closes_at, body.end_date]
+            [req.ids.id, body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null]
         );
         if (rowCount === 0) {
             const exists = (await pool.query('SELECT status FROM semesters WHERE id = $1', [req.ids.id])).rows[0];
