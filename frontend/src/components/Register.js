@@ -5,11 +5,10 @@ import { getErrorCode, getErrorMessage } from '../errorMessage';
 import PasswordInput from './PasswordInput';
 import { programmeName } from '../programmeName';
 
-// The role comes from the email domain, exactly like the backend (routes/auth.js):
-// only @tr.pte.hu addresses are students and give a Neptun code and programme.
-// Staff (@mik.pte.hu) can't register: reviewers are invited by the superadmin, and the
-// server answers STAFF_BY_INVITATION, shown under the email field.
-const isStudentEmail = (value) => value.trim().toLowerCase().endsWith('@tr.pte.hu');
+// Registration always creates a student (admin round Groups 2 and 3), so the Neptun code and the
+// programme are always asked. Which email domains may register is the admin's list on the server
+// (no domain is written here); an address from another domain gets EMAIL_DOMAIN_NOT_ALLOWED,
+// shown under the email field. Reviewers and admins are invited, never registered.
 
 // Same rule as the backend and the database: 6 letters or digits, upper case
 const NEPTUN_PATTERN = /^[A-Z0-9]{6}$/;
@@ -21,8 +20,7 @@ const FIELD_FOR_CODE = {
     NEPTUN_TAKEN: 'neptun',
     INVALID_PROGRAMME: 'programme',
     EMAIL_TAKEN: 'email',
-    STAFF_BY_INVITATION: 'email',
-    INVALID_EMAIL_DOMAIN: 'email',
+    EMAIL_DOMAIN_NOT_ALLOWED: 'email',
 };
 
 const inputStyle = (hasError) => ({
@@ -47,8 +45,6 @@ const Register = () => {
     const [fieldErrors, setFieldErrors] = useState({});
     const [isRegistered, setIsRegistered] = useState(false);
 
-    const isStudent = isStudentEmail(email);
-
     useEffect(() => {
         http.get('programmes').json()
             .then((data) => setProgrammes(data.programmes || []))
@@ -62,13 +58,6 @@ const Register = () => {
     const handleEmailChange = (value) => {
         setEmail(value);
         setFieldError('email', '');
-        // Leaving the student domain clears (not just hides) the student-only values,
-        // so they can never be sent for a staff address
-        if (!isStudentEmail(value)) {
-            setNeptun('');
-            setProgrammeCode('');
-            setFieldErrors((prev) => ({ ...prev, neptun: '', programme: '' }));
-        }
     };
 
     const handleRegister = async (e) => {
@@ -76,14 +65,11 @@ const Register = () => {
         setError('');
 
         // Same checks as the server, before sending (shown under the fields)
-        if (isStudent) {
-            const checks = { neptun: neptunError(neptun), programme: programmeCode ? '' : t('errors.INVALID_PROGRAMME') };
-            setFieldErrors((prev) => ({ ...prev, ...checks }));
-            if (checks.neptun || checks.programme) return;
-        }
+        const checks = { neptun: neptunError(neptun), programme: programmeCode ? '' : t('errors.INVALID_PROGRAMME') };
+        setFieldErrors((prev) => ({ ...prev, ...checks }));
+        if (checks.neptun || checks.programme) return;
 
-        const body = { name, email, password, language: i18n.language };
-        if (isStudent) Object.assign(body, { neptun_code: neptun, programme_code: programmeCode });
+        const body = { name, email, password, language: i18n.language, neptun_code: neptun, programme_code: programmeCode };
 
         try {
             const data = await http.post('register', { json: body }).json();
@@ -127,7 +113,7 @@ const Register = () => {
                             <FieldError id="register-email-error" message={fieldErrors.email} />
                         </div>
 
-                        {isStudent && (
+                        {(
                             <>
                                 <div>
                                     <label htmlFor="register-neptun" style={{ fontWeight: 'bold' }}>{t('register_neptun')}</label>

@@ -136,6 +136,25 @@ test('rejected at the deadline as "System", with the reason code, history entry 
     assert.equal(sent.length, 1);
 });
 
+test('a withdrawn application is skipped by the reply-deadline jobs (admin round Group 3: programme changed)', async () => {
+    // Withdrawn while waiting for information (e.g. the admin changed the student's programme).
+    // The withdrawal clears the deadline; this also keeps an old deadline to prove the status alone protects it.
+    const id = await waitingApplication();
+    await pool.query("UPDATE applications SET status = 'withdrawn' WHERE id = $1", [id]);
+    const { sent, notify } = recorder();
+    const only = [id];
+
+    await sendDeadlineReminders({ now: at(60 * HOUR), notify, only });
+    await rejectOverdueInfoRequests({ now: at(100 * HOUR), notify, only });
+
+    const row = await read(id);
+    assert.equal(row.status, 'withdrawn', 'still withdrawn: never rejected by the system');
+    assert.equal(row.decided_by_role, null);
+    assert.equal(row.info_reminder_sent_at, null, 'no reminder');
+    assert.equal((await eventsOf(id)).length, 0, 'nothing added to its history');
+    assert.equal(sent.length, 0, 'no email');
+});
+
 test('nothing happens after the student replied', async () => {
     // A reply sets the status back to pending and clears the deadline
     const id = await waitingApplication({ status: 'pending' });

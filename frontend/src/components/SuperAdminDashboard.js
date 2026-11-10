@@ -7,6 +7,8 @@ import ReviewerOverview from './ReviewerOverview';
 import { startActing } from '../acting';
 import { formatDateTime } from '../dates';
 import StaffAccess from './StaffAccess';
+import AllowedDomains from './AllowedDomains';
+import StudentProgrammes from './StudentProgrammes';
 import DecisionModal from './reviewer/DecisionModal';
 import Chip from './reviewer/Chip';
 
@@ -141,6 +143,9 @@ const SuperAdminDashboard = ({ onActingStarted }) => {
             {/* Pending applications and reviewers per programme (reviewer Group 7) */}
             <ReviewerOverview />
 
+            {/* Allowed email domains for student registration, warns when empty (admin round Group 3) */}
+            <AllowedDomains />
+
             {/* Act as a student or reviewer (admin round Group 1) */}
             <div style={{ backgroundColor: 'var(--surface-2)', padding: '20px', borderRadius: '10px', textAlign: 'center', marginBottom: '30px', border: '3px dashed var(--link)' }}>
                 <h2 style={{ marginTop: 0, color: 'var(--link)' }}>{t('superadmin_act_as_title')}</h2>
@@ -193,6 +198,9 @@ const SuperAdminDashboard = ({ onActingStarted }) => {
 
             {/* Reviewers and admins: invites, removal, deactivation (admin round Group 2) */}
             <StaffAccess />
+
+            {/* Students: search, fix a student's programme (admin round Group 3) */}
+            <StudentProgrammes />
 
             {/* Application Overrides Engine */}
             <div style={{ backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--heading)' }}>

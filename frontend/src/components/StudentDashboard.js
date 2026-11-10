@@ -868,7 +868,9 @@ const StudentDashboard = ({ userId }) => {
                                 ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
                                 : app.status === 'rejected'
                                     ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.decision_rationale || app.reviewer_note || '' })
-                                    : app.status === 'approved' ? app.decision_rationale || '' : '';
+                                    : app.status === 'approved' ? app.decision_rationale || ''
+                                        // Withdrawn by the admin (e.g. the programme changed, admin round Group 3)
+                                        : app.status === 'withdrawn' && app.decision_reason ? t(`student_reason_${app.decision_reason}`, { defaultValue: '' }) : '';
                             return (
                             <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
                                 <td data-label={t('student_column_course')} style={{ padding: '12px', verticalAlign: 'top', color: 'var(--link)', fontWeight: 'bold', overflowWrap: 'anywhere' }}>{course}</td>
@@ -891,7 +893,7 @@ const StudentDashboard = ({ userId }) => {
                                     )}
                                     {note && (
                                         <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                            <strong>{t('student_reviewer_note')}</strong> {note}
+                                            <strong>{t(app.status === 'withdrawn' ? 'reviewer_decision_reason_label' : 'student_reviewer_note')}</strong> {note}
                                         </p>
                                     )}
                                     {app.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={app.info_deadline} />}

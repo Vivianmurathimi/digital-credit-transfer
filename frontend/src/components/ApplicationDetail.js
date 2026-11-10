@@ -131,6 +131,10 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
                     {application.status === 'approved' && application.final_grade && (
                         <p style={{ margin: '8px 0 4px 0' }}><strong>{t('student_final_grade')}</strong> {gradeText(application.final_grade, t, language)}</p>
                     )}
+                    {/* Withdrawn with a reason (the admin changed the programme, admin round Group 3) */}
+                    {application.status === 'withdrawn' && application.decision_reason && (
+                        <p style={{ margin: '4px 0' }}><strong>{t('reviewer_decision_reason_label')}</strong> {t(`student_reason_${application.decision_reason}`, { defaultValue: '' })}</p>
+                    )}
                     {['approved', 'rejected'].includes(application.status) && (application.decision_reason || application.decision_rationale) && (
                         <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                             <strong>{t('student_reviewer_note')}</strong>{' '}

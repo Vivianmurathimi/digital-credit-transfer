@@ -17,11 +17,11 @@ All demo passwords: `Demo1234!`
 
 | Role | Login | Notes |
 |---|---|---|
-| Superadmin | demo.admin@adminisztracio.pte.hu | |
-| Reviewer, Computer Science | demo.reviewer.cs@mik.pte.hu | Dr. Katalin Szabó |
-| Reviewer, Civil Engineering | demo.reviewer.civil@mik.pte.hu | Dr. Péter Horváth (Hungarian emails) |
-| Students CS | demo.anna@, demo.bence@, demo.csilla@, demo.daniel@ (all @tr.pte.hu) | |
-| Students Civil | demo.eszter@, demo.ferenc@, demo.gabor@ (all @tr.pte.hu) | |
+| Superadmin | demo.admin@staff.example | |
+| Reviewer, Computer Science | demo.reviewer.cs@staff.example | Dr. Katalin Szabó |
+| Reviewer, Civil Engineering | demo.reviewer.civil@staff.example | Dr. Péter Horváth (Hungarian emails) |
+| Students CS | demo.anna@, demo.bence@, demo.csilla@, demo.daniel@ (all @students.example) | |
+| Students Civil | demo.eszter@, demo.ferenc@, demo.gabor@ (all @students.example) | |
 
 Emails go to the Mailtrap inbox from `backend/.env`. Start again from a clean state at any time with `npm run demo:seed`; stop `demo:start` first, then start it again.
 
@@ -44,12 +44,12 @@ Emails go to the Mailtrap inbox from `backend/.env`. Start again from a clean st
 
 As the admin, use **Staff access** on the admin dashboard (admin round Group 2):
 
-- [ ] **Invite without replace is refused:** email `new.reviewer@mik.pte.hu`, role Reviewer, programme Computer Science Engineering, language English, "Replace the current reviewer" not ticked. Expected: "This programme already has a reviewer".
+- [ ] **Invite without replace is refused:** email `new.reviewer@staff.example`, role Reviewer, programme Computer Science Engineering, language English, "Replace the current reviewer" not ticked. Expected: "This programme already has a reviewer".
 - [ ] **Invite with replace:** the same, with "Replace the current reviewer" ticked. The screen shows the link, the invite is listed as **Sent**, and the invite email arrives in Mailtrap.
 - [ ] **Before accepting,** Dr. Szabó can still log in and work.
 - [ ] **The accept page:** open the link. The page shows the programme. Check it in EN, HU and DE, and that a 7-character password is refused.
 - [ ] **Accept:** enter a name and a password.
-  - Logging in as new.reviewer@mik.pte.hu shows the CS applications, including Csilla's needs-info application.
+  - Logging in as new.reviewer@staff.example shows the CS applications, including Csilla's needs-info application.
   - Dr. Szabó is logged out on her next click and can't log in again.
 - [ ] **The link works only once:** opening it again shows that it is no longer valid.
 - [ ] **Remove the new reviewer.** Find their id:
@@ -61,7 +61,7 @@ As the admin, use **Staff access** on the admin dashboard (admin round Group 2):
   curl -s -X PUT localhost:5050/api/users/<id>/remove-reviewer -H "Authorization: Bearer $TOKEN"
   ```
   They are refused on their next click and can't log in. The admin banner shows a red "No active reviewer" warning for Computer Science.
-- [ ] **Re-invite Dr. Szabó:** use her address `demo.reviewer.cs@mik.pte.hu`, programme CS. On the accept page her name is shown read-only. After accepting with a new password, she sees her applications again.
+- [ ] **Re-invite Dr. Szabó:** use her address `demo.reviewer.cs@staff.example`, programme CS. On the accept page her name is shown read-only. After accepting with a new password, she sees her applications again.
 
 ## 3. The admin acting as a reviewer
 
@@ -175,7 +175,7 @@ The demo's previous semester has Bence's approved CS101 (CS) and Eszter's CE101,
 - [ ] **The admin acting as** Dr. Szabó sees the same selector and the same read-only view.
 - [ ] **Changes are refused even without the UI** (from `backend`, with `npm run demo:start` running):
   ```
-  TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d '{"email":"demo.reviewer.cs@mik.pte.hu","password":"Demo1234!"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
+  TOKEN=$(curl -s localhost:5050/api/login -H 'Content-Type: application/json' -d '{"email":"demo.reviewer.cs@staff.example","password":"Demo1234!"}' | node -pe "JSON.parse(require('fs').readFileSync(0)).token")
   curl -s -X PUT localhost:5050/api/applications/12/status -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"status":"rejected","note":"x"}'
   ```
   The answer is `SEMESTER_ENDED` (409). Use the id `demo:seed` printed for "approved, grade 5, previous semester".

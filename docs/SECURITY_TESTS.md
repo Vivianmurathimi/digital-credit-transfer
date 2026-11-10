@@ -180,7 +180,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A applies for a course rejected in an earlier semester | passes the duplicate check (stopped at the file check, `403 FILES_NOT_OWNED`: nothing saved) |
 | | | A's earlier-semester application in A's list | listed with its semester, not as current |
 | | | B opens or withdraws A's earlier-semester application | `404 APPLICATION_NOT_FOUND` |
-| 4f | **Reviewer access (reviewer Group 2)** | Register with an `@mik.pte.hu` address | `403 STAFF_BY_INVITATION` |
+| 4f | **Reviewer access (reviewer Group 2)** | Register with an address from an unlisted domain | `400 EMAIL_DOMAIN_NOT_ALLOWED` |
 | | | Reviewer's list; another programme's student's applications | only the reviewer's own programme |
 | | | Reviewer opens or changes another programme's application | `404 APPLICATION_NOT_FOUND`; nothing changed |
 | | | Reviewer opens a file that only another programme's application names, as transcript, syllabus, grading document, old reply file (`supplemental_files`) and reply file (history) | `404 FILE_NOT_FOUND` each; `200` once the same application is in the reviewer's programme |
@@ -236,6 +236,11 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Re-invite a deactivated admin (as reviewer / as admin) | `409 EMAIL_TAKEN_OTHER_ROLE` / same account reactivated, new password only |
 | | | Two admins deactivating each other at the same moment | exactly one succeeds, one admin stays active (`409 LAST_ADMIN`) |
 | | | First-admin script: no address / with an active admin / with none | usage / refused / admin invite created, link opens |
+| 4m | **Students and domains (admin round Group 3)** | Domain and student routes without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | Domains: no dot, spaces, wildcard, double dot, leading hyphen, an email, over 253 characters, not text; a duplicate; unknown id | `400 INVALID_DOMAIN` / `409 DOMAIN_EXISTS` / `404` |
+| | | Register from a listed domain (with `role: superadmin` in the request); remove the domain; register again; log in with the existing account; add it back | a student / `400 EMAIL_DOMAIN_NOT_ALLOWED`, nothing created / login `200` / `201` |
+| | | Search: 1 character; by Neptun code; `%_` taken literally; a reviewer's email | `400 INVALID_SEARCH` / found / literal / no result |
+| | | Change programme: same, unknown, none, a reviewer, bad id; then a real change | `400` / `404 STUDENT_NOT_FOUND`; pending and needs-info withdrawn as admin with `PROGRAMME_CHANGED`, approved kept, draft deleted, change recorded (not editable), profile and My Status updated |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |
@@ -440,7 +445,7 @@ It can't judge whether a translation is good: every new or changed HU and DE tex
 
 How it works:
 - **Every request counts for its address**, whether or not an account exists. Known and unknown addresses go through the same steps before the reply, so neither the answer nor its timing reveals an account.
-- **Addresses are lower-cased and trimmed** before counting, so `A@x.hu ` and `a@x.hu` share one count.
+- **Addresses are lower-cased and trimmed** before counting, so `A@x.example ` and `a@x.example` share one count.
 - **Counts are stored in PostgreSQL** (table `rate_limit_hits`, created at startup), so they survive a server restart and are shared by all backend processes. Rows older than one hour are deleted.
 - **No plain addresses or IPs are stored**, only an HMAC of them. The HMAC key is derived from `JWT_SECRET`, so **changing `JWT_SECRET` resets all counts**.
 - **Check and insert run in one transaction** under a lock on that address/IP, so simultaneous requests cannot exceed a limit.
@@ -476,20 +481,20 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 
 | # | Test | Steps | Expected |
 |---|---|---|---|
-| B15 | Student fields follow the email | Register: type `anna@tr.pte.hu`, then `anna@mik.pte.hu`, then back | Neptun code and programme appear, disappear, and come back **empty** |
+| B15 | Student fields always shown | Register: type any email address | Neptun code and programme are always asked (registration only creates students, admin round Group 3) |
 | B16 | Neptun code input | Type `abc 123`; paste ` cvtst1 ` | Shows `ABC123` / `CVTST1`; no error while typing |
 | B17 | Neptun check on leaving the field | Type `abc12`, click elsewhere | "Enter a valid Neptun code…" under the field |
 | B18 | Programme names follow the language | Switch EN / HU / DE on the register page | Computer Science Engineering / Mérnökinformatikus / Ingenieurinformatik |
-| B19 | Inline registration errors | Register with Neptun `CSTST1`; then with email `student.cs@tr.pte.hu`; then without a programme | Error under the Neptun field / under the email / under the programme (no request sent for the last) |
-| B20 | Profile header | Log in as `student.cs@tr.pte.hu` | Name, email, Neptun code `CSTST1`, programme next to Logout, in the current language |
-| B21 | No stale profile | Log out, log in as `student.civil@tr.pte.hu` in the same tab | Only the Civil student's details, never the previous student's, not even briefly |
+| B19 | Inline registration errors | Register with Neptun `CSTST1`; then with email `student.cs@students.example`; then without a programme | Error under the Neptun field / under the email / under the programme (no request sent for the last) |
+| B20 | Profile header | Log in as `student.cs@students.example` | Name, email, Neptun code `CSTST1`, programme next to Logout, in the current language |
+| B21 | No stale profile | Log out, log in as `student.civil@students.example` in the same tab | Only the Civil student's details, never the previous student's, not even briefly |
 | B22 | No profile for staff | Log in as a reviewer and as admin | No profile card (while acting as a student: that student's card) |
 | B23 | Course picker by programme | As `student.cs` and as `student.civil`, open the submit tab | 12 CS courses / 5 Civil courses, never the other programme's |
 | B24 | No courses yet | Delete the Civil courses (`DELETE FROM courses WHERE programme_id = …`), open the submit tab as `student.civil`; then `npm run seed:dev` | "No courses are available for your programme yet." and Submit disabled |
 | B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id` or `pte_course_names`; application appears with both courses |
 | B26 | Course removed while the page is open | Choose CS305 and CS101, delete CS305 in the database, press Submit; then `npm run seed:dev` | "…not part of your programme… Removed from your choice: CS305."; CS101 stays chosen |
 
-**Group 4: application form** (as `student.cs@tr.pte.hu`, submit tab; check the errors in EN, HU and DE)
+**Group 4: application form** (as `student.cs@students.example`, submit tab; check the errors in EN, HU and DE)
 
 | # | Test | Steps | Expected |
 |---|---|---|---|
@@ -506,9 +511,9 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B37 | Errors clear | Fix a marked field; change a credit system; upload evidence | Its error disappears and the count under Submit goes down |
 | B38 | Duplicate and unused | Two "TU Wien (Austria)" both used; an institution no course uses | "This institution is already in the list." / "No course is linked to this institution…" under the name |
 | B39 | Screen reader | VoiceOver on (Cmd+F5), press Submit on the empty form | "Please correct the … marked fields." is announced |
-| B40 | Reviewer screen and term book | Submit a complete application; open it as `reviewer.cs@mik.pte.hu`; as admin generate a term book for today and open the PDF | The reviewer screen shows course name, credits, grade and evidence as before; the term book shows the application and long course names wrap inside the page |
+| B40 | Reviewer screen and term book | Submit a complete application; open it as `reviewer.cs@staff.example`; as admin generate a term book for today and open the PDF | The reviewer screen shows course name, credits, grade and evidence as before; the term book shows the application and long course names wrap inside the page |
 
-**Group 5: evidence and file rules** (as `student.cs@tr.pte.hu`; test PDFs of 6, 12 and 31 pages help)
+**Group 5: evidence and file rules** (as `student.cs@students.example`; test PDFs of 6, 12 and 31 pages help)
 
 | # | Test | Steps | Expected |
 |---|---|---|---|
@@ -526,7 +531,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B52 | Add missing info | In the resubmit window, save a PDF letter without highlights; then a highlighted one | Without highlights the whole original is uploaded unchanged; with highlights the highlighted version |
 | B53 | Reviewer | Open a Group 5 application as `reviewer.cs` | 📄 icon for PDF transcripts (no broken image); the syllabus under each course with Open and Download |
 
-**Groups 6 and 7: target courses, duplicates and submitting** (run `npm run migrate` in `backend/` and restart the backend first; as `student.cs@tr.pte.hu`, check texts in EN, HU and DE)
+**Groups 6 and 7: target courses, duplicates and submitting** (run `npm run migrate` in `backend/` and restart the backend first; as `student.cs@students.example`, check texts in EN, HU and DE)
 
 | # | Test | Steps | Expected |
 |---|---|---|---|

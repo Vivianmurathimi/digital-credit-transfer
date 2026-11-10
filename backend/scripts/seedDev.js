@@ -81,15 +81,19 @@ const COURSES = {
     ],
 };
 
-// role, name, email, programme code, Neptun code, sample application (students only)
+// role, name, email, programme code, Neptun code, sample application (students only).
+// The addresses use reserved example domains that can never be real (admin round Group 3):
+// students.example is added to the allowed-domains list so test students can register; staff are
+// invited, so staff.example is not needed there.
+const STUDENT_DOMAIN = 'students.example';
 const ACCOUNTS = [
-    { role: 'student', name: 'Test Student CS', email: 'student.cs@tr.pte.hu', programme: 'CS', neptun: 'CSTST1',
+    { role: 'student', name: 'Test Student CS', email: 'student.cs@students.example', programme: 'CS', neptun: 'CSTST1',
         application: { target: 'CS202', previous: { course_name: 'Algorithms and Data Structures', course_code: 'INF-210', credits: 6, grade: '4' } } },
-    { role: 'student', name: 'Test Student Civil', email: 'student.civil@tr.pte.hu', programme: 'CIVIL', neptun: 'CVTST1',
+    { role: 'student', name: 'Test Student Civil', email: 'student.civil@students.example', programme: 'CIVIL', neptun: 'CVTST1',
         application: { target: 'CE101', previous: { course_name: 'Statics and Mechanics', course_code: 'ME-110', credits: 5, grade: '5' } } },
-    { role: 'reviewer', name: 'Test Reviewer CS', email: 'reviewer.cs@mik.pte.hu', programme: 'CS' },
-    { role: 'reviewer', name: 'Test Reviewer Civil', email: 'reviewer.civil@mik.pte.hu', programme: 'CIVIL' },
-    { role: 'superadmin', name: 'Test Admin', email: 'admin@adminisztracio.pte.hu' },
+    { role: 'reviewer', name: 'Test Reviewer CS', email: 'reviewer.cs@staff.example', programme: 'CS' },
+    { role: 'reviewer', name: 'Test Reviewer Civil', email: 'reviewer.civil@staff.example', programme: 'CIVIL' },
+    { role: 'superadmin', name: 'Test Admin', email: 'admin@staff.example' },
 ];
 
 // A one-page PDF standing in for a transcript
@@ -144,17 +148,26 @@ const seed = async () => {
         }
     }
 
+    // Test students may register from the example domain (never in production: see the guard above)
+    await pool.query('INSERT INTO allowed_domains (domain) VALUES ($1) ON CONFLICT (domain) DO NOTHING', [STUDENT_DOMAIN]);
+
     const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
     const created = [];
+    // The test admin only for a database without an active admin (like the first-admin script):
+    // an existing database keeps exactly the admins it has
+    const hasAdmin = (await pool.query("SELECT 1 FROM users WHERE role = 'superadmin' AND deactivated_at IS NULL LIMIT 1")).rows.length > 0;
     for (const account of ACCOUNTS) {
+        if (account.role === 'superadmin' && hasAdmin) continue;
         const result = await pool.query(
             `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id, preferred_language)
              VALUES ($1, $2, $3, $4, true, $5, $6, 'en')
-             ON CONFLICT (email) DO NOTHING
+             ON CONFLICT DO NOTHING
              RETURNING id`,
             [account.name, account.email, passwordHash, account.role, account.neptun || null, programmeIds[account.programme] || null]
         );
-        if (result.rows.length === 0) continue; // already there
+        // Already there, or it would clash with existing data (the same email or Neptun code, or the
+        // programme already has an active reviewer): existing accounts are kept as they are
+        if (result.rows.length === 0) continue;
         created.push(account.email);
 
         // A pending application with one evidence file, only for a newly created student

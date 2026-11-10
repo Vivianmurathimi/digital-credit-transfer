@@ -28,7 +28,7 @@ const LIMITS = {
 const HASH_KEY = crypto.createHash('sha256').update(`${JWT_SECRET}_rate_limit`).digest();
 const hashKey = (value) => crypto.createHmac('sha256', HASH_KEY).update(String(value)).digest('hex');
 
-// One spelling per address, so "A@x.hu " and "a@x.hu" share a count
+// One spelling per address, so "A@x.example " and "a@x.example" share a count
 const normalizeEmail = (email) => email.trim().toLowerCase();
 
 // The caller's IP. "::ffff:127.0.0.1" and "127.0.0.1" are the same address.

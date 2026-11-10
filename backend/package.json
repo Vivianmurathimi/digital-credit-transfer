@@ -13,7 +13,8 @@
     "make-superadmin": "node admin.js",
     "jobs:run": "node scripts/runJobs.js",
     "demo:seed": "node scripts/demo.js seed",
-    "demo:start": "node scripts/demo.js start"
+    "demo:start": "node scripts/demo.js start",
+    "check:domains": "node scripts/domainsCheck.js"
   },
   "keywords": [],
   "author": "",
