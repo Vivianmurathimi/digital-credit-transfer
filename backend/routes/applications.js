@@ -216,6 +216,8 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
     try {
         const view = await resolveReviewerView(pool, req);
         const programmeId = view.all ? null : view.reviewer.programme_id;
+        // The admin sees the ACTIVE semester only (admin round Group 6); older ones: Past semesters
+        const activeOnly = view.all;
         const result = await pool.query(
             `SELECT a.*, u.name as student_name,
                     CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name,
@@ -224,8 +226,9 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
              FROM applications a JOIN users u ON a.student_id=u.id
              LEFT JOIN users d ON d.id = a.decided_by
              WHERE ($1::int IS NULL OR a.programme_id = $1)
+               AND (NOT $2::boolean OR a.semester_id = (SELECT id FROM semesters WHERE status = 'active'))
              ORDER BY a.created_at DESC`,
-            [programmeId]
+            [programmeId, activeOnly]
         );
         res.json({ success: true, applications: result.rows });
     } catch (err) {
@@ -354,7 +357,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
     try {
         const ownerCheck = Number.isSafeInteger(id) && id > 0
             ? await pool.query(
-                `SELECT a.student_id, a.status, a.supplemental_files, a.info_deadline <= now() AS deadline_passed, b.ends_at <= now() AS semester_ended
+                `SELECT a.student_id, a.status, a.supplemental_files, a.info_deadline <= now() AS deadline_passed, b.status = 'closed' AS semester_ended
                  FROM applications a LEFT JOIN semester_bounds b ON b.id = a.semester_id WHERE a.id = $1`, [id])
             : { rows: [] };
         if (ownerCheck.rows.length === 0) {
@@ -397,7 +400,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
                 `UPDATE applications SET status = 'pending', student_resubmit_note = $1, supplemental_files = $2,
                     info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
                  WHERE id = $3 AND student_id = $4 AND status = 'needs_info' AND (info_deadline IS NULL OR info_deadline > now())
-                   AND NOT EXISTS (SELECT 1 FROM semester_bounds b WHERE b.id = applications.semester_id AND b.ends_at <= now())`,
+                   AND NOT EXISTS (SELECT 1 FROM semester_bounds b WHERE b.id = applications.semester_id AND b.status = 'closed')`,
                 [replyNote, updatedFiles, id, req.user.id]
             );
             if (rowCount === 0) return false;

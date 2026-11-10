@@ -15,6 +15,8 @@ const AdminOverview = ({ summary }) => {
     const { t } = useTranslation();
     if (!summary) return null;
     const warnings = [
+        // The active semester's last day has passed (admin round Group 6)
+        summary.readyToClose && { key: 'admin_warning_ready_to_close', to: '/admin/semesters', name: summary.activeSemester?.name },
         !summary.activeSemester && { key: 'admin_warning_no_semester', to: '/admin/semesters' },
         summary.activeSemester && summary.programmesWithoutCourses > 0 && { key: 'admin_warning_no_courses', to: '/admin/catalogue', count: summary.programmesWithoutCourses },
         summary.programmesWithoutReviewer > 0 && { key: 'admin_warning_no_reviewer', to: '/admin/reviewers', count: summary.programmesWithoutReviewer },
@@ -32,7 +34,7 @@ const AdminOverview = ({ summary }) => {
                     ? <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{t('admin_overview_all_good')}</p>
                     : warnings.map((w) => (
                         <div key={w.key} role="alert" style={warningCard}>
-                            {t(w.key, { count: w.count })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>
+                            {t(w.key, { count: w.count, name: w.name })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>
                         </div>
                     ))}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>

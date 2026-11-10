@@ -257,6 +257,13 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Late access: no addresses, past deadline; a mixed list (good, bad format, unlisted domain, staff address) | `400` / each address answered on its own |
 | | | With late access while closed: register (other case), status, submit; revoke; revoke again | `200`, deadline shown, period check passed / refused at once (`403`) / `alreadyRevoked` |
 | | | The admin summary (menu badges) | matches the database |
+| 4p | **Closing the semester (admin round Group 6)** | Close, preview and Past semesters routes without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | Ready to close; the admin's Applications list | `readyToClose` true; only the active semester |
+| | | Preview, then close with a wrong name / no name / a semester that is not active | the counts; `400 CONFIRM_NAME_MISMATCH` / `400` / `409 SEMESTER_NOT_ACTIVE` |
+| | | Close | exactly the previewed counts rejected as System (`SEMESTER_ENDED`), one email each, PDF book created, late access ended, drafts deleted, closed_at / closed_by set, nothing deleted; again `409 ALREADY_CLOSED` |
+| | | After the close: reviewer, admin, admin acting as reviewer decide; student and admin acting as student withdraw; student replies; edit dates; Close now; Reopen; activate it again | each refused (`409 SEMESTER_ENDED` / `SEMESTER_CLOSED` / `SEMESTER_NOT_ACTIVE`), nothing changed |
+| | | Activate the semester waiting in setup | `200` |
+| | | Past semesters: list, search by name / Neptun + status / course, unknown status, a semester not closed, open one, another semester's application, CSV, PDF download, generate again | found; `400`; `404`; read-only; `404`; CSV with BOM in the chosen language; PDF; a new book |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |

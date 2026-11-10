@@ -1,17 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import api from '../../api';
 import { getErrorMessage } from '../../errorMessage';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import Chip from '../reviewer/Chip';
-import TermArchive from '../TermArchive';
 import { card } from './adminStyles';
 
 // The Applications section of the admin menu (admin round Group 5; built in Groups 1 and 2):
 // every application with who decided it, the overrides as before, and the Decide buttons for
-// pending applications of a programme with no active reviewer (recorded as Admin). The term book
-// (PDF) lives here until Group 6 adds "Past semesters".
+// pending applications of a programme with no active reviewer (recorded as Admin). Only the active
+// semester (Group 6); older ones are in Past semesters, with the term book.
 
 const DECIDE_TYPES = [['approved', 'approve', 'reviewer_approve'], ['needs_info', 'info', 'reviewer_request_info'], ['rejected', 'reject', 'reviewer_reject']];
 const OPEN_STATUSES = ['pending', 'needs_info'];
@@ -60,6 +60,8 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
         <>
             <section aria-labelledby="applications-title" style={{ ...card, border: '2px solid var(--heading)' }}>
                 <h2 id="applications-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t('superadmin_application_overrides_title')}</h2>
+                {/* The active semester only (admin round Group 6) */}
+                <p style={{ marginTop: 0 }}>{t('applications_past_hint')} <Link to="/admin/past-semesters" style={{ color: 'var(--link)', fontWeight: 'bold' }}>{t('admin_menu_past_semesters')}</Link></p>
                 {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
@@ -141,9 +143,6 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                     }}
                 />
             )}
-
-            {/* The term book (PDF), here until Group 6 adds "Past semesters" */}
-            <TermArchive />
         </>
     );
 };

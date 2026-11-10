@@ -27,8 +27,10 @@ const decisionButton = (cue) => ({
     cursor: 'pointer', padding: '8px 14px', borderRadius: '4px', fontWeight: 'bold', font: 'inherit',
 });
 
-// readOnly (reviewer group L3): a past semester's application; the server says so too (read_only)
-const ApplicationDetails = ({ appId, onDecide, readOnly = false }) => {
+// readOnly (reviewer group L3): a past semester's application; the server says so too (read_only).
+// url: where the details come from. The admin's Past semesters (admin round Group 6) shows the same
+// details from its own route, read-only.
+const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -38,11 +40,11 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false }) => {
         let current = true;
         setDetails(null);
         setError('');
-        http.get(`reviewer/applications/${appId}`).json()
+        http.get(url || `reviewer/applications/${appId}`).json()
             .then((data) => { if (current) setDetails(data.application); })
             .catch((err) => { if (current) setError(getErrorMessage(err, t, 'reviewer_details_failed')); });
         return () => { current = false; };
-    }, [appId, t]);
+    }, [appId, url, t]);
 
     if (error) return <div role="alert" style={{ margin: '0 12px 12px', backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', borderLeft: '4px solid var(--red)' }}>{error}</div>;
     if (!details) return <p role="status" style={{ ...muted, padding: '0 12px 12px', margin: 0 }}>{t('reviewer_details_loading')}</p>;

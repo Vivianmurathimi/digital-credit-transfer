@@ -95,6 +95,12 @@ const templates = {
             deadline: (date) => `<p>Kérjük, válaszoljon eddig: <strong>${date}</strong> (budapesti idő szerint). Ha addig nem érkezik válasz, a kérelmet a rendszer automatikusan elutasítja.</p>`,
             after: () => `<p>Kérjük, jelentkezzen be, nyissa meg az <strong>Állapotom</strong> fület, és kattintson a <strong>Hiányzó információ hozzáadása</strong> gombra.</p>`,
         },
+        draftReminder: {
+            subject: 'Be nem küldött kérelemtervezet – PTE Kreditátvitel',
+            body: () => `<p>Van egy kérelemtervezete, amelyet még nem küldött be.</p>`,
+            deadline: (date) => `<p>A jelentkezés lezárul: <strong>${date}</strong> (budapesti idő szerint). A be nem küldött tervezetek a félév lezárásakor törlődnek.</p>`,
+            after: () => `<p>Kérjük, jelentkezzen be, és küldje be kérelmét a határidő előtt.</p>`,
+        },
         withdrawn: {
             subject: 'Kreditátviteli kérelmét visszavonta',
             body: () => `<p>Kreditátviteli kérelmét visszavonta. A bíráló már nem foglalkozik vele.</p>
@@ -136,6 +142,12 @@ const templates = {
             body: () => `<p>The reviewer is still waiting for the additional information for your credit transfer application.</p>`,
             deadline: (date) => `<p>Please reply by <strong>${date}</strong> (Budapest time). If there is no reply by then, the application is rejected automatically.</p>`,
             after: () => `<p>Please log in, open the <strong>My Status</strong> tab and click <strong>Add Missing Info</strong>.</p>`,
+        },
+        draftReminder: {
+            subject: 'Your draft has not been submitted – PTE Credit Transfer',
+            body: () => `<p>You have an application draft that has not been submitted yet.</p>`,
+            deadline: (date) => `<p>Applications close on <strong>${date}</strong> (Budapest time). Unsent drafts are deleted when the semester is closed.</p>`,
+            after: () => `<p>Please log in and submit your application before then.</p>`,
         },
         withdrawn: {
             subject: 'You withdrew your credit transfer application',
@@ -179,6 +191,12 @@ const templates = {
             deadline: (date) => `<p>Bitte antworten Sie bis <strong>${date}</strong> (Budapester Zeit). Geht bis dahin keine Antwort ein, wird der Antrag automatisch abgelehnt.</p>`,
             after: () => `<p>Bitte melden Sie sich an, öffnen Sie den Reiter <strong>Mein Status</strong> und klicken Sie auf <strong>Fehlende Informationen hinzufügen</strong>.</p>`,
         },
+        draftReminder: {
+            subject: 'Ihr Entwurf wurde noch nicht gesendet – PTE-Kreditübertragung',
+            body: () => `<p>Sie haben einen Antragsentwurf, der noch nicht gesendet wurde.</p>`,
+            deadline: (date) => `<p>Anträge sind bis <strong>${date}</strong> (Budapester Zeit) möglich. Nicht gesendete Entwürfe werden beim Abschluss des Semesters gelöscht.</p>`,
+            after: () => `<p>Bitte melden Sie sich an und senden Sie Ihren Antrag vorher ab.</p>`,
+        },
         withdrawn: {
             subject: 'Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen',
             body: () => `<p>Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen. Der Gutachter bearbeitet ihn nicht mehr.</p>
@@ -208,7 +226,7 @@ const noteBlock = (title, note) => `
 
 /**
  * Builds a notification email.
- * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'|'programmeChanged'} type
+ * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'|'programmeChanged'|'draftReminder'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
  * programmeChanged also takes { fromProgramme, toProgramme, withdrawn: ['CODE – Name'], draftRemoved }
  * @param {{ name: string, status?: string, note?: string, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
@@ -440,11 +458,11 @@ const reviewerTemplates = {
         // Before the semester ends (reviewer Group 7): 7 days before, and on the last day
         semesterEndsSoon: {
             subject: 'Hamarosan véget ér a félév: kérelmek várnak az elbírálására',
-            body: (data) => `<p>A félév utolsó napja: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A félév végéig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+            body: (data) => `<p>A félév utolsó napja: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A félév lezárásakor (az utolsó nap után, az adminisztrátor zárja le) a még el nem bírált kérelmeket a rendszer elutasítja.</p>`,
         },
         semesterEndsToday: {
             subject: 'Ma van a félév utolsó napja: kérelmek várnak az elbírálására',
-            body: (data) => `<p>Ma van a félév utolsó napja (<strong>${data.date}</strong>).</p>${reminderCounts('hu', data)}<p>Az éjfélig el nem bírált kérelmeket a rendszer automatikusan elutasítja.</p>`,
+            body: (data) => `<p>Ma van a félév utolsó napja (<strong>${data.date}</strong>).</p>${reminderCounts('hu', data)}<p>Ma után az adminisztrátor lezárhatja a félévet; ekkor a még el nem bírált kérelmeket a rendszer elutasítja.</p>`,
         },
         counts: { programme: 'Szak', pending: 'Elbírálásra vár', needsInfo: 'A hallgató válaszára vár' },
     },
@@ -461,11 +479,11 @@ const reviewerTemplates = {
             body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
         },        semesterEndsSoon: {
             subject: 'The semester ends soon: applications are waiting for your decision',
-            body: (data) => `<p>The last day of the semester is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Applications not decided by the end of the semester are rejected automatically.</p>`,
+            body: (data) => `<p>The last day of the semester is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Applications still undecided when the administrator closes the semester (after its last day) are rejected.</p>`,
         },
         semesterEndsToday: {
             subject: 'Today is the last day of the semester: applications are waiting for your decision',
-            body: (data) => `<p>Today (<strong>${data.date}</strong>) is the last day of the semester.</p>${reminderCounts('en', data)}<p>Applications not decided by midnight are rejected automatically.</p>`,
+            body: (data) => `<p>Today (<strong>${data.date}</strong>) is the last day of the semester.</p>${reminderCounts('en', data)}<p>After today the administrator can close the semester; applications still undecided then are rejected.</p>`,
         },
         counts: { programme: 'Programme', pending: 'Waiting for your decision', needsInfo: "Waiting for the student's reply" },
     },
@@ -482,11 +500,11 @@ const reviewerTemplates = {
             body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
         },        semesterEndsSoon: {
             subject: 'Das Semester endet bald: Anträge warten auf Ihre Entscheidung',
-            body: (data) => `<p>Der letzte Tag des Semesters ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Anträge, die bis zum Semesterende nicht entschieden sind, werden automatisch abgelehnt.</p>`,
+            body: (data) => `<p>Der letzte Tag des Semesters ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Anträge, die beim Abschluss des Semesters durch den Administrator (nach dem letzten Tag) noch nicht entschieden sind, werden abgelehnt.</p>`,
         },
         semesterEndsToday: {
             subject: 'Heute ist der letzte Tag des Semesters: Anträge warten auf Ihre Entscheidung',
-            body: (data) => `<p>Heute (<strong>${data.date}</strong>) ist der letzte Tag des Semesters.</p>${reminderCounts('de', data)}<p>Anträge, die bis Mitternacht nicht entschieden sind, werden automatisch abgelehnt.</p>`,
+            body: (data) => `<p>Heute (<strong>${data.date}</strong>) ist der letzte Tag des Semesters.</p>${reminderCounts('de', data)}<p>Nach heute kann der Administrator das Semester abschließen; dann noch nicht entschiedene Anträge werden abgelehnt.</p>`,
         },
         counts: { programme: 'Studiengang', pending: 'Warten auf Ihre Entscheidung', needsInfo: 'Warten auf die Antwort der Studierenden' },
     },

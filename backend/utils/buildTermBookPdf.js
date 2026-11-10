@@ -81,7 +81,7 @@ const drawCover = (doc, data) => {
     doc.font('Body').fontSize(13).fillColor(COLORS.muted).text('PTE Credit Transfer System', { align: 'center' });
     doc.moveDown(2.5);
 
-    doc.font('Bold').fontSize(14).fillColor(COLORS.text).text(`Semester: ${data.from} – ${data.to}`, { align: 'center' });
+    doc.font('Bold').fontSize(14).fillColor(COLORS.text).text(`Semester: ${data.label ? `${data.label} (${data.from} – ${data.to})` : `${data.from} – ${data.to}`}`, { align: 'center' });
     doc.moveDown(0.4);
     doc.font('Body').fontSize(11).fillColor(COLORS.muted).text(`Generated: ${formatDateTime(data.generatedAt)}`, { align: 'center' });
     doc.moveDown(3);
@@ -235,7 +235,7 @@ const drawHeadersAndFooters = (doc, data) => {
     for (let i = range.start; i < range.start + range.count; i += 1) {
         doc.switchToPage(i);
         doc.font('Body').fontSize(8).fillColor(COLORS.muted);
-        writeInMargin(doc, `PTE Credit Transfer Archive · Semester ${data.from} – ${data.to}`, HEADER_Y, { align: 'right' });
+        writeInMargin(doc, `PTE Credit Transfer Archive · Semester ${data.label || `${data.from} – ${data.to}`}`, HEADER_Y, { align: 'right' });
         writeInMargin(doc, `Page ${i + 1} of ${range.count}`, doc.page.height - FOOTER_OFFSET, { align: 'center' });
     }
 };
@@ -253,7 +253,7 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
         margin: MARGIN,
         bufferPages: true, // needed to go back and fill in the index, headers and footers
         info: {
-            Title: `Credit Transfer Archive ${data.from} – ${data.to}`,
+            Title: `Credit Transfer Archive ${data.label || `${data.from} – ${data.to}`}`,
             Author: 'PTE Credit Transfer System',
             CreationDate: data.generatedAt,
         },

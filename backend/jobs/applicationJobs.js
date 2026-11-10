@@ -18,8 +18,8 @@ const inTransaction = require('../utils/transaction');
 // reminder (remindReviewer by default), and `only` / `onlyDraftsOf` (tests only) limit the step to
 // these application ids and these students' drafts, so a test never touches real data.
 //
-// Catching up: every condition compares with `now` ("the deadline has passed", "the semester has
-// ended"), so whatever passed while the server was off is handled by the first run after it starts.
+// Catching up: every condition compares with `now` ("the deadline has passed", "the last days have
+// started"), so whatever passed while the server was off is handled by the first run after it starts.
 // All moments are Budapest time, worked out in the database (semester_bounds, info_reply_deadline).
 
 const REMINDER_BEFORE = '24 hours';
@@ -67,31 +67,38 @@ const sendDeadlineReminders = async ({ now, notify = notifyStudent, only = null 
  * the history entry are saved together; then each student gets the status email.
  * Group 3 can reuse this for the semester-end rejection with its own condition and reason.
  */
-const rejectAutomatically = async ({ now, notify = notifyStudent, only = null, condition, reasonCode }) => {
+/**
+ * Rejects as "System" the applications matching `condition`, inside the caller's transaction, and
+ * adds the history entries. $1 is `now`, $2 the `only` list (tests), extra `params` start at $3.
+ * Used by the deadline step below and by the admin's semester close (utils/semesterClose.js), so
+ * there is one way to reject automatically. Returns the rejected rows; emails are the caller's.
+ */
+const rejectInTransaction = async (client, { now, condition, params = [], only = null, reasonCode }) => {
     if (!REJECTION_REASONS.includes(reasonCode)) throw new Error(`Unknown rejection reason ${reasonCode}`);
-
-    const rows = await inTransaction(async (client) => {
-        // reviewed_at is stored as UTC without a time zone; reviewed_by NULL = nobody, the system.
-        // The decision (reviewer Group 1): by the system, now. No text: the reason is the code in the
-        // history entry (the reviewer's earlier message, e.g. the request for information, is cleared).
-        const updated = await client.query(
-            `UPDATE applications
-             SET status = 'rejected', reviewer_note = NULL, reviewed_by = NULL, reviewed_at = $1::timestamptz AT TIME ZONE 'UTC',
-                 info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL,
-                 final_grade = NULL, decided_by = NULL, decided_by_role = 'system', decided_at = $1, decision_rationale = NULL
-             WHERE (${condition}) AND ($2::int[] IS NULL OR id = ANY($2))
-             RETURNING id, student_id`,
-            [now, only]
+    // reviewed_at is stored as UTC without a time zone; reviewed_by NULL = nobody, the system.
+    // The decision (reviewer Group 1): by the system, now. No text: the reason is the code in the
+    // history entry (the reviewer's earlier message, e.g. the request for information, is cleared).
+    const updated = await client.query(
+        `UPDATE applications
+         SET status = 'rejected', reviewer_note = NULL, reviewed_by = NULL, reviewed_at = $1::timestamptz AT TIME ZONE 'UTC',
+             info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL,
+             final_grade = NULL, decided_by = NULL, decided_by_role = 'system', decided_at = $1, decision_rationale = NULL
+         WHERE (${condition}) AND ($2::int[] IS NULL OR id = ANY($2))
+         RETURNING id, student_id`,
+        [now, only, ...params]
+    );
+    if (updated.rows.length > 0) {
+        await client.query(
+            `INSERT INTO application_events (application_id, kind, actor_role, status, note, reason_code, created_at)
+             SELECT unnest($1::int[]), 'auto_rejected', 'system', 'rejected', NULL, $2, $3`,
+            [updated.rows.map((r) => r.id), reasonCode, now]
         );
-        if (updated.rows.length > 0) {
-            await client.query(
-                `INSERT INTO application_events (application_id, kind, actor_role, status, note, reason_code, created_at)
-                 SELECT unnest($1::int[]), 'auto_rejected', 'system', 'rejected', NULL, $2, $3`,
-                [updated.rows.map((r) => r.id), reasonCode, now]
-            );
-        }
-        return updated.rows;
-    });
+    }
+    return updated.rows;
+};
+
+const rejectAutomatically = async ({ now, notify = notifyStudent, only = null, condition, reasonCode }) => {
+    const rows = await inTransaction((client) => rejectInTransaction(client, { now, condition, only, reasonCode }));
     await notifyEach(rows, notify, 'statusUpdate', () => ({ status: 'rejected', reasonCode }));
     return rows.length;
 };
@@ -102,26 +109,30 @@ const rejectOverdueInfoRequests = ({ now, notify, only }) => rejectAutomatically
     condition: "status = 'needs_info' AND info_deadline <= $1",
 });
 
+// The semester end is no longer handled here (admin round Group 6): the admin closes the semester
+// (utils/semesterClose.js), which rejects the unreviewed applications and deletes unsent drafts.
+// Reaching the end date only shows "Ready to close".
+
 /**
- * Semester end (Group 3): applications still under review or waiting for information when their
- * semester ended are rejected as "System" with SEMESTER_ENDED, and drafts last saved before the
- * latest semester end are deleted (the new semester starts with an empty form). Both are
- * conditional on the end having passed, so running again, or after a restart, changes nothing.
- * Applications from before semesters (no semester) are never touched here.
+ * Unsent drafts (admin round Group 6): when the active semester's last-days warning starts, students
+ * with an unsent draft get one email, "your draft hasn't been submitted; applications close on
+ * <date>". Recorded before sending (draft_reminders), so it goes out once per student and semester.
  */
-const closeEndedSemesters = async ({ now, notify, only = null, onlyDraftsOf = null }) => {
-    const rejected = await rejectAutomatically({
-        now, notify, only, reasonCode: 'SEMESTER_ENDED',
-        condition: "status IN ('pending', 'needs_info') AND semester_id IN (SELECT id FROM semester_bounds WHERE ends_at <= $1)",
-    });
-    const drafts = await pool.query(
-        `DELETE FROM application_drafts
-         WHERE updated_at < (SELECT max(ends_at) FROM semester_bounds WHERE ends_at <= $1)
-           AND ($2::int[] IS NULL OR student_id = ANY($2))`,
+const remindUnsentDrafts = async ({ now, notify, onlyDraftsOf = null }) => {
+    const { rows } = await pool.query(
+        `INSERT INTO draft_reminders (semester_id, student_id, sent_at)
+         SELECT sb.id, d.student_id, $1
+         FROM semester_bounds sb
+         JOIN application_drafts d ON true
+         JOIN users u ON u.id = d.student_id AND u.role = 'student'
+         WHERE sb.status = 'active' AND sb.last_days_from <= $1 AND sb.closes_at > $1
+           AND ($2::int[] IS NULL OR d.student_id = ANY($2))
+         ON CONFLICT (semester_id, student_id) DO NOTHING
+         RETURNING semester_id, student_id, (SELECT closes_at FROM semester_bounds WHERE id = semester_id) AS closes_at`,
         [now, onlyDraftsOf]
     );
-    if (drafts.rowCount > 0) console.log(`⏱️  Background job, semester end: ${drafts.rowCount} draft(s) deleted`);
-    return rejected;
+    await notifyEach(rows.map((r) => ({ ...r, id: `draft-${r.student_id}` })), notify, 'draftReminder', (r) => ({ deadline: r.closes_at }));
+    return rows.length;
 };
 
 // The reviewer's semester-end reminder email, in the reviewer's language. Never throws.
@@ -193,7 +204,7 @@ const remindReviewersBeforeSemesterEnd = async ({ now, remind = remindReviewer, 
 // The steps of one run, in order. The semester end comes first, so an application whose semester
 // ended is closed with that reason even if its reply deadline passed at the same time.
 const STEPS = [
-    ['semester end', closeEndedSemesters],
+    ['unsent draft reminders', remindUnsentDrafts],
     ['reviewer reminders', remindReviewersBeforeSemesterEnd],
     ['deadline reminders', sendDeadlineReminders],
     ['overdue information requests', rejectOverdueInfoRequests],
@@ -242,6 +253,6 @@ const withJobsLock = async (work) => {
 };
 
 module.exports = {
-    runApplicationJobs, withJobsLock, JOBS_LOCK_KEY, sendDeadlineReminders, rejectOverdueInfoRequests, closeEndedSemesters,
-    remindReviewersBeforeSemesterEnd, remindReviewer, rejectAutomatically, REJECTION_REASONS,
+    runApplicationJobs, withJobsLock, JOBS_LOCK_KEY, sendDeadlineReminders, rejectOverdueInfoRequests, remindUnsentDrafts,
+    remindReviewersBeforeSemesterEnd, remindReviewer, rejectAutomatically, rejectInTransaction, notifyEach, REJECTION_REASONS,
 };

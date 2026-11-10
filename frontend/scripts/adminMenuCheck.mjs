@@ -22,7 +22,7 @@ const report = (ok, name, detail = '') => {
 // Every admin screen built in Groups 1-5 (component, or component:role when one serves two roles)
 const ADMIN_SCREENS = [
     'ReviewerOverview', 'AdminOverview', 'Semesters', 'PeriodControls', 'LateAccess', 'CatalogueImport', 'Catalogue',
-    'ApplicationsSection', 'TermArchive', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'ActAs:reviewer', 'ActAs:student',
+    'ApplicationsSection', 'PastSemesters', 'TermArchive', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'ActAs:reviewer', 'ActAs:student',
     'StudentProgrammes', 'AllowedDomains',
 ];
 
@@ -36,7 +36,7 @@ for (const [c, id] of listed) report(ADMIN_SCREENS.includes(c), `Section "${id}"
 // Every screen exists (a file, or a component inside one) and the layout or its section wrapper uses it
 const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]));
 const sources = files(join(SRC, 'components')).filter((f) => f.endsWith('.js')).map((f) => readFileSync(f, 'utf8'));
-const layout = ['admin/AdminLayout.js', 'admin/AdminOverview.js', 'admin/SemesterCatalogue.js', 'admin/Semesters.js', 'admin/ApplicationsSection.js']
+const layout = ['admin/AdminLayout.js', 'admin/AdminOverview.js', 'admin/SemesterCatalogue.js', 'admin/Semesters.js', 'admin/ApplicationsSection.js', 'admin/PastSemesters.js']
     .map((f) => readFileSync(join(SRC, 'components', f), 'utf8')).join('\n');
 for (const screen of ADMIN_SCREENS) {
     const [name, role] = screen.split(':');
@@ -56,6 +56,7 @@ report(SECTIONS[0].id === 'overview' && SECTIONS.at(-1).id === 'domains', 'Menu 
 // Badges only when their condition is true
 const calm = { pending: 0, programmesWithoutReviewer: 0, domains: 2, activeSemester: { id: 1 }, programmesWithoutCourses: 0 };
 report(SECTIONS.every((s) => badgeFor(s.id, calm) === null), 'Nothing to do: no badge anywhere');
+report(badgeFor('semesters', { ...calm, readyToClose: true }) === '!', 'Semester: ready to close (Group 6)');
 report(badgeFor('applications', { ...calm, pending: 4 }) === '4', 'Applications: the pending count');
 report(badgeFor('reviewers', { ...calm, programmesWithoutReviewer: 1 }) === '1', 'Reviewers: programmes without one');
 report(badgeFor('domains', { ...calm, domains: 0 }) === '!', 'Allowed domains: an empty list');

@@ -7,6 +7,7 @@ import AdminOverview from './AdminOverview';
 import { SemesterSection, CatalogueSection } from './SemesterCatalogue';
 import LateAccess from './LateAccess';
 import ApplicationsSection from './ApplicationsSection';
+import PastSemesters from './PastSemesters';
 import ActAs from './ActAs';
 import StaffAccess from '../StaffAccess';
 import StudentProgrammes from '../StudentProgrammes';
@@ -56,6 +57,7 @@ const AdminLayout = ({ onActingStarted }) => {
         'late-access': <LateAccess onChange={refresh} />,
         catalogue: <CatalogueSection onChange={refresh} />,
         applications: <ApplicationsSection onChange={refresh} />,
+        'past-semesters': <PastSemesters />,
         reviewers: <><StaffAccess role="reviewer" onChange={refresh} /><ActAs role="reviewer" onActingStarted={startActing} /></>,
         students: <><StudentProgrammes /><ActAs role="student" onActingStarted={startActing} /></>,
         admins: <StaffAccess role="superadmin" onChange={refresh} />,

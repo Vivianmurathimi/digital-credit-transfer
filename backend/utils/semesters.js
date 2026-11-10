@@ -70,12 +70,13 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends, status = 
 };
 
 /**
- * SQL: the application's semester has ended (reviewer group L3). Past semesters are read-only:
- * no status change of any kind, for anyone. `table` is the applications table's name or alias.
- * Applications without a semester never count as ended.
+ * SQL: the application's semester is closed (reviewer group L3; admin round Group 6). A closed
+ * semester is read-only: no status change of any kind, for anyone (also the admin and acting-as).
+ * Between its last day and the admin's close it can still be worked on (decisions, needs-info
+ * replies, withdrawals); nobody can submit then. `table` is the applications table's name or alias.
  */
 const semesterEndedSql = (table = 'applications') =>
-    `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND (ended.ends_at <= now() OR ended.status = 'closed'))`;
+    `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND ended.status = 'closed')`;
 
 // SQL for "the current semester" (admin round Group 4): the active one, set by the admin
 const CURRENT_SEMESTER_SQL = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";

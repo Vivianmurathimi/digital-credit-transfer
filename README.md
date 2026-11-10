@@ -91,6 +91,7 @@ From `frontend`: `npm run check:translations`, `npm run check:contrast`, `npm ru
 ## The admin menu
 
 Admins land on `/admin` (Overview). Each area has its own address: `/admin/semesters`,
-`/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/reviewers`,
+`/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/reviewers`,
 `/admin/students`, `/admin/admins`, `/admin/domains`. Whether students can register or submit is
-decided only by the active semester's dates, Close now / Reopen until, and late access.
+decided only by the active semester's dates, Close now / Reopen until, and late access. A semester is
+closed only by the admin (Semester, after its last day); it is then read-only and listed under Past semesters.

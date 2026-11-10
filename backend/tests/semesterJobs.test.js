@@ -18,7 +18,9 @@ const pool = require('../db');
 const { periodFor } = require('../utils/applicationPeriod');
 
 const jobsModule = '../jobs/applicationJobs';
-let { closeEndedSemesters, runApplicationJobs } = require(jobsModule);
+let { runApplicationJobs } = require(jobsModule);
+const { remindUnsentDrafts } = require('../jobs/applicationJobs');
+const { closePreview, closeSemester } = require('../utils/semesterClose');
 
 // The last Sunday of October 2099: winter time starts, Budapest goes from UTC+2 to UTC+1
 const lastSundayOfOctober = (year) => {
@@ -33,7 +35,9 @@ const SECOND = 1000;
 const HOUR = 60 * 60 * SECOND;
 
 let semesterId;
+let raceSemesterId; // a second test semester for two closes at once
 let students;
+let admin;
 let draftBackup;
 const created = [];
 
@@ -42,13 +46,13 @@ const recorder = () => {
     return { sent, notify: async (studentId, type, data) => { sent.push({ studentId, type, data }); } };
 };
 
-const application = async (status, student = students[0]) => {
+const application = async (status, student = students[0], semester = semesterId) => {
     const code = `SEMTEST${Date.now().toString(36)}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
         `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN $7::timestamptz END,
                  CASE WHEN $5::varchar = 'approved' THEN 4 END) RETURNING id`,
-        [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Semester test', credits: 1 }]), code, status, semesterId,
+        [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Semester test', credits: 1 }]), code, status, semester,
             new Date(ENDS_AT.getTime() + 48 * HOUR)]
     );
     created.push(rows[0].id);
@@ -76,11 +80,20 @@ before(async () => {
                  ('2099-09-30'::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', $2) RETURNING id`,
         [`Semester test ${Date.now()}`, ENDS_ON]
     )).rows[0].id;
+    raceSemesterId = (await pool.query(
+        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
+         VALUES ($1, 'setup', '2098-09-01'::timestamp AT TIME ZONE 'Europe/Budapest', ('2098-09-30'::timestamp + time '23:59') AT TIME ZONE 'Europe/Budapest', '2098-10-31')
+         RETURNING id`,
+        [`Semester race test ${Date.now()}`]
+    )).rows[0].id;
+    admin = (await pool.query("SELECT id FROM users WHERE role = 'superadmin' ORDER BY id LIMIT 1")).rows[0];
+    assert.ok(admin, 'needs a superadmin (npm run seed:dev)');
 });
 
 after(async () => {
     if (created.length) await pool.query('DELETE FROM applications WHERE id = ANY($1)', [created]);
-    if (semesterId) await pool.query('DELETE FROM semesters WHERE id = $1', [semesterId]);
+    await pool.query('DELETE FROM late_access WHERE semester_id = ANY($1)', [[semesterId, raceSemesterId]]);
+    await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [[semesterId, raceSemesterId]]);
     // The two students' drafts exactly as they were
     await pool.query('DELETE FROM application_drafts WHERE student_id = ANY($1)', [draftStudents()]);
     for (const d of draftBackup) {
@@ -117,21 +130,48 @@ test('the semester ends at midnight Budapest time on the day winter time starts'
     assert.equal(s.canSubmit, false);
 });
 
-test('at the semester end: unreviewed applications rejected as System, decided ones untouched, old drafts deleted', async () => {
+test('the end date alone rejects nothing: the job has no semester-end step any more (admin round Group 6)', async () => {
+    const id = await application('pending');
+    const { sent, notify } = recorder();
+    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, remind: async () => {}, only: [id], onlyDraftsOf: draftStudents() });
+    assert.ok(!('semester end' in results), 'no semester-end step');
+    assert.equal((await statusOf(id)).status, 'pending', 'still pending after the last day, until the admin closes');
+    assert.equal(sent.length, 0);
+});
+
+test('closing: refused before the end and with a wrong name; the preview counts are exactly what is rejected', async () => {
     const pending = await application('pending');
     const waiting = await application('needs_info');
     const approved = await application('approved');
-    const only = [pending, waiting, approved];
     const { sent, notify } = recorder();
-    await saveDraft(students[0], new Date(ENDS_AT.getTime() - 24 * HOUR)); // saved during the semester
-    await saveDraft(students[1], new Date(ENDS_AT.getTime() + HOUR)); // saved after it ended
+    await saveDraft(students[0], new Date(ENDS_AT.getTime() - 24 * HOUR));
+    await saveDraft(students[1], new Date(ENDS_AT.getTime() - 2 * HOUR));
+    const name = (await pool.query('SELECT name FROM semesters WHERE id = $1', [semesterId])).rows[0].name;
+    const base = { semesterId, adminId: admin.id, notify, onlyDraftsOf: draftStudents(), book: false, requireActive: false };
 
-    assert.equal(await closeEndedSemesters({ now: new Date(ENDS_AT.getTime() - SECOND), notify, only, onlyDraftsOf: draftStudents() }), 0, 'one second before: nothing');
-    assert.equal((await statusOf(pending)).status, 'pending');
-    assert.ok(await hasDraft(students[0]), 'draft still there before the end');
+    const early = await closeSemester({ ...base, confirmName: name, now: new Date(ENDS_AT.getTime() - SECOND) });
+    assert.equal(early.error?.[1], 'SEMESTER_NOT_ENDED', 'not before the end date');
+    const wrong = await closeSemester({ ...base, confirmName: `${name} x`, now: ENDS_AT });
+    assert.equal(wrong.error?.[1], 'CONFIRM_NAME_MISMATCH');
+    assert.equal((await statusOf(pending)).status, 'pending', 'nothing changed by the refused closes');
 
-    const count = await closeEndedSemesters({ now: new Date(ENDS_AT.getTime() + 2 * HOUR), notify, only, onlyDraftsOf: draftStudents() });
-    assert.equal(count, 2);
+    const late = (await pool.query(
+        "INSERT INTO late_access (email, semester_id, deadline) VALUES ('close.test@semester-test.invalid', $1, $2) RETURNING id",
+        [semesterId, new Date(ENDS_AT.getTime() + 48 * HOUR)]
+    )).rows[0].id;
+    const now = new Date(ENDS_AT.getTime() + 2 * HOUR);
+    const preview = await closePreview(pool, semesterId, { now, onlyDraftsOf: draftStudents() });
+    const ownPending = (await pool.query("SELECT count(*)::int AS n FROM applications WHERE semester_id = $1 AND status = 'pending'", [semesterId])).rows[0].n;
+    const ownWaiting = (await pool.query("SELECT count(*)::int AS n FROM applications WHERE semester_id = $1 AND status = 'needs_info'", [semesterId])).rows[0].n;
+    assert.deepEqual([preview.pending, preview.needsInfo, preview.drafts, preview.lateAccess, preview.ended], [ownPending, ownWaiting, 2, 1, true]);
+
+    const closed = await closeSemester({ ...base, confirmName: ` ${name} `, now });
+    assert.equal(closed.error, undefined);
+    assert.equal(closed.summary.pending, preview.pending, 'pending: preview = rejected');
+    assert.equal(closed.summary.needsInfo, preview.needsInfo, 'needs info: preview = rejected');
+    assert.equal(closed.summary.rejected, preview.pending + preview.needsInfo);
+    assert.equal(closed.summary.drafts, 2);
+    assert.equal(closed.summary.lateAccess, 1);
     for (const id of [pending, waiting]) {
         const row = await statusOf(id);
         assert.equal(row.status, 'rejected');
@@ -141,38 +181,55 @@ test('at the semester end: unreviewed applications rejected as System, decided o
         assert.deepEqual(await historyOf(id), [{ kind: 'auto_rejected', actor_role: 'system', reason_code: 'SEMESTER_ENDED' }]);
     }
     assert.equal((await statusOf(approved)).status, 'approved', 'a decided application is kept as it is');
-    assert.equal(sent.length, 2);
+    assert.equal(sent.length, closed.summary.rejected, 'one email per rejected application, after the commit');
     assert.ok(sent.every((e) => e.type === 'statusUpdate' && e.data.reasonCode === 'SEMESTER_ENDED' && e.data.status === 'rejected'));
-    assert.equal(await hasDraft(students[0]), false, 'the draft saved during the semester is deleted');
-    assert.equal(await hasDraft(students[1]), true, 'a draft saved after the end is kept');
+    assert.equal(await hasDraft(students[0]), false, 'unsent drafts are deleted');
+    assert.ok((await pool.query('SELECT revoked_at FROM late_access WHERE id = $1', [late])).rows[0].revoked_at, 'late access ended');
+    const semester = (await pool.query('SELECT status, closed_at, closed_by FROM semesters WHERE id = $1', [semesterId])).rows[0];
+    assert.deepEqual([semester.status, semester.closed_at.toISOString(), semester.closed_by], ['closed', now.toISOString(), admin.id]);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM applications WHERE id = ANY($1)', [[pending, waiting, approved]])).rows[0].n, 3, 'nothing deleted');
+
+    const again = await closeSemester({ ...base, confirmName: name, now });
+    assert.equal(again.error?.[1], 'ALREADY_CLOSED', 'a second close changes nothing');
+    assert.equal(sent.length, closed.summary.rejected, 'no more emails');
 });
 
-test('running again, and again after a restart, changes nothing', async () => {
-    const id = await application('pending');
-    const only = [id];
+test('the closed semester is read-only: the job never touches it again', async () => {
     const { sent, notify } = recorder();
-    const later = new Date(ENDS_AT.getTime() + 3 * HOUR);
-    assert.equal(await closeEndedSemesters({ now: later, notify, only, onlyDraftsOf: draftStudents() }), 1);
-    assert.equal(await closeEndedSemesters({ now: later, notify, only, onlyDraftsOf: draftStudents() }), 0, 'second run');
-
-    // A restart: the job module is loaded fresh; everything it needs is in the database
-    delete require.cache[require.resolve(jobsModule)];
-    ({ closeEndedSemesters, runApplicationJobs } = require(jobsModule));
-    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 24 * HOUR), notify, remind: async () => {}, only, onlyDraftsOf: draftStudents() });
-    assert.deepEqual(results, { 'semester end': 0, 'reviewer reminders': 0, 'deadline reminders': 0, 'overdue information requests': 0 });
-    assert.equal((await historyOf(id)).length, 1, 'one history entry');
-    assert.equal(sent.length, 1, 'one email');
+    const results = await runApplicationJobs({ now: new Date(ENDS_AT.getTime() + 72 * HOUR), notify, remind: async () => {}, only: created, onlyDraftsOf: draftStudents() });
+    assert.ok(Object.values(results).every((n) => n === 0), JSON.stringify(results));
+    assert.equal(sent.length, 0);
 });
 
-test('two runs at the same moment close each application once', async () => {
-    const ids = [await application('pending'), await application('needs_info'), await application('pending', students[1])];
+test('two closes at the same moment: one closes, the other is refused, each application rejected once', async () => {
+    const ids = [await application('pending', students[0], raceSemesterId), await application('needs_info', students[1], raceSemesterId)];
+    const name = (await pool.query('SELECT name FROM semesters WHERE id = $1', [raceSemesterId])).rows[0].name;
     const first = recorder();
     const second = recorder();
-    const now = new Date(ENDS_AT.getTime() + 4 * HOUR);
-    await Promise.all([
-        closeEndedSemesters({ now, notify: first.notify, only: ids, onlyDraftsOf: [] }),
-        closeEndedSemesters({ now, notify: second.notify, only: ids, onlyDraftsOf: [] }),
-    ]);
+    const now = new Date('2098-11-02T10:00:00Z');
+    const base = { semesterId: raceSemesterId, adminId: admin.id, confirmName: name, now, onlyDraftsOf: [], book: false, requireActive: false };
+    const results = await Promise.all([closeSemester({ ...base, notify: first.notify }), closeSemester({ ...base, notify: second.notify })]);
+    assert.equal(results.filter((r) => !r.error).length, 1, 'one close');
+    assert.equal(results.find((r) => r.error)?.error[1], 'ALREADY_CLOSED');
     for (const id of ids) assert.equal((await historyOf(id)).length, 1);
     assert.equal(first.sent.length + second.sent.length, ids.length);
+});
+
+test('unsent draft: one email when the last-days warning starts, once per student and semester', async (t) => {
+    const active = (await pool.query("SELECT id, last_days_from, closes_at FROM semester_bounds WHERE status = 'active'")).rows[0];
+    if (!active) { t.skip('no active semester in this database'); return; }
+    await saveDraft(students[0], new Date());
+    await pool.query('DELETE FROM draft_reminders WHERE semester_id = $1 AND student_id = $2', [active.id, students[0].id]);
+    const { sent, notify } = recorder();
+    const only = [students[0].id];
+    try {
+        assert.equal(await remindUnsentDrafts({ now: new Date(active.last_days_from.getTime() - SECOND), notify, onlyDraftsOf: only }), 0, 'not before the last days');
+        assert.equal(await remindUnsentDrafts({ now: new Date(active.last_days_from.getTime() + SECOND), notify, onlyDraftsOf: only }), 1);
+        assert.equal(await remindUnsentDrafts({ now: new Date(active.last_days_from.getTime() + HOUR), notify, onlyDraftsOf: only }), 0, 'never twice');
+        assert.equal(sent.length, 1);
+        assert.equal(sent[0].type, 'draftReminder');
+        assert.equal(sent[0].data.deadline.toISOString(), active.closes_at.toISOString(), 'with the closing time');
+    } finally {
+        await pool.query('DELETE FROM draft_reminders WHERE semester_id = $1 AND student_id = $2', [active.id, students[0].id]);
+    }
 });

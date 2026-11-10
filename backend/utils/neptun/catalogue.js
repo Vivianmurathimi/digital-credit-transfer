@@ -99,7 +99,7 @@ const programmeBlockers = async (db, programmeId, semesterId) => {
 const courseUsageSql = `
     (SELECT count(*)::int FROM applications a WHERE a.target_courses @> jsonb_build_array(jsonb_build_object('course_id', c.id))) AS applications,
     (SELECT count(*)::int FROM application_drafts d WHERE d.data->>'target_course_id' = c.id::text) AS drafts,
-    COALESCE(sb.ends_at <= now() OR sb.status = 'closed', false) AS semester_closed`;
+    COALESCE(sb.status = 'closed', false) AS semester_closed`;
 
 const courseBlockers = (usage) => {
     const reasons = [];

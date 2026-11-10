@@ -218,7 +218,8 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const { rows } = await pool.query(
-            `WITH active AS (SELECT id, name FROM semesters WHERE status = 'active' LIMIT 1),
+            `WITH active AS (SELECT id, name, (end_date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' <= now() AS ready_to_close
+                             FROM semesters WHERE status = 'active' LIMIT 1),
                   programmes_needing AS (
                       SELECT p.id,
                              NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id) AS no_reviewer,
@@ -237,7 +238,9 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
         res.json({
             success: true,
             summary: {
-                activeSemester: r.active_semester,
+                activeSemester: r.active_semester && { id: r.active_semester.id, name: r.active_semester.name },
+                // The active semester's last day has passed: the admin can close it (admin round Group 6)
+                readyToClose: !!r.active_semester?.ready_to_close,
                 pending: r.pending,
                 needsInfo: r.needs_info,
                 programmesWithoutReviewer: r.programmes_without_reviewer,
