@@ -42,11 +42,12 @@ const statusLabels = {
     de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
 };
 
-// Reasons of automatic decisions (stored as codes, see jobs/applicationJobs.js), in the student's language
+// Reasons stored as codes (automatic decisions, jobs/applicationJobs.js; PROGRAMME_CHANGED: withdrawn
+// when the admin changed the student's programme, admin round Group 3), in the student's language
 const reasons = {
-    hu: { NO_INFO_RESPONSE: 'Nem érkezett válasz az információkérésre.', SEMESTER_ENDED: 'A kérelmet a félév lezárásáig nem bírálták el.' },
-    en: { NO_INFO_RESPONSE: 'No response to information request.', SEMESTER_ENDED: 'Not reviewed before the semester closed.' },
-    de: { NO_INFO_RESPONSE: 'Keine Antwort auf die Informationsanfrage.', SEMESTER_ENDED: 'Bis zum Semesterende nicht geprüft.' },
+    hu: { NO_INFO_RESPONSE: 'Nem érkezett válasz az információkérésre.', SEMESTER_ENDED: 'A kérelmet a félév lezárásáig nem bírálták el.', PROGRAMME_CHANGED: 'A szakot az adminisztrátor megváltoztatta.' },
+    en: { NO_INFO_RESPONSE: 'No response to information request.', SEMESTER_ENDED: 'Not reviewed before the semester closed.', PROGRAMME_CHANGED: 'Programme changed by the administrator.' },
+    de: { NO_INFO_RESPONSE: 'Keine Antwort auf die Informationsanfrage.', SEMESTER_ENDED: 'Bis zum Semesterende nicht geprüft.', PROGRAMME_CHANGED: 'Studiengang vom Administrator geändert.' },
 };
 
 // Words shared by every template in a language
@@ -99,6 +100,14 @@ const templates = {
             body: () => `<p>Kreditátviteli kérelmét visszavonta. A bíráló már nem foglalkozik vele.</p>
                 <p>Ugyanarra a PTE-kurzusra bármikor beadhat új kérelmet. Ha nem Ön vonta vissza, kérjük, forduljon a Tanulmányi Osztályhoz.</p>`,
         },
+        programmeChanged: {
+            subject: 'Megváltozott a szakja – PTE Kreditátvitel',
+            body: ({ from, to }) => `<p>Az adminisztrátor megváltoztatta a szakját: <strong>${from}</strong> helyett mostantól <strong>${to}</strong>.</p>`,
+            withdrawnIntro: 'Ezeket a kérelmeit visszavontuk (indoklás: a szakot az adminisztrátor megváltoztatta):',
+            noneWithdrawn: '<p>Egyetlen kérelmét sem kellett visszavonni.</p>',
+            draftRemoved: '<p>Be nem küldött kérelemtervezetét töröltük, mert a kurzusai a korábbi szakjához tartoztak.</p>',
+            after: '<p>Az új szakján bármikor beadhat új kérelmet.</p>',
+        },
         statusUpdate: {
             subject: 'Kreditátviteli kérelmének állapota megváltozott',
             body: ({ label }) => `<p>Kreditátviteli kérelmének állapota a következőre változott: <strong>${label}</strong>.</p>`,
@@ -132,6 +141,14 @@ const templates = {
             subject: 'You withdrew your credit transfer application',
             body: () => `<p>You withdrew your credit transfer application. The reviewer will no longer work on it.</p>
                 <p>You can submit a new request for the same PTE course at any time. If you did not withdraw it, please contact the Student Office.</p>`,
+        },
+        programmeChanged: {
+            subject: 'Your study programme has changed – PTE Credit Transfer',
+            body: ({ from, to }) => `<p>The administrator changed your study programme from <strong>${from}</strong> to <strong>${to}</strong>.</p>`,
+            withdrawnIntro: 'These applications were withdrawn (reason: programme changed by the administrator):',
+            noneWithdrawn: '<p>None of your applications had to be withdrawn.</p>',
+            draftRemoved: '<p>Your unsent application draft was removed, because its courses belonged to your old programme.</p>',
+            after: '<p>You can submit new applications under your new programme at any time.</p>',
         },
         statusUpdate: {
             subject: 'Update on your credit transfer application',
@@ -167,6 +184,14 @@ const templates = {
             body: () => `<p>Sie haben Ihren Antrag auf Kreditübertragung zurückgezogen. Der Gutachter bearbeitet ihn nicht mehr.</p>
                 <p>Für denselben PTE-Kurs können Sie jederzeit einen neuen Antrag stellen. Falls Sie ihn nicht zurückgezogen haben, wenden Sie sich bitte an das Studierendensekretariat.</p>`,
         },
+        programmeChanged: {
+            subject: 'Ihr Studiengang wurde geändert – PTE-Kreditübertragung',
+            body: ({ from, to }) => `<p>Der Administrator hat Ihren Studiengang von <strong>${from}</strong> auf <strong>${to}</strong> geändert.</p>`,
+            withdrawnIntro: 'Diese Anträge wurden zurückgezogen (Begründung: Studiengang vom Administrator geändert):',
+            noneWithdrawn: '<p>Keiner Ihrer Anträge musste zurückgezogen werden.</p>',
+            draftRemoved: '<p>Ihr nicht gesendeter Antragsentwurf wurde gelöscht, da seine Kurse zu Ihrem bisherigen Studiengang gehörten.</p>',
+            after: '<p>Unter Ihrem neuen Studiengang können Sie jederzeit neue Anträge stellen.</p>',
+        },
         statusUpdate: {
             subject: 'Neuigkeiten zu Ihrem Antrag auf Kreditübertragung',
             body: ({ label }) => `<p>Der Status Ihres Antrags auf Kreditübertragung wurde geändert auf: <strong>${label}</strong>.</p>`,
@@ -183,8 +208,9 @@ const noteBlock = (title, note) => `
 
 /**
  * Builds a notification email.
- * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'} type
+ * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'|'programmeChanged'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
+ * programmeChanged also takes { fromProgramme, toProgramme, withdrawn: ['CODE – Name'], draftRemoved }
  * @param {{ name: string, status?: string, note?: string, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send
  */
@@ -198,7 +224,18 @@ const buildEmail = (type, lang, data) => {
     const hasNote = data.note && String(data.note).trim() !== '';
     let content = '';
 
-    if (type === 'statusUpdate') {
+    if (type === 'programmeChanged') {
+        // The old and new programme (names in the student's language), the withdrawn applications,
+        // whether the unsent draft was removed, and that they can apply again (admin round Group 3)
+        const nameIn = (programme) => escapeHtml(programme ? programme[`name_${language}`] || programme.name_en || programme.code || '' : '—');
+        content += template.body({ from: nameIn(data.fromProgramme), to: nameIn(data.toProgramme) });
+        const courses = Array.isArray(data.withdrawn) ? data.withdrawn : [];
+        content += courses.length > 0
+            ? `<p>${escapeHtml(template.withdrawnIntro)}</p><ul>${courses.map((course) => `<li>${escapeHtml(course)}</li>`).join('')}</ul>`
+            : template.noneWithdrawn;
+        if (data.draftRemoved) content += template.draftRemoved;
+        content += template.after;
+    } else if (type === 'statusUpdate') {
         const label = (statusLabels[language] || statusLabels[DEFAULT_LANGUAGE])[data.status];
         if (!label) return null; // unknown status: add its label above to start sending it
         content += template.body({ label });

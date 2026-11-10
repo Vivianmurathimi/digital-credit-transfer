@@ -5,7 +5,6 @@ Things deliberately left for later while building the student side, with the rea
 ## Reviewer round
 
 - **Reviewers only see their own programme's applications** (list, single application, evidence files). Every application already records its programme; the filtering and its test are still to do.
-- **One reviewer per programme**, and reviewer registration as a guest with a programme. The registration form currently decides student fields by email domain (`@tr.pte.hu`); that logic changes then.
 - **Show the Group 4 data on the reviewer screen:** institution, country, credit system and the grading-system file of each fulfilled course. Until then the screen shows course name, code, credits, grade and evidence as before.
 - **One decision and one final PTE grade per application** (each application has exactly one target PTE course since Group 5).
 - **Show why a syllabus was required, translated:** the server stores the reasons as codes in `applications.syllabus_reasons` (`CREDIT_GAP`, `CREDIT_SYSTEMS`, `COMBINED_COURSES`); the English `system_note` stays for the term book.

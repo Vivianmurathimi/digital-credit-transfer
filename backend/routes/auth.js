@@ -11,6 +11,7 @@ const { checkEmailLink } = require('../utils/emailLink');
 const sendError = require('../utils/sendError');
 const { FRONTEND_URL } = require('../config/urls');
 const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
+const { isAllowedStudentEmail } = require('../utils/domains');
 
 // --- REGISTER ROUTE ---
 
@@ -18,12 +19,9 @@ const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLim
 const NEPTUN_PATTERN = /^[A-Z0-9]{6}$/;
 const normalizeNeptun = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '');
 
-// Registration only ever creates students (admin round Group 2). Staff addresses can't register:
-// reviewers and admins get in only by invitation (routes/staffInvites.js).
-// The domains are still written here until the admin's allowed-domains list (admin round Group 3).
-const STAFF_DOMAINS = ['@mik.pte.hu', '@adminisztracio.pte.hu'];
-const STUDENT_DOMAIN = '@tr.pte.hu';
-const roleForEmail = (lowerEmail) => (lowerEmail.endsWith(STUDENT_DOMAIN) ? 'student' : null);
+// Registration only ever creates students (admin round Group 2); reviewers and admins get in only
+// by invitation (routes/staffInvites.js). The address's domain must EXACTLY match one on the
+// admin's allowed list (admin round Group 3, utils/domains.js); no domain is written in the code.
 
 router.post('/register', async (req, res) => {
     const { name, email, password, language, neptun_code, programme_code } = req.body;
@@ -44,18 +42,17 @@ router.post('/register', async (req, res) => {
     }
 
     try {
-        const lowerEmail = email.toLowerCase();
-        if (STAFF_DOMAINS.some((domain) => lowerEmail.trim().endsWith(domain))) {
-            return sendError(res, 403, 'STAFF_BY_INVITATION', 'Staff accounts are created by invitation', { field: 'email' });
+        const lowerEmail = email.trim().toLowerCase();
+        if (!(await isAllowedStudentEmail(pool, lowerEmail))) {
+            return sendError(res, 400, 'EMAIL_DOMAIN_NOT_ALLOWED', 'Students can only register with an email address from an allowed domain', { field: 'email' });
         }
-        const assignedRole = roleForEmail(lowerEmail);
-        if (!assignedRole) return sendError(res, 400, 'INVALID_EMAIL_DOMAIN', 'Please use your university email address');
+        const assignedRole = 'student';
 
         // Students also give their Neptun code and study programme. A "role" sent in the request is
         // never read: registration always creates a student.
         let neptunCode = null;
         let programmeId = null;
-        if (assignedRole === 'student') {
+        {
             neptunCode = normalizeNeptun(neptun_code);
             if (!NEPTUN_PATTERN.test(neptunCode)) {
                 return sendError(res, 400, 'INVALID_NEPTUN', 'Neptun code must be 6 letters or digits');

@@ -135,18 +135,18 @@ const COURSES = {
 };
 
 const STAFF = [
-    { key: 'admin', role: 'superadmin', name: 'Demo Admin', email: 'demo.admin@adminisztracio.pte.hu', language: 'en' },
-    { key: 'reviewerCS', role: 'reviewer', name: 'Dr. Katalin Szabó', email: 'demo.reviewer.cs@mik.pte.hu', programme: 'CS', language: 'en' },
-    { key: 'reviewerCIVIL', role: 'reviewer', name: 'Dr. Péter Horváth', email: 'demo.reviewer.civil@mik.pte.hu', programme: 'CIVIL', language: 'hu' },
+    { key: 'admin', role: 'superadmin', name: 'Demo Admin', email: 'demo.admin@staff.example', language: 'en' },
+    { key: 'reviewerCS', role: 'reviewer', name: 'Dr. Katalin Szabó', email: 'demo.reviewer.cs@staff.example', programme: 'CS', language: 'en' },
+    { key: 'reviewerCIVIL', role: 'reviewer', name: 'Dr. Péter Horváth', email: 'demo.reviewer.civil@staff.example', programme: 'CIVIL', language: 'hu' },
 ];
 const STUDENTS = [
-    { key: 'anna', name: 'Anna Kovács', email: 'demo.anna@tr.pte.hu', programme: 'CS', neptun: 'DMCS01', language: 'en' },
-    { key: 'bence', name: 'Bence Tóth', email: 'demo.bence@tr.pte.hu', programme: 'CS', neptun: 'DMCS02', language: 'hu' },
-    { key: 'csilla', name: 'Csilla Varga', email: 'demo.csilla@tr.pte.hu', programme: 'CS', neptun: 'DMCS03', language: 'de' },
-    { key: 'daniel', name: 'Dániel Kiss', email: 'demo.daniel@tr.pte.hu', programme: 'CS', neptun: 'DMCS04', language: 'en' },
-    { key: 'eszter', name: 'Eszter Nagy', email: 'demo.eszter@tr.pte.hu', programme: 'CIVIL', neptun: 'DMCV01', language: 'en' },
-    { key: 'ferenc', name: 'Ferenc Molnár', email: 'demo.ferenc@tr.pte.hu', programme: 'CIVIL', neptun: 'DMCV02', language: 'hu' },
-    { key: 'gabor', name: 'Gábor Farkas', email: 'demo.gabor@tr.pte.hu', programme: 'CIVIL', neptun: 'DMCV03', language: 'en' },
+    { key: 'anna', name: 'Anna Kovács', email: 'demo.anna@students.example', programme: 'CS', neptun: 'DMCS01', language: 'en' },
+    { key: 'bence', name: 'Bence Tóth', email: 'demo.bence@students.example', programme: 'CS', neptun: 'DMCS02', language: 'hu' },
+    { key: 'csilla', name: 'Csilla Varga', email: 'demo.csilla@students.example', programme: 'CS', neptun: 'DMCS03', language: 'de' },
+    { key: 'daniel', name: 'Dániel Kiss', email: 'demo.daniel@students.example', programme: 'CS', neptun: 'DMCS04', language: 'en' },
+    { key: 'eszter', name: 'Eszter Nagy', email: 'demo.eszter@students.example', programme: 'CIVIL', neptun: 'DMCV01', language: 'en' },
+    { key: 'ferenc', name: 'Ferenc Molnár', email: 'demo.ferenc@students.example', programme: 'CIVIL', neptun: 'DMCV02', language: 'hu' },
+    { key: 'gabor', name: 'Gábor Farkas', email: 'demo.gabor@students.example', programme: 'CIVIL', neptun: 'DMCV03', language: 'en' },
 ];
 
 const seed = async (pool) => {
@@ -183,6 +183,10 @@ const seed = async (pool) => {
             }
         }
     }
+
+    // Students register from the reserved example domain (never on a real list: demo:seed refuses
+    // to run with NODE_ENV=production). Staff are invited, so staff.example is not on the list.
+    await pool.query("INSERT INTO allowed_domains (domain) VALUES ('students.example') ON CONFLICT (domain) DO NOTHING");
 
     // Accounts
     const hash = await bcrypt.hash(DEMO_PASSWORD, 10);

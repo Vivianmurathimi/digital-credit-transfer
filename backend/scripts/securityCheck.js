@@ -176,6 +176,21 @@ const restoreAdmin = async () => {
     adminBackup = null;
 };
 
+// ---------- the test students' domain (admin round Group 3) ----------
+// Registration only accepts listed domains. The run adds @security-check.invalid (reserved, never
+// real) to the list and removes it at the end, also after a crash, unless it was there already.
+const TEST_STUDENT_DOMAIN = TEST_DOMAIN.slice(1);
+let addedTestDomain = false;
+const ensureTestDomain = async () => {
+    const { rowCount } = await pool.query('INSERT INTO allowed_domains (domain) VALUES ($1) ON CONFLICT (domain) DO NOTHING', [TEST_STUDENT_DOMAIN]);
+    if (rowCount > 0) addedTestDomain = true;
+};
+const removeTestDomain = async () => {
+    if (!addedTestDomain) return;
+    await pool.query('DELETE FROM allowed_domains WHERE domain = $1', [TEST_STUDENT_DOMAIN]);
+    addedTestDomain = false;
+};
+
 // ---------- small helpers ----------
 
 const results = { pass: 0, fail: 0, skip: 0 };
@@ -316,6 +331,7 @@ const run = async () => {
     }
 
     runStartedAt = (await pool.query('SELECT now() AS t')).rows[0].t;
+    await ensureTestDomain();
     const d = await loadTestData();
     const A = tokenFor(d.studentA);
     const B = tokenFor(d.studentB);
@@ -962,7 +978,7 @@ const run = async () => {
             return rows[0].id;
         };
 
-        await expect('Register with a staff (@mik.pte.hu) address', call('POST', 'register', { json: { name: 'Staff', email: `nobody.${Date.now()}@mik.pte.hu`, password: 'Whatever123' } }), 403, 'STAFF_BY_INVITATION');
+        await expect('Register with an address from an unlisted domain', call('POST', 'register', { json: { name: 'Staff', email: `nobody.${Date.now()}@unlisted.invalid`, password: 'Whatever123' } }), 400, 'EMAIL_DOMAIN_NOT_ALLOWED');
 
         if (programmeOfA === programmeOfB) {
             skip('Reviewer sees only their own programme (applications, status, files)', 'students A and B are in the same programme');
@@ -1664,8 +1680,8 @@ const run = async () => {
         const invite = (json) => call('POST', 'users/invites', { token: S, json });
 
         // Nobody becomes staff by registering
-        await expect('Register with an admin-domain address', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@adminisztracio.pte.hu`, password: 'LongEnough1' } }), 403, 'STAFF_BY_INVITATION');
-        await expect('Register with a staff-domain address', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@mik.pte.hu`, password: 'LongEnough1' } }), 403, 'STAFF_BY_INVITATION');
+        await expect('Register from an unlisted (staff) domain', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@staff-unlisted.invalid`, password: 'LongEnough1' } }), 400, 'EMAIL_DOMAIN_NOT_ALLOWED');
+        await expect('Register from a subdomain of a listed domain', call('POST', 'register', { json: { name: 'X', email: `x-${stamp}@sub.${TEST_STUDENT_DOMAIN}`, password: 'LongEnough1' } }), 400, 'EMAIL_DOMAIN_NOT_ALLOWED');
         report((await pool.query('SELECT count(*)::int AS n FROM users WHERE email LIKE $1', [`x-${stamp}@%`])).rows[0].n === 0, 'No account was created by those registrations');
         await expect('The role-change route is gone', call('PUT', `users/${d.studentA.id}/role`, { token: S, json: { newRole: 'superadmin' } }), 404);
 
@@ -1777,6 +1793,122 @@ const run = async () => {
         console.log(`(removed ${removed} temporary admin(s) and their invites)`);
     }
 
+    section('4m. Students and domains (admin round Group 3): allowed domains, registration, programme change');
+    {
+        const stamp = Date.now().toString(36);
+        const domains = () => call('GET', 'admin/domains', { token: S });
+        const adminOnly = [['GET', 'admin/domains'], ['POST', 'admin/domains'], ['DELETE', 'admin/domains/1'], ['GET', 'admin/students?q=ab'],
+            ['GET', 'admin/students/1/programme-changes'], ['PUT', 'admin/students/1/programme']];
+        for (const [method, path] of adminOnly) {
+            await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+            await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+        }
+
+        // Domain format, checked on the server
+        for (const bad of ['', 'no-dot', 'has space.example', '*.example', 'a..example', '-bad.example', 'user@host.example', 'x'.repeat(250) + '.example']) {
+            await expect(`Add domain "${bad.length > 30 ? `${bad.slice(0, 20)}…` : bad}"`, call('POST', 'admin/domains', { token: S, json: { domain: bad } }), 400, 'INVALID_DOMAIN');
+        }
+        await expect('Add a domain that is not text', call('POST', 'admin/domains', { token: S, json: { domain: 42 } }), 400, 'INVALID_DOMAIN');
+        await expect('Add the test domain again', call('POST', 'admin/domains', { token: S, json: { domain: ` @${TEST_STUDENT_DOMAIN.toUpperCase()} ` } }), 409, 'DOMAIN_EXISTS');
+        await expect('Remove a domain with id "abc"', call('DELETE', 'admin/domains/abc', { token: S }), 400, 'INVALID_ID');
+        await expect('Remove a domain that does not exist', call('DELETE', 'admin/domains/999999999', { token: S }), 404, 'DOMAIN_NOT_FOUND');
+
+        // Registration: only from a listed domain, always a student
+        const neptun = `S${stamp.slice(-5).toUpperCase().padStart(5, 'X')}`.slice(0, 6).replace(/[^A-Z0-9]/g, 'X');
+        const email = `domain-${stamp}${TEST_DOMAIN}`;
+        const registered = await call('POST', 'register', { json: { name: 'Domain Check Student', email, password: 'LongEnough1', neptun_code: neptun, programme_code: d.programmeCodes[0], role: 'superadmin', language: 'en' } });
+        const account = (await pool.query('SELECT id, role, programme_id FROM users WHERE email = $1', [email])).rows[0];
+        report(registered.status === 200 && account?.role === 'student', 'Register from a listed domain: a student (a "role" in the request is ignored)', `${registered.status} ${account?.role}`);
+
+        const listed = await domains();
+        const testDomain = (listed.body?.domains || []).find((row) => row.domain === TEST_STUDENT_DOMAIN);
+        report(listed.status === 200 && !!testDomain, 'The domain list shows the test domain', `${listed.status}`);
+        await expect('Remove the test domain', call('DELETE', `admin/domains/${testDomain?.id}`, { token: S }), 200);
+        addedTestDomain = false; // removed through the API; added back below
+        const blocked = `domain2-${stamp}${TEST_DOMAIN}`;
+        await expect('Register after the domain was removed', call('POST', 'register', { json: { name: 'Late', email: blocked, password: 'LongEnough1', neptun_code: 'ZZZ998', programme_code: d.programmeCodes[0] } }), 400, 'EMAIL_DOMAIN_NOT_ALLOWED');
+        report((await pool.query('SELECT count(*)::int AS n FROM users WHERE email = $1', [blocked])).rows[0].n === 0, 'Nothing was created for the refused registration');
+        await pool.query('UPDATE users SET is_verified = true WHERE id = $1', [account?.id || 0]);
+        await expect('An existing account from the removed domain still logs in', call('POST', 'login', { json: { email, password: 'LongEnough1' } }), 200);
+        const readded = await call('POST', 'admin/domains', { token: S, json: { domain: `@${TEST_STUDENT_DOMAIN}` } });
+        if (readded.status === 201) addedTestDomain = true;
+        report(readded.status === 201 && readded.body.domain.domain === TEST_STUDENT_DOMAIN, 'Add a domain ("@" removed, lowercased)', `${readded.status}`);
+
+        // Searching students
+        await expect('Search with 1 character', call('GET', 'admin/students?q=a', { token: S }), 400, 'INVALID_SEARCH');
+        const byNeptun = await call('GET', `admin/students?q=${neptun.toLowerCase()}`, { token: S });
+        report(byNeptun.status === 200 && byNeptun.body.students.some((st) => st.id === account?.id), 'Search finds the student by Neptun code', `${byNeptun.body?.students?.length}`);
+        const wildcard = await call('GET', `admin/students?q=${encodeURIComponent('%_')}`, { token: S });
+        report(wildcard.status === 200 && wildcard.body.students.every((st) => `${st.name}${st.email}${st.neptun_code}`.includes('%_')), 'Search treats % and _ literally', `${wildcard.body?.students?.length}`);
+        report((await call('GET', `admin/students?q=${encodeURIComponent(d.reviewer.email)}`, { token: S })).body?.students?.length === 0, 'Search lists students only (not reviewers)');
+
+        // Changing the programme
+        if (d.programmeCodes.length < 2 || !account) {
+            skip('Change a student\'s programme', 'needs two programmes and the registered test student');
+        } else {
+            const [fromCode, toCode] = d.programmeCodes;
+            const fromId = account.programme_id;
+            const current = (await pool.query(`SELECT ${SEMESTER_NOW} AS id`)).rows[0].id;
+            let seq = 0;
+            const app = async (status) => {
+                seq += 1;
+                const code = `SECM${stamp}${seq}`.toUpperCase();
+                const decided = status === 'approved';
+                return (await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 4 END, CASE WHEN $7 THEN 'reviewer' END, CASE WHEN $7 THEN now() END,
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                     RETURNING id`,
+                    [account.id, fromId, JSON.stringify([{ course_code: code, course_name: 'Programme check', credits: 3 }]), code, status, current, decided]
+                )).rows[0].id;
+            };
+            const pending = await app('pending');
+            const waiting = await app('needs_info');
+            const approved = await app('approved');
+            await pool.query("INSERT INTO application_drafts (student_id, version, data) VALUES ($1, 1, '{}') ON CONFLICT (student_id) DO NOTHING", [account.id]);
+
+            const change = (json, id = account.id) => call('PUT', `admin/students/${id}/programme`, { token: S, json });
+            await expect('Change to the same programme', change({ programme_code: fromCode }), 400, 'SAME_PROGRAMME');
+            await expect('Change to an unknown programme', change({ programme_code: 'NOPE' }), 400, 'INVALID_PROGRAMME');
+            await expect('Change without a programme', change({}), 400, 'INVALID_PROGRAMME');
+            await expect("Change a reviewer's programme", change({ programme_code: toCode }, d.reviewer.id), 404, 'STUDENT_NOT_FOUND');
+            await expect('Change with id "abc"', call('PUT', 'admin/students/abc/programme', { token: S, json: { programme_code: toCode } }), 400, 'INVALID_ID');
+
+            const changed = await change({ programme_code: toCode });
+            report(changed.status === 200 && changed.body.withdrawn === 2 && changed.body.draftRemoved === true,
+                'Change the programme: 2 open applications withdrawn, draft removed', `${changed.status} ${changed.body?.withdrawn} ${changed.body?.draftRemoved}`);
+            const rows = (await pool.query('SELECT id, status, info_deadline, final_grade FROM applications WHERE id = ANY($1)', [[pending, waiting, approved]])).rows;
+            const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+            report(byId[pending].status === 'withdrawn' && byId[waiting].status === 'withdrawn' && byId[waiting].info_deadline === null,
+                'Pending and needs-info are withdrawn (no reply deadline left for the deadline job)');
+            report(byId[approved].status === 'approved' && byId[approved].final_grade === 4, 'The approved application stays as it is');
+            const events = (await pool.query(
+                "SELECT application_id, actor_role, actor_id, reason_code, created_at FROM application_events WHERE application_id = ANY($1) AND kind = 'withdrawn'", [[pending, waiting]]
+            )).rows;
+            report(events.length === 2 && events.every((e) => e.actor_role === 'admin' && e.actor_id === d.admin.id && e.reason_code === 'PROGRAMME_CHANGED' && e.created_at),
+                'Each withdrawal is recorded as admin, with the admin\'s id, date and reason PROGRAMME_CHANGED');
+            report((await pool.query('SELECT count(*)::int AS n FROM application_drafts WHERE student_id = $1', [account.id])).rows[0].n === 0, 'The unsent draft is deleted');
+            const history = await call('GET', `admin/students/${account.id}/programme-changes`, { token: S });
+            const last = history.body?.changes?.[0];
+            report(history.status === 200 && last?.old_programme?.code === fromCode && last?.new_programme?.code === toCode && last.withdrawn_count === 2 && last.draft_removed && last.changed_by_name,
+                'The change is recorded: who, old and new programme, date', `${last?.old_programme?.code} -> ${last?.new_programme?.code}`);
+            report(await pool.query('UPDATE student_programme_changes SET withdrawn_count = 0 WHERE student_id = $1', [account.id]).then(() => false, () => true),
+                'The change record cannot be edited');
+            const T = tokenFor({ id: account.id, role: 'student' });
+            const me = await call('GET', 'me', { token: T });
+            report(me.status === 200 && me.body.user.programme?.code === toCode, "The student's profile shows the new programme", `${me.body?.user?.programme?.code}`);
+            const mine = await call('GET', 'applications/mine', { token: T });
+            const shown = (mine.body?.applications || []).find((a) => a.id === pending);
+            report(shown?.status === 'withdrawn' && shown?.decision_reason === 'PROGRAMME_CHANGED' && shown?.decided_by === 'admin',
+                'My Status shows the withdrawn application with its reason', `${shown?.status} ${shown?.decision_reason}`);
+        }
+
+        const removed = await removeTestStudents();
+        console.log(`(removed ${removed} temporary student(s) with their applications and programme changes)`);
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -1798,7 +1930,7 @@ const run = async () => {
         && countries.body.countries.every((c) => /^[A-Z]{2}$/.test(c)),
         'Country list is public, ISO codes only', `${countries.status}, ${countries.body?.countries?.length ?? 0} codes`);
     // Student registrations below are all refused before anything is saved (no account, no email)
-    const newStudent = (extra) => ({ name: 'Security Check', email: `security-check-${Date.now()}@tr.pte.hu`, password: 'x-Security-Check-1', programme_code: d.programmeCodes[0], ...extra });
+    const newStudent = (extra) => ({ name: 'Security Check', email: `security-check-${Date.now()}${TEST_DOMAIN}`, password: 'x-Security-Check-1', programme_code: d.programmeCodes[0], ...extra });
     await expect('Register student without Neptun code', call('POST', 'register', { json: newStudent({}) }), 400, 'INVALID_NEPTUN');
     await expect('Register student with a 5-character Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'ABC12' }) }), 400, 'INVALID_NEPTUN');
     await expect('Register student with symbols in the Neptun code', call('POST', 'register', { json: newStudent({ neptun_code: 'AB-12C' }) }), 400, 'INVALID_NEPTUN');
@@ -1894,6 +2026,11 @@ const finish = async (ok) => {
         await removeTestStudents();
     } catch (err) {
         console.error('Could not remove the temporary test student:', err.message);
+    }
+    try {
+        await removeTestDomain();
+    } catch (err) {
+        console.error('Could not remove the test domain:', err.message);
     }
     try {
         await restoreAdmin();
