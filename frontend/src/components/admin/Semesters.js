@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import http from '../../http';
 import { getErrorMessage } from '../../errorMessage';
@@ -66,12 +67,97 @@ const PeriodControls = ({ semester, onChange }) => {
     );
 };
 
+// Closing the active semester (admin round Group 6), only after its last day. First the preview:
+// how many pending and needs-info applications will be rejected, drafts deleted and late access
+// ended, and that it can't be undone. The admin confirms by typing the semester name. After the
+// close: the counts, the emails, and the PDF book, or its error with "Generate PDF again".
+export const ClosePanel = ({ semester, onClosed }) => {
+    const { t } = useTranslation();
+    const [preview, setPreview] = useState(null);
+    const [typed, setTyped] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+
+    const loadPreview = async () => {
+        setError('');
+        try { setPreview((await http.get(`admin/semesters/${semester.id}/close-preview`).json()).preview); }
+        catch (err) { setError(getErrorMessage(err, t, 'close_failed')); }
+    };
+    const close = async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError('');
+        try {
+            const { summary } = await http.post(`admin/semesters/${semester.id}/close`, { json: { confirm_name: typed }, timeout: 180000 }).json();
+            onClosed({ id: semester.id, name: semester.name, ...summary });
+        } catch (err) { setError(getErrorMessage(err, t, 'close_failed')); setBusy(false); }
+    };
+
+    return (
+        <div style={{ marginTop: '15px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--warning-bg)', color: 'var(--warning-text)', border: '1px solid var(--orange)' }}>
+            <h3 style={{ marginTop: 0 }}>{t('close_ready_title', { name: semester.name })}</h3>
+            <p style={{ marginTop: 0 }}>{t('close_ready_intro')}</p>
+            {!preview ? (
+                <button type="button" onClick={loadPreview} style={smallButton(true)}>{t('close_button')}</button>
+            ) : (
+                <form onSubmit={close}>
+                    <ul style={{ margin: '0 0 8px', paddingLeft: '18px' }}>
+                        <li>{t('close_preview_pending', { count: preview.pending })}</li>
+                        <li>{t('close_preview_needs_info', { count: preview.needsInfo })}</li>
+                        <li>{t('close_preview_drafts', { count: preview.drafts })}</li>
+                        <li>{t('close_preview_late', { count: preview.lateAccess })}</li>
+                    </ul>
+                    <p style={{ fontWeight: 'bold' }}>{t('close_cannot_undo')}</p>
+                    <label htmlFor="close-name" style={label}>{t('close_type_name', { name: semester.name })}</label>
+                    <input id="close-name" type="text" value={typed} autoComplete="off" onChange={(e) => setTyped(e.target.value)} style={{ ...input, maxWidth: '320px' }} />
+                    <div style={{ marginTop: '8px' }}>
+                        <button type="submit" disabled={busy || typed.trim() !== semester.name} style={smallButton(true)}>{t('close_confirm_button')}</button>
+                        <button type="button" onClick={() => { setPreview(null); setTyped(''); }} style={smallButton()}>{t('staff_cancel')}</button>
+                    </div>
+                </form>
+            )}
+            {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
+        </div>
+    );
+};
+
+// The result of a close: counts, emails, and the PDF book or its error with "Generate PDF again"
+export const CloseResult = ({ result, onBookGenerated }) => {
+    const { t } = useTranslation();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const regenerate = async () => {
+        setBusy(true);
+        setError('');
+        try {
+            await http.post(`admin/past-semesters/${result.id}/book`, { timeout: 180000 }).json();
+            onBookGenerated();
+        } catch (err) { setError(getErrorMessage(err, t, 'close_book_failed')); }
+        finally { setBusy(false); }
+    };
+    return (
+        <div role="status" style={{ marginTop: '15px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--success-bg)', color: 'var(--success-text)' }}>
+            <strong>{t('close_done', { name: result.name })}</strong>
+            <div>{t('close_done_counts', { rejected: result.rejected, emails: result.emailsSent, drafts: result.drafts, late: result.lateAccess })}</div>
+            {result.book?.error ? (
+                <div style={{ marginTop: '8px', color: 'var(--danger-text)' }}>
+                    {t('close_book_error', { error: result.book.error })}{' '}
+                    <button type="button" disabled={busy} onClick={regenerate} style={smallButton()}>{t('close_book_again')}</button>
+                </div>
+            ) : <div>{t('close_book_ok')}</div>}
+            <div style={{ marginTop: '6px' }}><Link to="/admin/past-semesters" style={{ color: 'inherit', fontWeight: 'bold' }}>{t('close_go_past')}</Link></div>
+            {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
+        </div>
+    );
+};
+
 const Semesters = ({ semesters, onChange }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const [form, setForm] = useState(null); // { id?, name, opens_at, closes_at, end_date } while editing
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
+    const [closeResult, setCloseResult] = useState(null); // the last close, shown after the list reloads
 
     const edit = (semester) => {
         setError('');
@@ -175,8 +261,15 @@ const Semesters = ({ semesters, onChange }) => {
                     </tbody>
                 </table>
             </div>
+            {closeResult && <CloseResult result={closeResult} onBookGenerated={() => setCloseResult((r) => ({ ...r, book: { name: 'ok' } }))} />}
             {/* The active semester's application period (admin round Group 5) */}
-            {semesters.filter((s) => s.status === 'active').map((s) => <PeriodControls key={s.id} semester={s} onChange={onChange} />)}
+            {semesters.filter((s) => s.status === 'active').map((s) => (
+                <React.Fragment key={s.id}>
+                    <PeriodControls semester={s} onChange={onChange} />
+                    {/* After its last day: "Ready to close" (admin round Group 6) */}
+                    {s.ended && <ClosePanel semester={s} onClosed={(result) => { setCloseResult(result); onChange(); }} />}
+                </React.Fragment>
+            ))}
         </section>
     );
 };

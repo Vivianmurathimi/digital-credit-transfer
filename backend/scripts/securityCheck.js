@@ -30,7 +30,7 @@ const { JWT_SECRET, ALGORITHM, signSessionToken } = require('../config/jwt');
 const { CORS_ORIGINS } = require('../config/urls');
 const pool = require('../db');
 const minioClient = require('../minio');
-const { EVIDENCE_BUCKET } = require('../config/buckets');
+const { EVIDENCE_BUCKET, ARCHIVE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
@@ -207,6 +207,35 @@ const restoreCatalogue = async () => {
         await pool.query('DELETE FROM applications WHERE semester_id = ANY($1)', [ids]);
         await pool.query('DELETE FROM courses WHERE semester_id = ANY($1)', [ids]);
         await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [ids]);
+    }
+};
+
+// ---------- section 4p: a temporary closed semester (put back at the end, also after a crash) ----------
+// The real active semester is set to setup for a moment while a temporary 2001 semester is the
+// active one and gets closed; afterwards the real one is active again. The close deletes unsent
+// drafts, so every draft is saved first and put back afterwards. The PDF book is removed.
+const closeBackup = { realActiveId: null, tempSemesterId: null, drafts: null, bookName: null };
+const restoreClose = async () => {
+    const b = closeBackup;
+    if (b.tempSemesterId) {
+        if (b.bookName) await minioClient.removeObject(ARCHIVE_BUCKET, b.bookName).catch(() => {});
+        await pool.query('DELETE FROM applications WHERE semester_id = $1', [b.tempSemesterId]);
+        await pool.query('DELETE FROM semesters WHERE id = $1', [b.tempSemesterId]);
+        b.tempSemesterId = null;
+        b.bookName = null;
+    }
+    if (b.realActiveId) {
+        await pool.query("UPDATE semesters SET status = 'active' WHERE id = $1 AND status = 'setup' AND NOT EXISTS (SELECT 1 FROM semesters WHERE status = 'active')", [b.realActiveId]);
+        b.realActiveId = null;
+    }
+    if (b.drafts) {
+        for (const d of b.drafts) {
+            await pool.query(
+                'INSERT INTO application_drafts (student_id, version, data, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (student_id) DO NOTHING',
+                [d.student_id, d.version, d.data, d.updated_at]
+            );
+        }
+        b.drafts = null;
     }
 };
 
@@ -1067,9 +1096,12 @@ const run = async () => {
             const actingR = await actingTokenFor(S, d.reviewer);
             const asReviewer = await call('GET', 'applications', { token: actingR });
             const all = await call('GET', 'applications', { token: S });
+            // As themselves the admin sees every programme of the active semester (admin round Group 6)
+            const activeId = (await pool.query("SELECT id FROM semesters WHERE status = 'active'")).rows[0]?.id ?? null;
+            const activeCount = (await pool.query('SELECT count(*)::int AS n FROM applications WHERE semester_id = $1', [activeId])).rows[0].n;
             report(asReviewer.status === 200 && (asReviewer.body.applications || []).every((a) => a.programme_id === programmeOfB)
-                && (all.body?.applications || []).some((a) => a.id === other),
-            "Admin acting as the reviewer sees only that programme (and everything as themselves)", `${(asReviewer.body?.applications || []).length} of ${(all.body?.applications || []).length}`);
+                && (all.body?.applications || []).every((a) => a.semester_id === activeId) && (all.body?.applications || []).length === activeCount,
+            "Admin acting as the reviewer sees only that programme (and, as themselves, every programme of the active semester)", `${(asReviewer.body?.applications || []).length} of ${(all.body?.applications || []).length}`);
             await call('POST', 'acting/exit', { token: actingR });
             // The old ?as_reviewer view filter is gone: it is ignored
             const ignored = await call('GET', `applications?as_reviewer=${d.reviewerOfA ? d.reviewerOfA.id : d.reviewer.id}`, { token: R });
@@ -2182,6 +2214,148 @@ const run = async () => {
         }
     }
 
+    section('4p. Closing the semester (admin round Group 6): preview = result, emails, PDF book, read-only for everyone, Past semesters');
+    {
+        const stamp = Date.now().toString(36);
+        const routes = [['GET', 'admin/semesters/1/close-preview'], ['POST', 'admin/semesters/1/close'], ['GET', 'admin/past-semesters'],
+            ['GET', 'admin/past-semesters/1/applications'], ['GET', 'admin/past-semesters/1/applications/1'], ['GET', 'admin/past-semesters/1/export.csv'],
+            ['GET', 'admin/past-semesters/1/book'], ['POST', 'admin/past-semesters/1/book']];
+        for (const [method, path] of routes) {
+            await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+            await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+        }
+
+        const realActive = (await pool.query("SELECT id, name FROM semesters WHERE status = 'active'")).rows[0];
+        if (!realActive) {
+            skip('Closing a semester', 'no active semester in this database');
+        } else {
+            closeBackup.drafts = (await pool.query('SELECT * FROM application_drafts')).rows;
+            const tempName = `Security check close ${stamp}`;
+            const tempId = (await pool.query(INSERT_SEMESTER_SQL, [tempName, '2001-02-01', '2001-03-01', '2001-06-30', 'setup'])).rows[0].id;
+            closeBackup.tempSemesterId = tempId;
+            closeBackup.realActiveId = realActive.id;
+            await pool.query("UPDATE semesters SET status = 'setup' WHERE id = $1", [realActive.id]);
+            await pool.query("UPDATE semesters SET status = 'active' WHERE id = $1", [tempId]);
+
+            // A temporary student of the reviewer's programme (the emails go to @security-check.invalid)
+            const neptun = `C${stamp.slice(-5).toUpperCase()}`.replace(/[^A-Z0-9]/g, 'X').padEnd(6, 'X').slice(0, 6);
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Security Check Close', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role`,
+                [`close-${stamp}${TEST_DOMAIN}`, neptun, d.reviewer.programme_id]
+            )).rows[0];
+            let seq = 0;
+            const app = async (status) => {
+                seq += 1;
+                const c = `SECP${stamp}${seq}`.toUpperCase();
+                return (await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN $5::varchar = 'approved' THEN 'reviewer' END,
+                             CASE WHEN $5::varchar = 'approved' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() END,
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                    [student.id, d.reviewer.programme_id, JSON.stringify([{ course_code: c, course_name: 'Close check', credits: 3 }]), c, status, tempId]
+                )).rows[0].id;
+            };
+            const pendingId = await app('pending');
+            await app('pending');
+            const waitingId = await app('needs_info');
+            const approvedId = await app('approved');
+            await pool.query("INSERT INTO late_access (email, semester_id, deadline) VALUES ($1, $2, now() + interval '1 day')", [`late-close-${stamp}${TEST_DOMAIN}`, tempId]);
+
+            // Ready to close: the active semester's last day has passed
+            report((await call('GET', 'admin/summary', { token: S })).body?.summary?.readyToClose === true, 'The admin summary says "Ready to close" (Semester badge)');
+            const appsList = await call('GET', 'applications', { token: S });
+            report((appsList.body?.applications || []).every((a) => a.semester_id === tempId), 'The admin\'s Applications list shows the active semester only');
+
+            const preview = (await call('GET', `admin/semesters/${tempId}/close-preview`, { token: S })).body?.preview;
+            const draftsBefore = (await pool.query('SELECT count(*)::int AS n FROM application_drafts')).rows[0].n;
+            report(preview?.pending === 2 && preview.needsInfo === 1 && preview.lateAccess === 1 && preview.drafts === draftsBefore && preview.ended === true,
+                'Close preview: 2 pending, 1 needs info, 1 late access, every unsent draft', JSON.stringify(preview));
+            await expect('Close with a wrong name', call('POST', `admin/semesters/${tempId}/close`, { token: S, json: { confirm_name: 'Wrong name' } }), 400, 'CONFIRM_NAME_MISMATCH');
+            await expect('Close without a name', call('POST', `admin/semesters/${tempId}/close`, { token: S, json: {} }), 400, 'CONFIRM_NAME_MISMATCH');
+            await expect('Close a semester that is not active', call('POST', `admin/semesters/${realActive.id}/close`, { token: S, json: { confirm_name: realActive.name } }), 409, 'SEMESTER_NOT_ACTIVE');
+
+            const closed = await call('POST', `admin/semesters/${tempId}/close`, { token: S, json: { confirm_name: tempName } });
+            const summary = closed.body?.summary || {};
+            closeBackup.bookName = (await pool.query('SELECT book_name FROM semesters WHERE id = $1', [tempId])).rows[0].book_name;
+            report(closed.status === 200 && summary.pending === preview?.pending && summary.needsInfo === preview?.needsInfo && summary.rejected === 3 && summary.drafts === preview?.drafts,
+                'The close did exactly what the preview said', JSON.stringify(summary));
+            report(summary.emailsSent === 3, 'One rejection email per rejected application', `${summary.emailsSent}`);
+            report(!!summary.book?.name && !!closeBackup.bookName, 'The PDF book was created after the close', JSON.stringify(summary.book));
+            const rows = Object.fromEntries((await pool.query('SELECT id, status, decided_by_role FROM applications WHERE semester_id = $1', [tempId])).rows.map((r) => [r.id, r]));
+            report(rows[pendingId].status === 'rejected' && rows[pendingId].decided_by_role === 'system' && rows[waitingId].status === 'rejected' && rows[approvedId].status === 'approved',
+                'Pending and needs info rejected as System, the approved one kept');
+            const reasonsOk = (await pool.query("SELECT bool_and(reason_code = 'SEMESTER_ENDED') AS ok FROM application_events WHERE application_id = ANY($1) AND kind = 'auto_rejected'", [[pendingId, waitingId]])).rows[0].ok;
+            report(reasonsOk === true, 'Recorded with the reason "Not reviewed before the semester closed" (SEMESTER_ENDED)');
+            const semester = (await pool.query('SELECT status, closed_at, closed_by FROM semesters WHERE id = $1', [tempId])).rows[0];
+            report(semester.status === 'closed' && semester.closed_at && semester.closed_by === d.admin.id, 'Closed, with the time and who closed it');
+            report((await pool.query('SELECT count(*)::int AS n FROM late_access WHERE semester_id = $1 AND revoked_at IS NULL', [tempId])).rows[0].n === 0, 'Its late access ended');
+            report((await pool.query('SELECT count(*)::int AS n FROM applications WHERE semester_id = $1', [tempId])).rows[0].n === 4, 'No application was deleted');
+            await expect('Closing it again', call('POST', `admin/semesters/${tempId}/close`, { token: S, json: { confirm_name: tempName } }), 409, 'ALREADY_CLOSED');
+
+            // Read-only for everyone, also through the API directly
+            const stillPending = await app('pending');
+            const stillWaiting = await app('needs_info');
+            const T = tokenFor(student);
+            const decide = (token, id) => call('PUT', `applications/${id}/status`, { token, json: { status: 'approved', final_grade: 4 } });
+            await expect('Closed semester: the reviewer decides', decide(R, stillPending), 409, 'SEMESTER_ENDED');
+            await expect('Closed semester: the admin decides (Decide / overrides)', decide(S, stillPending), 409, 'SEMESTER_ENDED');
+            const actingR = await actingTokenFor(S, d.reviewer);
+            await expect('Closed semester: the admin acting as the reviewer decides', decide(actingR, stillPending), 409, 'SEMESTER_ENDED');
+            await call('POST', 'acting/exit', { token: actingR });
+            await expect('Closed semester: the student withdraws', call('PUT', `applications/${stillPending}/withdraw`, { token: T }), 409, 'SEMESTER_ENDED');
+            await expect('Closed semester: the student replies to a request for information', call('PUT', `applications/${stillWaiting}/resubmit`, { token: T, json: { student_resubmit_note: 'Late reply' } }), 409, 'SEMESTER_ENDED');
+            const actingT = await actingTokenFor(S, student);
+            await expect('Closed semester: the admin acting as the student withdraws', call('PUT', `applications/${stillPending}/withdraw`, { token: actingT }), 409, 'SEMESTER_ENDED');
+            await call('POST', 'acting/exit', { token: actingT });
+            await expect('Closed semester: edit its dates', call('PUT', `admin/semesters/${tempId}`, { token: S, json: { name: tempName, opens_at: '2001-02-01T00:00', closes_at: '2001-03-01T23:59', end_date: '2001-07-30' } }), 409, 'SEMESTER_CLOSED');
+            await expect('Closed semester: Close now', call('POST', `admin/semesters/${tempId}/close-now`, { token: S, json: {} }), 409, 'SEMESTER_NOT_ACTIVE');
+            await expect('Closed semester: Reopen', call('POST', `admin/semesters/${tempId}/reopen`, { token: S, json: { until: '2099-01-01T10:00' } }), 409, 'SEMESTER_NOT_ACTIVE');
+            await expect('Closed semester: activate it again', call('POST', `admin/semesters/${tempId}/activate`, { token: S }), 409, 'SEMESTER_CLOSED');
+            report((await pool.query('SELECT status FROM applications WHERE id = $1', [stillPending])).rows[0].status === 'pending', 'Nothing changed in the closed semester');
+
+            // A setup semester can be activated after the close (this also puts the real one back)
+            await expect('After the close: activate the semester waiting in setup', call('POST', `admin/semesters/${realActive.id}/activate`, { token: S }), 200);
+            closeBackup.realActiveId = null;
+
+            // Past semesters
+            const past = await call('GET', 'admin/past-semesters', { token: S });
+            const listed = (past.body?.semesters || []).find((x) => x.id === tempId);
+            report(listed?.has_book === true && listed.applications === 6, 'Past semesters lists it, with its PDF book and every application', JSON.stringify(listed));
+            const found = await call('GET', `admin/past-semesters/${tempId}/applications?q=${encodeURIComponent('Security Check Close')}`, { token: S });
+            report(found.status === 200 && found.body.total === 6, 'Search by student name', `${found.body?.total}`);
+            const byNeptun = await call('GET', `admin/past-semesters/${tempId}/applications?q=${neptun.toLowerCase()}&status=rejected`, { token: S });
+            report(byNeptun.body?.total === 3, 'Search by Neptun code and status', `${byNeptun.body?.total}`);
+            const byCourse = await call('GET', `admin/past-semesters/${tempId}/applications?q=SECP${stamp}1`, { token: S });
+            report(byCourse.body?.total >= 1, 'Search by course code');
+            await expect('Search with an unknown status', call('GET', `admin/past-semesters/${tempId}/applications?status=lost`, { token: S }), 400, 'INVALID_STATUS');
+            await expect('Search a semester that is not closed', call('GET', `admin/past-semesters/${realActive.id}/applications`, { token: S }), 404, 'SEMESTER_NOT_FOUND');
+            const detail = await call('GET', `admin/past-semesters/${tempId}/applications/${pendingId}`, { token: S });
+            report(detail.status === 200 && detail.body.application.read_only === true && detail.body.application.status === 'rejected', 'One application opens read-only');
+            await expect('An application of another semester', call('GET', `admin/past-semesters/${tempId}/applications/${d.appOfB.id}`, { token: S }), 404, 'APPLICATION_NOT_FOUND');
+            const csv = await fetch(`${API}/admin/past-semesters/${tempId}/export.csv?status=rejected&lang=hu`, { headers: { Authorization: `Bearer ${S}` } });
+            const csvBytes = Buffer.from(await csv.arrayBuffer()); // .text() would drop the BOM
+            const csvText = csvBytes.toString('utf8');
+            const csvLines = csvText.replace(/^\uFEFF/, '').trim().split('\r\n');
+            report(csv.status === 200 && csvBytes[0] === 0xEF && csvBytes[1] === 0xBB && csvBytes[2] === 0xBF && csvLines.length === 4 && csvLines[0].startsWith('"Kérelem";') && csvLines.slice(1).every((l) => l.includes('Elutasítva')),
+                'CSV export: the search results (3 + header), UTF-8 with BOM, in the chosen language', `${csvLines.length} lines`);
+            const book = await fetch(`${API}/admin/past-semesters/${tempId}/book`, { headers: { Authorization: `Bearer ${S}` } });
+            report(book.status === 200 && (book.headers.get('content-type') || '').includes('application/pdf'), 'The PDF book downloads');
+            const previousBook = closeBackup.bookName;
+            const again = await call('POST', `admin/past-semesters/${tempId}/book`, { token: S });
+            report(again.status === 200 && again.body.book && again.body.book !== previousBook, 'Generate the PDF again, without reopening anything');
+            await minioClient.removeObject(ARCHIVE_BUCKET, previousBook).catch(() => {});
+            closeBackup.bookName = again.body?.book || null;
+            report((await pool.query('SELECT status FROM semesters WHERE id = $1', [tempId])).rows[0].status === 'closed', 'Still closed');
+
+            await removeTestStudents();
+            await restoreClose();
+            console.log('(removed the temporary semester, its student, applications and PDF books; the real semester is active again; drafts put back)');
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -2299,6 +2473,11 @@ const finish = async (ok) => {
         await removeTestStudents();
     } catch (err) {
         console.error('Could not remove the temporary test student:', err.message);
+    }
+    try {
+        await restoreClose();
+    } catch (err) {
+        console.error('Could not put back the semesters of section 4p:', err.message);
     }
     try {
         await restoreCatalogue();

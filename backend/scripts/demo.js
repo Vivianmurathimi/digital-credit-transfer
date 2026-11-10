@@ -417,7 +417,7 @@ const main = async () => {
         console.log(`  Csilla's deadline has passed:      ${run(moments.after_deadline)}`);
         console.log(`  7 days before the semester end:    ${run(moments.week_before)}`);
         console.log(`  the semester's last day:           ${run(moments.last_day)}`);
-        console.log(`  the semester has ended:            ${run(moments.after_end)}`);
+        console.log('  closing the semester: the admin does it (Semester section, after its last day), not the job');
     } finally {
         await pool.end();
     }

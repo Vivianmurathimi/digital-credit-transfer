@@ -28,7 +28,26 @@ const splitList = (text, separator) =>
  * @param {string} from  'YYYY-MM-DD', first day of the semester
  * @param {string} to    'YYYY-MM-DD', last day of the semester (included)
  */
-const getTermData = async (from, to) => {
+const getTermData = async (from, to) => loadTermData({
+    where: `a.created_at AT TIME ZONE 'UTC' >= $1::date AT TIME ZONE '${APP_TIMEZONE}'
+           AND a.created_at AT TIME ZONE 'UTC' <  ($2::date + 1) AT TIME ZONE '${APP_TIMEZONE}'`,
+    params: [from, to], from, to,
+});
+
+/**
+ * The term book of one semester (admin round Group 6): every application of that semester,
+ * whatever its submission date. from / to: its opening day and last day (Budapest).
+ */
+const getSemesterTermData = async (semesterId) => {
+    const semester = (await pool.query(
+        `SELECT name, to_char(applications_open_at AT TIME ZONE '${APP_TIMEZONE}', 'YYYY-MM-DD') AS from_day, to_char(end_date, 'YYYY-MM-DD') AS to_day
+         FROM semesters WHERE id = $1`, [semesterId]
+    )).rows[0];
+    if (!semester) throw new Error(`Semester ${semesterId} not found`);
+    return loadTermData({ where: 'a.semester_id = $1', params: [semesterId], from: semester.from_day, to: semester.to_day, label: semester.name });
+};
+
+const loadTermData = async ({ where, params, from, to, label = null }) => {
     const result = await pool.query(
         `SELECT a.id, a.status, a.fulfilled_courses_json, a.pte_course_names,
                 a.student_note, a.system_note, a.reviewer_note, a.student_resubmit_note,
@@ -44,10 +63,9 @@ const getTermData = async (from, to) => {
          JOIN users s ON s.id = a.student_id
          LEFT JOIN users r ON r.id = a.reviewed_by
          LEFT JOIN users d ON d.id = a.decided_by
-         WHERE a.created_at AT TIME ZONE 'UTC' >= $1::date AT TIME ZONE '${APP_TIMEZONE}'
-           AND a.created_at AT TIME ZONE 'UTC' <  ($2::date + 1) AT TIME ZONE '${APP_TIMEZONE}'
+         WHERE ${where}
          ORDER BY a.created_at, a.id`,
-        [from, to]
+        params
     );
 
     const applications = result.rows.map((row) => {
@@ -100,7 +118,8 @@ const getTermData = async (from, to) => {
     const totals = Object.fromEntries(ALL_STATUSES.map((s) => [s, 0]));
     applications.forEach((app) => { totals[app.status] = (totals[app.status] || 0) + 1; });
 
-    return { from, to, generatedAt: new Date(), total: applications.length, totals, applications };
+    return { from, to, label, generatedAt: new Date(), total: applications.length, totals, applications };
 };
 
 module.exports = getTermData;
+module.exports.getSemesterTermData = getSemesterTermData;

@@ -32,6 +32,7 @@ const SEMESTER_COLUMNS = `
     to_char(s.end_date, 'YYYY-MM-DD') AS end_date, s.closed_at, closer.name AS closed_by_name, s.created_at,
     s.last_days_warning_days AS last_days, s.close_reason,
     s.applications_open_at <= now() AS started, s.applications_close_at <= now() AS period_over,
+    (s.end_date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' <= now() AS ended, s.book_error,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id) AS applications,
     (SELECT count(*)::int FROM courses c WHERE c.semester_id = s.id) AS courses`;
 const readSemester = async (db, id) => (await db.query(
@@ -340,7 +341,7 @@ router.put('/admin/courses/:id/status', ...adminOnly, requireIdParam('id'), asyn
     if (!status) return undefined;
     try {
         const course = (await pool.query(
-            `SELECT c.id, COALESCE(sb.ends_at <= now() OR sb.status = 'closed', false) AS semester_closed
+            `SELECT c.id, COALESCE(sb.status = 'closed', false) AS semester_closed
              FROM courses c LEFT JOIN semester_bounds sb ON sb.id = c.semester_id WHERE c.id = $1`, [req.ids.id]
         )).rows[0];
         if (!course) return sendError(res, 404, 'COURSE_NOT_FOUND', 'Course not found');

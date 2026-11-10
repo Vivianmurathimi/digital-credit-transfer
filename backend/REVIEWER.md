@@ -43,10 +43,10 @@ A deactivated reviewer keeps the role "reviewer" but does not count as the progr
 
 ## 3b. Past semesters, read-only (`routes/reviewer.js`, frontend `reviewer/SemesterSelect.js`)
 
-- When a semester ends, **nothing is deleted except unsent drafts**. Unreviewed applications are rejected by System (see section 5), and applications, their history, files and courses all stay. They are only hidden from the current view.
-- The reviewer picks a past semester in the selector. It lists only ended semesters with applications of their own programme, newest first.
+- **The admin closes a semester** (admin round Group 6), never the date by itself: after its last day the admin dashboard shows "Ready to close". Until the close, reviewers can still decide and students can still answer requests for information; nobody can submit. Closing rejects the unreviewed applications as System (reason `SEMESTER_ENDED`), ends its late access and deletes unsent drafts, all in one transaction; then the students are emailed and the semester's PDF book is created. **Nothing else is deleted**: applications, history, files and courses stay, only hidden from the current view (admin: Past semesters).
+- The reviewer picks a past semester in the selector. It lists only closed semesters with applications of their own programme, newest first.
 - A past semester shows the same list, search and details (notes, files, history, decision, grade, who decided), but no decision buttons, and a "Past semester – read only" banner.
-- **The server enforces it, not only the screen.** Any status change on an application whose semester has ended is refused with 409 `SEMESTER_ENDED`: decisions, information requests, the student's withdrawal and replies, for everyone, also the superadmin. The check is part of the same conditional update, so there's no gap between checking and saving.
+- **The server enforces it, not only the screen.** Any status change on an application whose semester is closed is refused with 409 `SEMESTER_ENDED`: decisions, information requests, the student's withdrawal and replies, for everyone, also the superadmin. The check is part of the same conditional update, so there's no gap between checking and saving.
 - **Evidence is kept.** A student can't delete a file that any submitted application uses, in any status or semester (409 `FILE_IN_USE`). Files of unsent drafts can still be removed.
 - **Not yet built:** the superadmin's view of all programmes' past semesters comes in the admin round. Today the superadmin sees a reviewer's past semesters by acting as them.
 
@@ -59,10 +59,10 @@ The only allowed changes, for everyone (reviewer and superadmin alike):
 | pending | approved | reviewer / admin | a **final grade 2–5** (jeles, jó, közepes, elégséges); a note is optional |
 | pending | rejected | reviewer / admin | a **reason** |
 | pending | needs info | reviewer / admin | a **message** saying what the student should send |
-| needs info | pending | the **student**, by replying | before the reply deadline and before the semester ends |
+| needs info | pending | the **student**, by replying | before the reply deadline and before the semester is closed |
 | pending / needs info | withdrawn | the **student** | — |
-| *anything* | *anything* | nobody, once the semester has ended | refused: 409 `SEMESTER_ENDED` (section 3b) |
-| needs info / pending | rejected | the **system** | see section 5 |
+| *anything* | *anything* | nobody, once the semester is closed | refused: 409 `SEMESTER_ENDED` (section 3b) |
+| needs info / pending | rejected | the **system** | no reply in time (section 5), or the admin's close (section 3b) |
 
 Approved and rejected are **final**. The database itself refuses an approval without a grade (migration 011).
 
@@ -81,9 +81,9 @@ Emails are sent after the change is saved and never make a request fail. If a pr
 
 ## 5. Automatic actions (`jobs/applicationJobs.js`, `jobs/scheduler.js`)
 
-The backend runs four steps **when it starts and then every 5 minutes**:
+The backend runs four steps **when it starts and then every 5 minutes**. (Closing the semester is not one of them: the admin does it, section 3b.)
 
-1. **Semester close.** Applications still pending or waiting for information when their semester ended become **rejected by System**, reason `SEMESTER_ENDED` ("Not reviewed before the semester closed"). Old drafts are deleted. In the term book they appear as not reviewed before the semester closed.
+1. **Unsent drafts.** When the active semester's last-days warning starts, students with an unsent draft get one email, "your draft hasn't been submitted; applications close on <date>", once per student and semester (`draft_reminders`).
 2. **Reviewer reminders.** If the programme's active reviewer still has undecided applications in a semester that is ending, they get an email **7 days before the end** and again **on the last day**, with both numbers: waiting for their decision, and waiting for the student's reply.
 3. **Student reminder.** One email 24 hours before the reply deadline.
 4. **No reply in time.** Needs info past its deadline becomes **rejected by System**, reason `NO_INFO_RESPONSE` ("No response to information request").
