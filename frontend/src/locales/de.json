@@ -199,7 +199,7 @@
   "student_syllabus_reason_CREDIT_GAP": "Ihre Leistungspunkte sind niedriger als die des gewählten PTE-Kurses.",
   "student_syllabus_reason_CREDIT_SYSTEMS": "Ihre Leistungspunkte lassen sich nicht automatisch vergleichen (unterschiedliche Leistungspunktesysteme).",
   "student_syllabus_reason_COMBINED_COURSES": "Sie kombinieren mehrere absolvierte Kurse für diesen PTE-Kurs.",
-  "student_syllabus_for_course": "Kursbeschreibung für Kurs {{n}} ({{name}})",
+  "student_syllabus_upload_in_rows": "Laden Sie für jeden Kurs oben eine Kursbeschreibung hoch, direkt neben seiner Leistungsübersicht.",
   "student_upload_syllabus_button": "Kursbeschreibung hochladen",
   "student_replace_syllabus": "Kursbeschreibung ersetzen",
   "student_syllabi_attached": "✓ Kursbeschreibungen angehängt",

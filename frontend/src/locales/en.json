@@ -199,7 +199,7 @@
   "student_syllabus_reason_CREDIT_GAP": "Your credits are lower than those of the chosen PTE course.",
   "student_syllabus_reason_CREDIT_SYSTEMS": "Your credits can't be compared automatically (different credit systems).",
   "student_syllabus_reason_COMBINED_COURSES": "You are combining more than one completed course for this PTE course.",
-  "student_syllabus_for_course": "Syllabus for Course {{n}} ({{name}})",
+  "student_syllabus_upload_in_rows": "Upload a syllabus for each course above, next to its transcript.",
   "student_upload_syllabus_button": "Upload syllabus",
   "student_replace_syllabus": "Replace syllabus",
   "student_syllabi_attached": "✓ Syllabi attached",

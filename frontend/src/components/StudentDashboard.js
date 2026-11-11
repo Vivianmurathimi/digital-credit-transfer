@@ -1242,6 +1242,38 @@ const StudentDashboard = ({ userId }) => {
                                     {uploadStatus && <p style={{ color: 'var(--link)', fontWeight: 'bold', marginTop: '10px' }}>{uploadStatus}</p>}
                                 </div>
                             )}
+
+                            {/* Syllabus (when the syllabus rule applies, or the row already has one): directly below its transcript */}
+                            {(syllabusNeeded || course.syllabus_file) && (
+                            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed var(--border)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    <button
+                                        type="button" id={`row-syllabus-btn-${course.id}`}
+                                        disabled={syllabusStatus[course.id]?.uploading}
+                                        aria-describedby={fieldErrors[`row:${course.id}:syllabus_file`] ? `row-syllabus-btn-${course.id}-error` : undefined}
+                                        onClick={() => chooseSyllabus(course.id)}
+                                        style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                    >
+                                        {course.syllabus_file ? t('student_replace_syllabus') : t('student_upload_syllabus_button')}
+                                    </button>
+                                    {course.syllabus_file && (
+                                        <>
+                                            <span style={{ fontSize: '13px', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(course.syllabus_file)}</span>
+                                            <a href="#open-file" onClick={(e) => handleOpenFile(e, course.syllabus_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
+                                            <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
+                                        </>
+                                    )}
+                                </div>
+                                {renderFieldError(`row:${course.id}:syllabus_file`)}
+                                {syllabusStatus[course.id]?.uploading && <p role="status" style={{ margin: '6px 0 0 0', fontWeight: 'bold' }}>{t('student_upload_saving')}</p>}
+                                {syllabusStatus[course.id]?.message && <p role="alert" style={{ margin: '6px 0 0 0', color: 'var(--error-text)', fontWeight: 'bold' }}>{syllabusStatus[course.id].message}</p>}
+                                {syllabusRowId === course.id && syllabusFile && (
+                                    <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
+                                        <EvidenceHighlighter file={syllabusFile} kind="syllabus" onSave={(blob, name) => uploadSyllabus(course.id, blob, name)} onCancel={() => { setSyllabusRowId(null); setSyllabusFile(null); }} />
+                                    </Suspense>
+                                )}
+                            </div>
+                            )}
                         </div>
                     ))}
 
@@ -1286,43 +1318,14 @@ const StudentDashboard = ({ userId }) => {
                                     {syllabusNeededFor.map((code) => <li key={code}>{t(`student_syllabus_reason_${code}`)}</li>)}
                                 </ul>
                             )}
-                            {fulfilledCourses.map((course, index) => (
-                                <div key={course.id} style={{ padding: '8px 0', borderTop: '1px solid var(--border)' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                        <strong style={{ fontSize: '13px' }}>{t('student_syllabus_for_course', { n: index + 1, name: course.course_name.trim() || '…' })}</strong>
-                                        <button
-                                            type="button" id={`row-syllabus-btn-${course.id}`}
-                                            disabled={syllabusStatus[course.id]?.uploading}
-                                            aria-describedby={fieldErrors[`row:${course.id}:syllabus_file`] ? `row-syllabus-btn-${course.id}-error` : undefined}
-                                            onClick={() => chooseSyllabus(course.id)}
-                                            style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-                                        >
-                                            {course.syllabus_file ? t('student_replace_syllabus') : t('student_upload_syllabus_button')}
-                                        </button>
-                                        {course.syllabus_file && (
-                                            <>
-                                                <span style={{ fontSize: '13px', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(course.syllabus_file)}</span>
-                                                <a href="#open-file" onClick={(e) => handleOpenFile(e, course.syllabus_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
-                                                <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
-                                            </>
-                                        )}
-                                    </div>
-                                    {renderFieldError(`row:${course.id}:syllabus_file`)}
-                                    {syllabusStatus[course.id]?.uploading && <p role="status" style={{ margin: '6px 0 0 0', fontWeight: 'bold' }}>{t('student_upload_saving')}</p>}
-                                    {syllabusStatus[course.id]?.message && <p role="alert" style={{ margin: '6px 0 0 0', color: 'var(--error-text)', fontWeight: 'bold' }}>{syllabusStatus[course.id].message}</p>}
-                                    {syllabusRowId === course.id && syllabusFile && (
-                                        <Suspense fallback={<p role="status">{t('student_highlighter_loading')}</p>}>
-                                            <EvidenceHighlighter file={syllabusFile} kind="syllabus" onSave={(blob, name) => uploadSyllabus(course.id, blob, name)} onCancel={() => { setSyllabusRowId(null); setSyllabusFile(null); }} />
-                                        </Suspense>
-                                    )}
-                                </div>
-                            ))}
-                            <input
-                                ref={syllabusInput} type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
-                                onChange={(e) => { handleSyllabusChosen(e.target.files[0]); e.target.value = ''; }}
-                            />
+                            {syllabusNeeded && <p style={{ fontSize: '13px', margin: 0, fontWeight: 'bold' }}>{t('student_syllabus_upload_in_rows')}</p>}
                         </section>
                     )}
+                    {/* One hidden file picker for every row's syllabus button */}
+                    <input
+                        ref={syllabusInput} type="file" accept={ACCEPT} tabIndex={-1} style={{ display: 'none' }}
+                        onChange={(e) => { handleSyllabusChosen(e.target.files[0]); e.target.value = ''; }}
+                    />
 
                     <div style={{ marginBottom: '20px' }}>
                         <label htmlFor="student-note" style={{ fontWeight: 'bold', color: 'var(--link)' }}>{t('student_notes_label')}</label>
