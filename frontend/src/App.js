@@ -28,7 +28,7 @@ return (
     <Router>
       <div className="App">
         {/* 🆕 Updated Header with Flags and Translated Title */}
-        <header style={{ backgroundColor: 'var(--header-bg)', padding: '10px 20px', color: 'white' }}>
+        <header style={{ backgroundColor: 'var(--header-bg)', padding: '10px 20px', color: 'var(--text-on-primary)' }}>
           <LanguageSwitcher />
           <h1 style={{ textAlign: 'center', marginTop: '0' }}>{t('app_title')}</h1>
         </header>

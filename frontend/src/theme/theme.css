@@ -1,6 +1,11 @@
 /*
- * App colour tokens (school blue and white).
- * Every page uses these names, so a colour can be changed in one place.
+ * App colour tokens (school blue and white). Light theme only.
+ * THE one place for the app's colours: every component uses these names (var(--name)), never a
+ * colour value of its own (npm run check:contrast refuses one). Text pairs pass WCAG AA there too.
+ *
+ * KEEP IN STEP: the emails and the PDF book can't read CSS variables, so their colours are in
+ * backend/utils/brandColors.js. When a colour here changes, change it there too (and the other way round);
+ * the backend npm test (tests/brandColors.test.js) fails when they differ.
  */
 :root {
   color-scheme: light;
@@ -71,6 +76,8 @@
   --blue: #007bff;
   --grey: #6c757d;
   --shadow-modal: rgba(0, 0, 0, 0.3);
+  --shadow-sm: rgba(0, 0, 0, 0.06);   /* cards (admin round Group 8) */
+  --shadow-md: rgba(0, 0, 0, 0.12);   /* raised boxes, drop-down lists */
 
   /* Colour cues (reviewer group L2): soft tints, coloured borders and small chips around the
      school blue. Every cue also has text or an icon, never colour alone. Text on each tint
@@ -101,6 +108,33 @@
   --cue-btn-approve: #1e7a3c;      --cue-btn-approve-text: #ffffff;
   --cue-btn-reject: #b42331;       --cue-btn-reject-text: #ffffff;
   --cue-btn-info: #f2b632;         --cue-btn-info-text: #2b1d00;
+
+  /* Status chips everywhere (admin round Group 8): admin, reviewer and student screens show a status
+     with the same chip (theme/statusCues.js maps a status to its cue). Withdrawn = the neutral cue. */
+  --cue-withdrawn-bg: #eef0f3;     --cue-withdrawn-text: #3d4550;     --cue-withdrawn-border: #cfd5dc;
+
+  /* Admin screens (admin round Group 8) */
+  --section-bg: #f6f8fb;           /* section cards */
+  --section-border: #dbe3ee;
+  --section-heading: #004085;
+  --menu-active-bg: #004085;       --menu-active-text: #ffffff;
+  --menu-hover-bg: #eef3fa;
+  --badge-bg: #b42331;             --badge-text: #ffffff;
+  --banner-info-bg: #e7f0fb;       --banner-info-text: #0b3d7a;       --banner-info-border: #9fbfe6;
+  --banner-success-bg: #e2f3e7;    --banner-success-text: #17552b;    --banner-success-border: #9fd3ad;
+  --banner-warning-bg: #fff1cc;    --banner-warning-text: #6b4400;    --banner-warning-border: #f0c75e;
+  --banner-danger-bg: #fbe3e5;     --banner-danger-text: #8a1c25;     --banner-danger-border: #f0b3b9;
+  --acting-bg: #ffc107;            --acting-text: #1f1300;            /* "Acting as" banner */
+
+  /* Analytics bars (shapes: at least 3:1 against white) */
+  --chart-pending: #4a7fc1;  --chart-needs-info: #b7860b;  --chart-approved: #2e8b4f;
+  --chart-rejected: #c0392b; --chart-withdrawn: #7b8594;   --chart-neutral: #004085;
+  --chart-track: #eef0f3;
+
+  /* The syllabus highlighter (canvas and the saved PDF read these through theme/colors.js) */
+  --highlight-mark: #ffe600;       /* the highlighter pen */
+  --highlight-paper: #ffffff;      /* under transparent parts of an image */
+  --highlight-label: #595959;      /* the label strip on a saved highlighted page */
 }
 
 /* Reviewer list rows (reviewer group L2): hover, and the open row slightly highlighted */
@@ -110,6 +144,10 @@
   background-color: var(--cue-row-open) !important;
   border-left: 4px solid var(--cue-row-open-border) !important;
 }
+
+/* Admin menu (admin round Group 8): hover on the items that aren't the open section */
+.admin-menu-link:not([aria-current="page"]):hover,
+.admin-menu-link:not([aria-current="page"]):focus-visible { background-color: var(--menu-hover-bg) !important; }
 
 body {
   background: var(--bg);

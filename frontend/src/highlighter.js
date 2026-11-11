@@ -3,13 +3,14 @@
 // this file decides which pages are kept and builds the saved file.
 import { PDFDocument, StandardFonts, BlendMode, rgb } from 'pdf-lib';
 import { MAX_PAGES } from './evidenceLimits';
+import { cssColor, hexToRgb01 } from './theme/colors';
 
 export { MAX_PAGES };
 
 // How the yellow marks look: drawn opaque on their own layer, then shown and saved
 // see-through with "multiply", so text stays readable and overlaps don't get darker
 export const MARK_OPACITY = 0.4;
-export const MARK_COLOR = '#ffe600';
+// The pen's colour is --highlight-mark in theme/theme.css (read with theme/colors.js)
 
 // Images keep their resolution, but the longer side is capped (a phone photo would be huge)
 export const MAX_IMAGE_SIDE = 2500;
@@ -83,8 +84,11 @@ export const fitWithin = (width, height, max = MAX_IMAGE_SIDE) => {
 const addPageStrip = (page, font, label, box) => {
     page.setMediaBox(box.x, box.y - STRIP_HEIGHT, box.width, box.height + STRIP_HEIGHT);
     page.setCropBox(box.x, box.y - STRIP_HEIGHT, box.width, box.height + STRIP_HEIGHT);
-    page.drawRectangle({ x: box.x, y: box.y - STRIP_HEIGHT, width: box.width, height: STRIP_HEIGHT, color: rgb(1, 1, 1) });
-    page.drawText(label, { x: box.x + 8, y: box.y - STRIP_HEIGHT + 5, size: 8, font, color: rgb(0.35, 0.35, 0.35) });
+    // The strip's colours come from the theme (--highlight-paper, --highlight-label)
+    const paper = hexToRgb01(cssColor('--highlight-paper')) || { r: 1, g: 1, b: 1 };
+    const ink = hexToRgb01(cssColor('--highlight-label')) || { r: 0, g: 0, b: 0 };
+    page.drawRectangle({ x: box.x, y: box.y - STRIP_HEIGHT, width: box.width, height: STRIP_HEIGHT, color: rgb(paper.r, paper.g, paper.b) });
+    page.drawText(label, { x: box.x + 8, y: box.y - STRIP_HEIGHT + 5, size: 8, font, color: rgb(ink.r, ink.g, ink.b) });
 };
 
 const stripLabel = (number, total) => `Original page ${number} of ${total}`;

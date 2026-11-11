@@ -1,3 +1,4 @@
+import { cueForStatus } from './theme/statusCues.js'; // .js: also loaded by npm run check:reviewer-list (Node)
 // The reviewer dashboard's list rules (reviewer Group 3), without React, so they can be tested on
 // their own (npm run check:reviewer-list). The backend decides WHICH applications are listed (own
 // programme only, completed ones of the current semester only); these only split, search and sort them.
@@ -195,6 +196,6 @@ export const respondByLevel = (deadline, now = new Date()) => (daysUntil(deadlin
  */
 export const statusCue = (status, decidedByRole = null) => {
     if (status === 'rejected' && decidedByRole === 'system') return { cue: 'system', labelKey: 'reviewer_status_rejected_system' };
-    const cues = { pending: 'pending', needs_info: 'needs-info', approved: 'approved', rejected: 'rejected', withdrawn: 'neutral' };
-    return { cue: cues[status] || 'neutral', labelKey: `status_${status}` };
+    // The same cue as on every other screen (theme/statusCues.js, admin round Group 8)
+    return { cue: cueForStatus(status), labelKey: `status_${status}` };
 };

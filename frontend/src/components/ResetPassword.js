@@ -60,7 +60,7 @@ const ResetPassword = () => {
                     />
                 </div>
                 
-                <button type="submit" style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {t('reset_button')}
                 </button>
             </form>

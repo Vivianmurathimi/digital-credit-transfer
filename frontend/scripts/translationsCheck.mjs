@@ -6,7 +6,7 @@
  * 3. No unused keys: every key is used somewhere in the frontend. Keys built at run time count as
  *    used through their prefix (t(`student_status_${status}`) uses every student_status_* key), and
  *    error texts (errors.CODE) through their code appearing in the backend or the frontend.
- * 4. No hard-coded English on the student side and in the reviewer dashboard: visible text,
+ * 4. No hard-coded English on any screen (student, reviewer, admin): visible text,
  *    alert()/confirm(), aria-label, title, placeholder and alt must come from the locale files.
  * 5. Every student email template exists in HU, EN and DE with the same parts.
  *
@@ -22,23 +22,14 @@ const SRC = join(here, '..', 'src');
 const BACKEND = join(here, '..', '..', 'backend');
 const LANGUAGES = ['en', 'hu', 'de'];
 
-// The student's screens (and the pages before login, the reviewer invite page too), checked for hard-coded English
+// Every screen (student, reviewer, admin and the pages before login) is checked for hard-coded text:
+// all components (admin round Group 8 widened this from the student and reviewer files) and App.js
 const STUDENT_FILES = [
-    'components/StudentDashboard.js', 'components/ApplicationDetail.js', 'components/SubmitSummary.js',
-    'components/SubmissionBanner.js', 'components/ReplyDeadline.js', 'components/EvidenceHighlighter.js',
-    'components/ProfileHeader.js', 'components/Dashboard.js', 'components/Login.js', 'components/Register.js',
-    'components/ForgotPassword.js', 'components/ResetPassword.js', 'components/VerifyEmail.js', 'components/EmailLink.js',
-    'components/Notice.js', 'components/LanguageSwitcher.js', 'components/PasswordInput.js', 'components/SecureImage.js',
-    'components/AcceptInvite.js',
-    // The reviewer dashboard (reviewer Group 3 on)
-    'components/ReviewerDashboard.js', 'components/reviewer/ReviewerHeader.js', 'components/reviewer/ReviewerTabs.js',
-    'components/reviewer/ReviewerSearch.js', 'components/reviewer/ApplicationRow.js', 'components/reviewer/ApplicationDetails.js',
-    'components/reviewer/DecisionModal.js', 'components/reviewer/FileLink.js', 'components/reviewer/CreditComparison.js',
-    'components/reviewer/NotesConversation.js', 'components/reviewer/HistoryTable.js',
-    // The admin's banner per programme (reviewer Group 7)
-    'components/ReviewerOverview.js',
-    // The semester selector (reviewer group L3)
-    'components/reviewer/SemesterSelect.js',
+    'App.js',
+    ...readdirSync(join(SRC, 'components'), { recursive: true })
+        .filter((name) => /\.(js|jsx)$/.test(name) && !/\.test\.js$/.test(name))
+        .map((name) => `components/${name.split('\\').join('/')}`)
+        .sort(),
 ];
 
 const problems = [];
@@ -130,8 +121,8 @@ if (!emails.translatedTables) problem('Emails', 'backend/utils/emailTemplates.js
 const counts = { keys: allKeys.length, files: STUDENT_FILES.length };
 if (problems.length) {
     problems.forEach((p) => console.log(`FAIL  ${p}`));
-    console.log(`\n${problems.length} problem(s) in ${counts.keys} keys and ${counts.files} student-side and reviewer files`);
+    console.log(`\n${problems.length} problem(s) in ${counts.keys} keys and ${counts.files} screen files`);
     process.exit(1);
 }
-console.log(`All translations complete: ${counts.keys} keys in EN/HU/DE with matching placeholders, none unused, no hard-coded English in ${counts.files} student-side and reviewer files, emails in HU/EN/DE`);
+console.log(`All translations complete: ${counts.keys} keys in EN/HU/DE with matching placeholders, none unused, no hard-coded English in ${counts.files} screen files, emails in HU/EN/DE`);
 console.log(`(checked from ${relative(process.cwd(), SRC)})`);

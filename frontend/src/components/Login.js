@@ -60,7 +60,7 @@ const Login = () => {
                         placeholder={t('login_password_placeholder')}
                     />
                 </div>
-                <button type="submit" style={{ padding: '10px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" style={{ padding: '10px', backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {t('login')}
                 </button>
             </form>

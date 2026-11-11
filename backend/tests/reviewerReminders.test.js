@@ -5,7 +5,7 @@
  *   npm test
  *
  * Uses the database from backend/.env (run "npm run migrate" first). It adds two test semesters far
- * in the future (2098) and its own test applications in a programme that has an active reviewer, and
+ * in the future (2094) and its own test applications in a programme that has an active reviewer, and
  * deletes them at the end (the reminders go with their semester). Every run is limited to the
  * test's own applications (`only`), and no email is sent (a fake `remind` records them).
  */
@@ -23,8 +23,8 @@ const DAY = 24 * HOUR;
 
 // Semester A ends in summer time (UTC+2), semester B in winter time (UTC+1)
 const SEMESTERS = {
-    A: { opens: '2098-02-01', closes: '2098-02-28', endsOn: '2098-06-30', weekBefore: '2098-06-23T22:00:00Z', lastDay: '2098-06-29T22:00:00Z', end: '2098-06-30T22:00:00Z' },
-    B: { opens: '2098-09-01', closes: '2098-09-30', endsOn: '2098-12-20', weekBefore: '2098-12-13T23:00:00Z', lastDay: '2098-12-19T23:00:00Z', end: '2098-12-20T23:00:00Z' },
+    A: { opens: '2094-02-01', closes: '2094-02-28', endsOn: '2094-06-30', weekBefore: '2094-06-23T22:00:00Z', lastDay: '2094-06-29T22:00:00Z', end: '2094-06-30T22:00:00Z' },
+    B: { opens: '2094-09-01', closes: '2094-09-30', endsOn: '2094-12-20', weekBefore: '2094-12-13T23:00:00Z', lastDay: '2094-12-19T23:00:00Z', end: '2094-12-20T23:00:00Z' },
 };
 const moment = (iso, offsetMs = 0) => new Date(new Date(iso).getTime() + offsetMs);
 

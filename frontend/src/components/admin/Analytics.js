@@ -4,6 +4,7 @@ import http from '../../http';
 import { getErrorMessage, unpackBlobError } from '../../errorMessage';
 import { programmeName } from '../../programmeName';
 import { card, input, label, smallButton, td, th } from './adminStyles';
+import { chartColorForStatus } from '../../theme/statusCues';
 
 // Analytics (admin round Group 7): how a semester went, calculated on the server. The active semester
 // by default, closed ones selectable. Plain tables with simple bars (HTML only, no chart library),
@@ -12,13 +13,14 @@ import { card, input, label, smallButton, td, th } from './adminStyles';
 // waiting for the student's reply.
 
 const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
-const STATUS_CUES = { pending: 'pending', needs_info: 'needs-info', approved: 'approved', rejected: 'rejected', withdrawn: 'neutral' };
+
 
 // A bar whose length is the value's share of the largest one
-const Bar = ({ value, max, cue = 'pending', text }) => (
+// color: a --chart-* token (theme/statusCues.js chartColorForStatus for a status)
+const Bar = ({ value, max, color = 'var(--chart-neutral)', text }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '160px' }}>
-        <div aria-hidden="true" style={{ flex: '1 1 auto', height: '12px', backgroundColor: 'var(--surface-2)', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-            <div style={{ width: `${max > 0 ? Math.round((value / max) * 100) : 0}%`, height: '100%', backgroundColor: `var(--cue-${cue}-border)` }} />
+        <div aria-hidden="true" style={{ flex: '1 1 auto', height: '12px', backgroundColor: 'var(--chart-track)', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ width: `${max > 0 ? Math.round((value / max) * 100) : 0}%`, height: '100%', backgroundColor: color }} />
         </div>
         <span style={{ minWidth: '44px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{text ?? value}</span>
     </div>
@@ -93,7 +95,7 @@ const Analytics = () => {
                             <thead><tr><th style={th}>{t('staff_status_column')}</th><th style={th}>{t('analytics_applications_column')}</th></tr></thead>
                             <tbody>
                                 {STATUSES.map((s) => (
-                                    <tr key={s}><td style={td}>{t(`status_${s}`)}</td><td style={td}><Bar value={a.status.overall[s]} max={maxStatus} cue={STATUS_CUES[s]} /></td></tr>
+                                    <tr key={s}><td style={td}>{t(`status_${s}`)}</td><td style={td}><Bar value={a.status.overall[s]} max={maxStatus} color={chartColorForStatus(s)} /></td></tr>
                                 ))}
                                 <tr><td style={{ ...td, fontWeight: 'bold' }}>{t('analytics_total')}</td><td style={{ ...td, fontWeight: 'bold' }}>{a.status.overall.total}</td></tr>
                             </tbody>

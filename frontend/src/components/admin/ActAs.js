@@ -48,7 +48,7 @@ const ActAs = ({ role, onActingStarted }) => {
                     style={{ width: '100%', padding: '10px', border: '1px solid var(--link)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px' }}
                 />
                 {open && (
-                    <div style={{ position: 'absolute', top: '44px', left: 0, right: 0, maxHeight: '220px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--link)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+                    <div style={{ position: 'absolute', top: '44px', left: 0, right: 0, maxHeight: '220px', overflowY: 'auto', backgroundColor: 'var(--surface)', border: '1px solid var(--link)', borderRadius: '5px', zIndex: 1000, boxShadow: '0 4px 8px var(--shadow-md)' }}>
                         {found.length === 0 ? <div style={{ padding: '10px', color: 'var(--danger-accent)', fontSize: '13px', textAlign: 'center' }}>{t(isStudent ? 'superadmin_no_students' : 'superadmin_no_reviewers')}</div> : found.map((person) => (
                             <div
                                 key={person.id} role="button" tabIndex={0} onClick={() => actAs(person)} onKeyDown={(e) => { if (e.key === 'Enter') actAs(person); }}

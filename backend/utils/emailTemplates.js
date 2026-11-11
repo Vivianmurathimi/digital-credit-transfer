@@ -2,6 +2,7 @@
 // Kept in the backend (not shared with the frontend locale files) so the two projects stay separate.
 
 const { FRONTEND_URL } = require('../config/urls');
+const { BRAND_COLORS: C } = require('./brandColors');
 
 const SUPPORTED_LANGUAGES = ['hu', 'en', 'de'];
 const DEFAULT_LANGUAGE = 'hu';
@@ -219,8 +220,8 @@ const templates = {
 };
 
 const noteBlock = (title, note) => `
-    <div style="background-color: #f0f4fa; border-left: 4px solid #004085; padding: 12px 15px; margin: 15px 0; border-radius: 4px;">
-        <strong style="color: #004085;">${title}</strong>
+    <div style="background-color: ${C.panel}; border-left: 4px solid ${C.panelBorder}; padding: 12px 15px; margin: 15px 0; border-radius: 4px;">
+        <strong style="color: ${C.brand};">${title}</strong>
         <p style="margin: 8px 0 0 0;">${formatNote(note)}</p>
     </div>`;
 
@@ -276,13 +277,13 @@ const buildEmail = (type, lang, data) => {
     const dashboardUrl = data.linkUrl || `${FRONTEND_URL}/login`;
 
     const html = `
-        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
-            <h2 style="color: #004085;">${escapeHtml(words.signature)}</h2>
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
+            <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
             <p>${escapeHtml(words.greeting(data.name || ''))}</p>
             ${content}
-            <a href="${dashboardUrl}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${words.button}</a>
-            <p style="color: #666; font-size: 12px; margin-top: 8px;">${words.linkNote}</p>
-            <p style="color: #666; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+            <a href="${dashboardUrl}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${words.button}</a>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 8px;">${words.linkNote}</p>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
         </div>`;
 
     return { subject: template.subject, html };
@@ -417,7 +418,7 @@ const buildAccountEmail = (type, lang, { url, programme = '', deadline = null })
     const language = normalizeLanguage(lang);
     const words = accountTemplates[language][type];
     const link = escapeHtml(url);
-    const color = type === 'resetPassword' ? '#dc3545' : '#004085';
+    const color = type === 'resetPassword' ? C.red : C.brand;
     // lateAccess (admin round Group 5) shows its deadline in Budapest time, in the language
     const text = typeof words.text === 'function' ? words.text(programme, deadline ? formatDeadline(deadline, language) : '') : words.text;
     // The verification and invite emails show the link as text too; the reset email says what to do if unrequested
@@ -425,10 +426,10 @@ const buildAccountEmail = (type, lang, { url, programme = '', deadline = null })
         ? `<p>${escapeHtml(words.footer)}</p>`
         : `<p>${escapeHtml(words.footer)}<br/>${link}</p>`;
     const html = `
-        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
             <h2>${escapeHtml(words.heading)}</h2>
             <p>${escapeHtml(text)}</p>
-            <a href="${link}" style="background-color: ${color}; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">${escapeHtml(words.button)}</a>
+            <a href="${link}" style="background-color: ${color}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">${escapeHtml(words.button)}</a>
             ${footer}
         </div>`;
     return { subject: words.subject, html };
@@ -526,12 +527,12 @@ const buildReviewerEmail = (type, lang, { name, student = '', course = '', progr
         date: endsOn ? escapeHtml(formatDay(endsOn, language)) : '', pending: Number(pending) || 0, needsInfo: Number(needsInfo) || 0,
     });
     const html = `
-        <div style="font-family: Arial, sans-serif; color: #222; max-width: 600px;">
-            <h2 style="color: #004085;">${escapeHtml(words.signature)}</h2>
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
+            <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
             <p>${escapeHtml(words.greeting(name || ''))}</p>
             ${body}
-            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: #004085; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
-            <p style="color: #666; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
         </div>`;
     return { subject: template.subject, html };
 };
