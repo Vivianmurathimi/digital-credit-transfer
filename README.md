@@ -85,8 +85,13 @@ password. After that, admins invite each other from the dashboard.
 ## Checks
 
 From `backend`: `npm test`, `npm run security-check` (with the backend running), `npm run check:domains`.
-From `frontend`: `npm run check:translations`, `npm run check:contrast`, `npm run check:form-rules`,
+From `frontend`: `npm run check:translations`, `npm run check:missing-keys`, `npm run check:contrast`, `npm run check:form-rules`,
 `npm run check:reviewer-list`, `npm run check:admin-menu`, `CI=true npm test`, `npm run build`.
+
+Colours: the app's colours live only in `frontend/src/theme/theme.css` (`check:contrast` refuses a colour
+written in a component and checks every text pair for WCAG AA). The emails and the PDF book use
+`backend/utils/brandColors.js`, which must be changed together with `theme.css`; the backend `npm test`
+fails when the two differ.
 
 ## The admin menu
 

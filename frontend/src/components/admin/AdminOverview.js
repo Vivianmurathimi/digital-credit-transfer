@@ -3,14 +3,14 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import ReviewerOverview from '../ReviewerOverview';
 import { formatDay } from '../../dates';
-import { card } from './adminStyles';
+import { banner, card } from './adminStyles';
 
 // Overview (admin round Group 5): what needs attention, as warning cards that link to their
 // section, and quick counts. Each warning appears only when its condition is true. Below: the
 // per-programme overview (pending, waiting for the student, reviewer, last day) from Group 7.
 
-const warningCard = { backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '12px', borderRadius: '6px', marginBottom: '10px' };
-const countBox = { flex: '1 1 140px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' };
+const warningCard = banner('danger');
+const countBox = { flex: '1 1 140px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--surface)', border: '1px solid var(--section-border)' };
 
 const AdminOverview = ({ summary }) => {
     const { t, i18n } = useTranslation();
@@ -35,7 +35,7 @@ const AdminOverview = ({ summary }) => {
                     {summary.activeSemester ? t('admin_overview_semester', { name: summary.activeSemester.name }) : t('admin_warning_no_semester')}
                 </p>
                 {warnings.length === 0
-                    ? <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{t('admin_overview_all_good')}</p>
+                    ? <p role="status" style={{ ...banner('success'), fontWeight: 'bold' }}>{t('admin_overview_all_good')}</p>
                     : warnings.map((w) => (
                         <div key={w.key} role="alert" style={warningCard}>
                             {t(w.key, { count: w.count, name: w.name, date: w.date, pending: w.pending, needsInfo: w.needsInfo })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>

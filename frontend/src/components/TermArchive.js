@@ -90,7 +90,7 @@ const TermArchive = () => {
                 <button
                     onClick={handleGenerate}
                     disabled={isGenerating}
-                    style={{ padding: '11px 20px', fontSize: '15px', fontWeight: 'bold', cursor: isGenerating ? 'wait' : 'pointer', backgroundColor: isGenerating ? 'var(--grey)' : 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px' }}
+                    style={{ padding: '11px 20px', fontSize: '15px', fontWeight: 'bold', cursor: isGenerating ? 'wait' : 'pointer', backgroundColor: isGenerating ? 'var(--grey)' : 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px' }}
                 >
                     {isGenerating ? t('archive_generating') : t('archive_generate')}
                 </button>
@@ -109,7 +109,7 @@ const TermArchive = () => {
             <h3 style={{ color: 'var(--link)', marginBottom: '10px' }}>{t('archive_saved_title')}</h3>
             <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                 <thead>
-                    <tr style={{ backgroundColor: 'var(--brand)', color: 'white' }}>
+                    <tr style={{ backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)' }}>
                         <th style={cellStyle}>{t('archive_col_semester')}</th>
                         <th style={cellStyle}>{t('archive_col_applications')}</th>
                         <th style={cellStyle}>{t('archive_col_pages')}</th>
@@ -133,7 +133,7 @@ const TermArchive = () => {
                             <td style={{ ...cellStyle, textAlign: 'center' }}>
                                 <button
                                     onClick={() => handleDownload(archive.name)}
-                                    style={{ padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                    style={{ padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                                 >
                                     📥 {t('archive_download')}
                                 </button>

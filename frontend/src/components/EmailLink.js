@@ -55,7 +55,7 @@ const EmailLink = () => {
                     <p>{invalid ? t('errors.INVALID_LINK') : t('email_link_expired_message', { seconds: REDIRECT_SECONDS })}</p>
                     <button
                         onClick={() => navigate('/login', { replace: true })}
-                        style={{ padding: '10px 20px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}
+                        style={{ padding: '10px 20px', backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}
                     >
                         {t('email_link_go_to_login')}
                     </button>

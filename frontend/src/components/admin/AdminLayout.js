@@ -33,7 +33,7 @@ const useNarrow = () => {
     return narrow;
 };
 
-const badgeStyle = { marginLeft: 'auto', minWidth: '20px', padding: '0 6px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'center', backgroundColor: 'var(--cue-rejected-bg)', color: 'var(--cue-rejected-text)', border: '1px solid var(--cue-rejected-border)' };
+const badgeStyle = { marginLeft: 'auto', minWidth: '20px', padding: '0 6px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', textAlign: 'center', backgroundColor: 'var(--badge-bg)', color: 'var(--badge-text)' };
 
 // onActingStarted: Dashboard swaps to the person's screen (and remembers this section for Exit)
 const AdminLayout = ({ onActingStarted }) => {
@@ -74,12 +74,12 @@ const AdminLayout = ({ onActingStarted }) => {
                     return (
                         <li key={s.id}>
                             <NavLink
-                                to={pathOf(s)} end
+                                to={pathOf(s)} end className="admin-menu-link"
                                 style={({ isActive }) => ({
                                     display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', borderRadius: '6px', marginBottom: '4px',
                                     textDecoration: 'none', fontWeight: isActive ? 'bold' : 'normal',
-                                    color: isActive ? 'var(--text-on-primary)' : 'var(--text)',
-                                    backgroundColor: isActive ? 'var(--brand)' : 'transparent',
+                                    color: isActive ? 'var(--menu-active-text)' : 'var(--text)',
+                                    backgroundColor: isActive ? 'var(--menu-active-bg)' : 'transparent',
                                 })}
                             >
                                 <span>{t(s.labelKey)}</span>
@@ -105,7 +105,7 @@ const AdminLayout = ({ onActingStarted }) => {
                     {menuOpen && <div id="admin-menu" style={{ marginTop: '8px', padding: '8px', border: '1px solid var(--border)', borderRadius: '6px', backgroundColor: 'var(--surface)' }}>{menu}</div>}
                 </div>
             ) : (
-                <aside id="admin-menu" style={{ flex: '0 0 230px', position: 'sticky', top: '10px', padding: '10px', border: '1px solid var(--border)', borderRadius: '8px', backgroundColor: 'var(--surface)' }}>
+                <aside id="admin-menu" style={{ flex: '0 0 230px', position: 'sticky', top: '10px', padding: '10px', border: '1px solid var(--section-border)', borderRadius: '8px', backgroundColor: 'var(--section-bg)' }}>
                     {menu}
                 </aside>
             )}

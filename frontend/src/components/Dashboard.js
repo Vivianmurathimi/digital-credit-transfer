@@ -67,9 +67,9 @@ const Dashboard = () => {
     return (
         <div style={{ padding: '20px', margin: '0 auto', fontFamily: 'sans-serif' }}>
             {acting && (
-                <div role="status" style={{ backgroundColor: 'var(--yellow)', color: '#000', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
+                <div role="status" style={{ backgroundColor: 'var(--acting-bg)', color: 'var(--acting-text)', padding: '15px', textAlign: 'center', fontWeight: 'bold', marginBottom: '20px', borderRadius: '8px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '20px' }}>
                     <span>{t('acting_banner', { name: actingName, role: t(`role_${role}`) })}</span>
-                    <button type="button" onClick={handleExit} disabled={exiting} style={{ cursor: exiting ? 'wait' : 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px' }}>{t('acting_exit')}</button>
+                    <button type="button" onClick={handleExit} disabled={exiting} style={{ cursor: exiting ? 'wait' : 'pointer', padding: '8px 15px', fontWeight: 'bold', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px' }}>{t('acting_exit')}</button>
                     {exitError && <span role="alert" style={{ width: '100%' }}>{exitError}</span>}
                 </div>
             )}
@@ -79,7 +79,7 @@ const Dashboard = () => {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center', justifyContent: 'flex-end' }}>
                     {/* The profile of the person the session is for (while acting: that person's) */}
                     <ProfileHeader key={`${role}-${userId}`} />
-                    <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
+                    <button onClick={handleLogout} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>{t('logout_button')}</button>
                 </div>
             </div>
 

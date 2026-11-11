@@ -8,8 +8,9 @@ import { formatDate } from '../dates';
 // domain on this list (exact match). Removing a domain blocks new sign-ups only. With an empty list
 // nobody can register, and a red warning says so. The server checks the format again.
 
-const card = { backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--border)', marginBottom: '30px' };
-const warning = { backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', border: '1px solid var(--danger-border)', padding: '12px', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' };
+// The admin section card (admin round Group 8: same as components/admin/adminStyles.js)
+const card = { backgroundColor: 'var(--section-bg)', padding: '20px', borderRadius: '10px', border: '1px solid var(--section-border)', boxShadow: '0 1px 2px var(--shadow-sm)', marginBottom: '30px' };
+const warning = { backgroundColor: 'var(--banner-danger-bg)', color: 'var(--banner-danger-text)', border: '1px solid var(--banner-danger-border)', padding: '12px', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' };
 
 // onChange: called after a change (the admin menu's badges refresh)
 const AllowedDomains = ({ onChange = () => {} }) => {

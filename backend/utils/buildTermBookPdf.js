@@ -2,6 +2,7 @@ const { gradeLabel, reasons } = require('./emailTemplates');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const fetchEvidence = require('./fetchEvidence');
+const { BRAND_COLORS } = require('./brandColors');
 
 // --- Layout -------------------------------------------------------------
 const MM = 72 / 25.4;               // PDF points per millimetre
@@ -13,9 +14,10 @@ const INDEX_ROW_HEIGHT = 18;
 const TIMEZONE = 'Europe/Budapest';
 
 const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+// Colours from brandColors.js (kept in step with the app's theme.css); status text as on the status chips
 const COLORS = {
-    brand: '#004085', text: '#000000', muted: '#666666', line: '#cccccc', panel: '#f0f4fa',
-    status: { approved: '#0a58ca', pending: '#2f73cf', needs_info: '#fd7e14', rejected: '#dc3545', withdrawn: '#6c757d' },
+    brand: BRAND_COLORS.brand, text: BRAND_COLORS.text, muted: BRAND_COLORS.textMuted, line: BRAND_COLORS.line,
+    status: BRAND_COLORS.status,
 };
 const STATUS_LABELS = { pending: 'Pending', needs_info: 'Needs Info', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' };
 const NOTE_LABELS = [

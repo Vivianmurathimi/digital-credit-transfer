@@ -172,7 +172,7 @@ const Register = () => {
                             <PasswordInput id="register-password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle(false)} placeholder={t('register_password_placeholder')} />
                         </div>
 
-                        <button type="submit" style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', marginTop: '10px' }}>
+                        <button type="submit" style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', marginTop: '10px' }}>
                              {t('register_button')}
                         </button>
                     </form>

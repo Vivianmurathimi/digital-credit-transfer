@@ -11,7 +11,8 @@ import { programmeName } from '../programmeName';
 // removed; the server does it all in one step and records the change. Each student's past changes
 // are listed under them.
 
-const card = { backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--border)', marginBottom: '30px' };
+// The admin section card (admin round Group 8: same as components/admin/adminStyles.js)
+const card = { backgroundColor: 'var(--section-bg)', padding: '20px', borderRadius: '10px', border: '1px solid var(--section-border)', boxShadow: '0 1px 2px var(--shadow-sm)', marginBottom: '30px' };
 const td = { padding: '8px', borderBottom: '1px solid var(--border-subtle)', fontSize: '14px', verticalAlign: 'top', overflowWrap: 'anywhere' };
 const th = { padding: '8px', textAlign: 'left', borderBottom: '2px solid var(--border)', fontSize: '14px' };
 const MIN_SEARCH = 2;

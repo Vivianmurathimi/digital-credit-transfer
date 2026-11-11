@@ -90,10 +90,10 @@ const SubmitSummary = ({
             <p style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{note.trim() ? note : <em>{t('student_summary_no_note')}</em>}</p>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap', marginTop: '20px' }}>
-                <button type="button" onClick={onBack} disabled={busy} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                <button type="button" onClick={onBack} disabled={busy} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                     {t('student_summary_back')}
                 </button>
-                <button type="button" onClick={onConfirm} disabled={busy} style={{ padding: '10px 15px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
+                <button type="button" onClick={onConfirm} disabled={busy} style={{ padding: '10px 15px', backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
                     {busy ? t('student_submit_saving') : t('student_summary_confirm')}
                 </button>
             </div>

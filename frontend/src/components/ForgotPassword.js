@@ -47,7 +47,7 @@ const ForgotPassword = () => {
                     />
                 </div>
                 
-                <button type="submit" disabled={isLoading} style={{ padding: '12px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" disabled={isLoading} style={{ padding: '12px', backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {isLoading ? t('forgot_sending') : t('forgot_send_button')}
                 </button>
             </form>

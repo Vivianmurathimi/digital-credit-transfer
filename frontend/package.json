@@ -29,7 +29,8 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "check:contrast": "node scripts/contrastCheck.mjs",
-    "check:admin-menu": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/adminMenuCheck.mjs"
+    "check:admin-menu": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/adminMenuCheck.mjs",
+    "check:missing-keys": "node scripts/missingKeysCheck.mjs"
   },
   "eslintConfig": {
     "extends": [

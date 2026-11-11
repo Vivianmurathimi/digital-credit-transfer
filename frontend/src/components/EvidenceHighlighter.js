@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as pdfjsLib from 'pdfjs-dist';
 import {
-    MARK_COLOR, MARK_OPACITY, MAX_PAGES, MARKER_WIDTH_SHARE, ERASER_WIDTH_SHARE,
+    MARK_OPACITY, MAX_PAGES, MARKER_WIDTH_SHARE, ERASER_WIDTH_SHARE,
     fitWithin, hasVisibleMarks, hasEnoughHighlight, isTooLong, pagesToKeep, rememberRecent, buildHighlightedPdf,
 } from '../highlighter';
+import { cssColor } from '../theme/colors';
 import { MAX_MB, tooLargeToUpload } from '../fileRules';
 
 // The PDF engine's helper (worker) is bundled with the app, so its version always matches
@@ -42,7 +43,7 @@ const markState = (canvas) => {
 const flatten = (pageCanvas, marksCanvas) => {
     const canvas = newCanvas(pageCanvas.width, pageCanvas.height);
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff'; // transparent parts of an image become white, so marks stay visible
+    ctx.fillStyle = cssColor('--highlight-paper'); // transparent parts of an image become white, so marks stay visible
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(pageCanvas, 0, 0);
     if (marksCanvas) {
@@ -213,7 +214,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                     const { width, height } = fitWithin(image.naturalWidth, image.naturalHeight);
                     const canvas = newCanvas(width, height);
                     const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#ffffff'; // white under transparent parts (e.g. some PNG screenshots)
+                    ctx.fillStyle = cssColor('--highlight-paper'); // white under transparent parts (e.g. some PNG screenshots)
                     ctx.fillRect(0, 0, width, height);
                     ctx.drawImage(image, 0, 0, width, height);
                     pagesRef.current.set(1, { page: canvas, marks: null, points: { width, height } });
@@ -255,7 +256,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
         ctx.lineJoin = 'round';
         // A share of the page width, so a stroke looks the same at every page size
         ctx.lineWidth = markCanvasRef.current.width * (tool === 'eraser' ? ERASER_WIDTH_SHARE : MARKER_WIDTH_SHARE);
-        ctx.strokeStyle = MARK_COLOR;
+        ctx.strokeStyle = cssColor('--highlight-mark');
         // The eraser only removes marks: the page itself is on another canvas
         ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
         ctx.beginPath();
@@ -381,8 +382,8 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap' }}>
                         {toolButton('marker', t('student_tool_highlighter'))}
                         {toolButton('eraser', t('student_tool_eraser'))}
-                        <button type="button" onClick={clearPage} style={{ ...smallButton, backgroundColor: 'var(--red)', color: 'white', border: 'none' }}>{t('student_tool_clear_page')}</button>
-                        <button type="button" onClick={onCancel} style={{ ...smallButton, backgroundColor: 'var(--grey)', color: 'white', border: 'none' }}>{t('student_remove_selected_file')}</button>
+                        <button type="button" onClick={clearPage} style={{ ...smallButton, backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none' }}>{t('student_tool_clear_page')}</button>
+                        <button type="button" onClick={onCancel} style={{ ...smallButton, backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none' }}>{t('student_remove_selected_file')}</button>
                     </div>
 
                     {multiPage && (
@@ -399,7 +400,7 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
                     {/* The page and its marks: the marks canvas is see-through and blended like a highlighter pen */}
                     {/* White page background, and "isolate" keeps the highlighter's blending inside this box:
                         otherwise the yellow marks would mix with a coloured box around the highlighter */}
-                    <div style={{ position: 'relative', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid var(--border-strong)', lineHeight: 0, backgroundColor: '#ffffff', isolation: 'isolate' }}>
+                    <div style={{ position: 'relative', width: '100%', maxWidth: '820px', margin: '0 auto', border: '1px solid var(--border-strong)', lineHeight: 0, backgroundColor: 'var(--highlight-paper)', isolation: 'isolate' }}>
                         <canvas ref={pageCanvasRef} role="img" aria-label={t('student_highlighter_page_label', { page: pageNumber, total: pageCount })} style={{ width: '100%', height: 'auto', display: 'block' }} />
                         <canvas
                             ref={markCanvasRef}
@@ -435,14 +436,14 @@ const EvidenceHighlighter = ({ file, onSave, onCancel, kind = 'syllabus', highli
 
                     <button
                         type="button" onClick={handleSave} disabled={status !== 'ready' || pageLoading}
-                        style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: status === 'ready' ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}
+                        style={{ marginTop: '10px', padding: '8px 15px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: status === 'ready' ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}
                     >
                         {status === 'saving' ? t('student_upload_saving') : t('student_save_highlighted')}
                     </button>
                 </>
             )}
             {status === 'error' && (
-                <button type="button" onClick={onCancel} style={{ ...smallButton, backgroundColor: 'var(--grey)', color: 'white', border: 'none' }}>{t('student_remove_selected_file')}</button>
+                <button type="button" onClick={onCancel} style={{ ...smallButton, backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none' }}>{t('student_remove_selected_file')}</button>
             )}
         </div>
     );

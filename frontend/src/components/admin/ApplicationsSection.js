@@ -6,6 +6,7 @@ import { getErrorMessage } from '../../errorMessage';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import Chip from '../reviewer/Chip';
+import StatusChip from '../StatusChip';
 import { card } from './adminStyles';
 
 // The Applications section of the admin menu (admin round Group 5; built in Groups 1 and 2):
@@ -66,7 +67,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                         <thead>
-                            <tr style={{ backgroundColor: 'var(--header-bg)', color: 'white' }}>
+                            <tr style={{ backgroundColor: 'var(--header-bg)', color: 'var(--text-on-primary)' }}>
                                 <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_student_column')}</th>
                                 <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
                                 <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
@@ -92,13 +93,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                             <div><strong style={{ color: 'var(--success-accent)' }}>{t('superadmin_to_label')}</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}</div>
                                         </td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
-                                            <span style={{
-                                                fontWeight: 'bold', padding: '4px 8px', borderRadius: '4px',
-                                                backgroundColor: app.status === 'approved' ? 'var(--success-bg)' : app.status === 'rejected' ? 'var(--danger-bg)' : app.status === 'needs_info' ? 'var(--warning-bg)' : 'var(--info-bg)',
-                                                color: app.status === 'approved' ? 'var(--success-text)' : app.status === 'rejected' ? 'var(--danger-text)' : app.status === 'needs_info' ? 'var(--warning-text)' : 'var(--info-text)',
-                                            }}>
-                                                {t(`status_${app.status}`)}
-                                            </span>
+                                            <StatusChip status={app.status}>{t(`status_${app.status}`)}</StatusChip>
                                         </td>
                                         <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>{decidedBy(app)}</td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
@@ -117,10 +112,10 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                                 applications are final): disabled until they are rebuilt as admin overrides. The
                                                 tooltip sits on a wrapper, because disabled buttons don't show one in every browser. */}
                                             <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block' }}>
-                                                <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_reset_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--request)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_reset_button')}</button>
+                                                <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_reset_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'pending')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--request)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_reset_button')}</button>
                                             </span>
                                             <span title={t('superadmin_override_coming_soon')} style={{ display: 'inline-block', marginLeft: '8px' }}>
-                                                <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_force_approve_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_force_approve_button')}</button>
+                                                <button type="button" disabled aria-disabled="true" aria-label={`${t('superadmin_force_approve_button')} – ${t('superadmin_override_coming_soon')}`} onClick={() => handleUpdateStatus(app.id, 'approved')} style={{ cursor: 'not-allowed', opacity: 0.5, padding: '6px 12px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', fontWeight: 'bold', pointerEvents: 'none' }}>{t('superadmin_force_approve_button')}</button>
                                             </span>
                                         </td>
                                     </tr>

@@ -8,6 +8,7 @@ import { statusKey } from '../applicationForm';
 import { formatDate, formatDateTime } from '../dates';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import { gradeText } from '../grades';
+import StatusChip from './StatusChip';
 
 const sectionTitle = { fontSize: '15px', margin: '18px 0 6px 0', color: 'var(--link)' };
 const fileButton = { background: 'none', border: 'none', padding: 0, color: 'var(--link)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', textAlign: 'left', overflowWrap: 'anywhere' };
@@ -23,7 +24,7 @@ const noteText = { margin: '6px 0 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'a
 const WITHDRAWABLE = ['pending', 'needs_info'];
 
 // readOnly: opened from an earlier semester (Group 3), so nothing can be changed from here
-const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statusLabel, statusColor, onClose, onReply, onWithdrawn }) => {
+const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statusLabel, onClose, onReply, onWithdrawn }) => {
     const { t } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const dialogRef = useRef(null);
@@ -120,7 +121,7 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
             {application && (
                 <>
                     <p style={{ margin: '0 0 4px 0', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 'bold', padding: '4px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(application.status) }}>{statusLabel(application.status)}</span>
+                        <StatusChip status={statusKey(application.status)}>{statusLabel(application.status)}</StatusChip>
                         <span>{t('student_detail_submitted', { date: formatDateTime(application.submitted_at, language) })}</span>
                     </p>
                     {application.decided_by && statusKey(application.status) !== 'pending' && (
@@ -205,10 +206,10 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
                     <p style={{ margin: '0 0 12px 0' }}>{t('student_withdraw_confirm_text')}</p>
                     {withdrawError && <p role="alert" style={{ color: 'var(--error-text)', fontWeight: 'bold' }}>{withdrawError}</p>}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' }}>
-                        <button type="button" onClick={keepApplication} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                        <button type="button" onClick={keepApplication} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                             {t('student_withdraw_keep')}
                         </button>
-                        <button type="button" onClick={withdraw} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '5px', cursor: withdrawing ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
+                        <button type="button" onClick={withdraw} disabled={withdrawing} style={{ padding: '10px 15px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: withdrawing ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
                             {withdrawing ? t('student_withdraw_working') : t('student_withdraw_confirm')}
                         </button>
                     </div>
@@ -221,11 +222,11 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
                     </button>
                 )}
                 {application?.status === 'needs_info' && !readOnly && !(application.info_deadline && deadlineState(application.info_deadline) === 'passed') && (
-                    <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                    <button type="button" onClick={() => onReply(application)} style={{ padding: '10px 15px', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                         {t('student_add_missing_info')}
                     </button>
                 )}
-                <button type="button" onClick={onClose} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                <button type="button" onClick={onClose} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                     {t('student_detail_close')}
                 </button>
             </div>

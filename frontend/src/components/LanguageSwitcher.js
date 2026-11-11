@@ -23,7 +23,7 @@ const LanguageSwitcher = () => {
     background: 'none',
     border: 'none',
     fontSize: '16px',
-    color: 'white',
+    color: 'var(--text-on-primary)',
     cursor: 'pointer',
     margin: '0 8px',
     padding: '2px 0',
@@ -36,11 +36,11 @@ const LanguageSwitcher = () => {
     ...buttonStyle,
     fontWeight: 'bold',
     opacity: 1,
-    borderBottom: '2px solid white' // Underlines the active language
+    borderBottom: '2px solid var(--text-on-primary)' // Underlines the active language
   };
 
   const dividerStyle = {
-    color: 'white',
+    color: 'var(--text-on-primary)',
     opacity: 0.5,
     margin: '0 2px'
   };

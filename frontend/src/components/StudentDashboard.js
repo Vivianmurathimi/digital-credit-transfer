@@ -9,6 +9,7 @@ import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import SubmissionBanner, { CLOSED_CODES } from './SubmissionBanner';
+import StatusChip from './StatusChip';
 import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
@@ -20,11 +21,7 @@ import { gradeText } from '../grades';
 // What the form's draft remembers when the server holds no draft (see the draft section below)
 const NOTHING_SAVED = '';
 
-// Badge colour of each status in My Status (statusKey turns anything unexpected into 'unknown')
-const STATUS_COLORS = {
-    pending: 'var(--blue)', needs_info: 'var(--orange)', approved: 'var(--brand)',
-    rejected: 'var(--red)', withdrawn: 'var(--grey)', unknown: 'var(--grey)',
-};
+// A status looks the same on every screen (admin round Group 8): components/StatusChip.js
 
 // The highlighter (with the PDF libraries) is only downloaded when a student opens a syllabus
 const EvidenceHighlighter = lazy(() => import('./EvidenceHighlighter'));
@@ -422,9 +419,8 @@ const StudentDashboard = ({ userId }) => {
         return groups;
     }, new Map())];
 
-    // Status as the student sees it: a translated label and badge colour, never the raw code
+    // Status as the student sees it: a translated label, never the raw code
     const statusLabel = (status) => t(`student_status_${statusKey(status)}`);
-    const statusColor = (status) => STATUS_COLORS[statusKey(status)];
 
     const clockTime = (at) => new Date(at).toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
     // PTE courses with an open or approved application can't be chosen again (shown with the reason)
@@ -848,7 +844,7 @@ const StudentDashboard = ({ userId }) => {
     const renderApplicationTable = (apps, { readOnly = false } = {}) => (
                 <table className="status-table" style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', tableLayout: 'fixed' }}>
                     <thead>
-                        <tr style={{ backgroundColor: 'var(--accent)', color: 'white' }}>
+                        <tr style={{ backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)' }}>
                             <th style={{ padding: '12px', textAlign: 'left', width: '28%' }}>{t('student_column_course')}</th>
                             <th style={{ padding: '12px', textAlign: 'left', width: '18%' }}>{t('student_column_status')}</th>
                             <th style={{ padding: '12px', textAlign: 'left', width: '15%' }}>{t('student_column_submitted')}</th>
@@ -879,9 +875,7 @@ const StudentDashboard = ({ userId }) => {
                                     {app.course_no_longer_offered && <span style={{ display: 'inline-block', marginLeft: '6px', padding: '1px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: 'bold', backgroundColor: 'var(--cue-neutral-bg)', color: 'var(--cue-neutral-text)', border: '1px solid var(--cue-neutral-border)' }}>{t('student_course_no_longer_offered')}</span>}
                                 </td>
                                 <td data-label={t('student_column_status')} style={{ padding: '12px', verticalAlign: 'top' }}>
-                                    <span style={{ display: 'inline-block', fontWeight: 'bold', padding: '5px 10px', borderRadius: '15px', color: 'white', fontSize: '12px', backgroundColor: statusColor(app.status) }}>
-                                        {statusLabel(app.status)}
-                                    </span>
+                                    <StatusChip status={statusKey(app.status)}>{statusLabel(app.status)}</StatusChip>
                                     {app.resubmit_count > 0 && (
                                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
                                             {t('student_resubmitted', { count: app.resubmit_count, date: formatDate(app.last_resubmitted_at, language) })}
@@ -902,7 +896,7 @@ const StudentDashboard = ({ userId }) => {
                                     )}
                                     {app.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={app.info_deadline} />}
                                     {app.status === 'needs_info' && !readOnly && !(app.info_deadline && deadlineState(app.info_deadline) === 'passed') ? (
-                                        <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--orange)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
+                                        <button type="button" onClick={() => setResubmitModal({ isOpen: true, app: app })} style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_add_missing_info')}</button>
                                     ) : app.status !== 'needs_info' && <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{t(`student_status_hint_${statusKey(app.status)}`)}</span>}
                                 </td>
                                 <td data-label={t('student_column_details')} style={{ padding: '12px', verticalAlign: 'top', textAlign: 'center' }}>
@@ -919,8 +913,8 @@ const StudentDashboard = ({ userId }) => {
     return (
         <div style={{ marginTop: '10px' }}>
             <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-                <button onClick={() => setStudentTab('dashboard')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'dashboard' ? 'var(--brand)' : 'var(--surface-accent)', color: studentTab === 'dashboard' ? 'white' : 'var(--link)' }}>{t('student_tab_status')}</button>
-                <button onClick={() => setStudentTab('submit')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'submit' ? 'var(--brand)' : 'var(--surface-accent)', color: studentTab === 'submit' ? 'white' : 'var(--link)' }}>{t('student_tab_submit')}</button>
+                <button onClick={() => setStudentTab('dashboard')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'dashboard' ? 'var(--brand)' : 'var(--surface-accent)', color: studentTab === 'dashboard' ? 'var(--text-on-primary)' : 'var(--link)' }}>{t('student_tab_status')}</button>
+                <button onClick={() => setStudentTab('submit')} style={{ padding: '10px 20px', cursor: 'pointer', border: 'none', borderRadius: '5px', fontWeight: 'bold', backgroundColor: studentTab === 'submit' ? 'var(--brand)' : 'var(--surface-accent)', color: studentTab === 'submit' ? 'var(--text-on-primary)' : 'var(--link)' }}>{t('student_tab_submit')}</button>
             </div>
 
             {/* STATUS TAB */}
@@ -939,7 +933,7 @@ const StudentDashboard = ({ userId }) => {
                         // Empty state, with the way to start
                         <div style={{ backgroundColor: 'var(--surface)', border: '2px solid var(--success-border)', borderRadius: '8px', padding: '24px', textAlign: 'center' }}>
                             <p style={{ marginTop: 0 }}>{t(previousApplications.length > 0 ? 'student_no_applications_this_semester' : 'student_no_applications')}</p>
-                            <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
+                            <button type="button" onClick={() => setStudentTab('submit')} style={{ padding: '10px 18px', backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                                 {t('student_start_request')}
                             </button>
                         </div>
@@ -965,7 +959,6 @@ const StudentDashboard = ({ userId }) => {
                             applicationId={detailId}
                             countryName={countryName}
                             statusLabel={statusLabel}
-                            statusColor={statusColor}
                             onClose={closeDetail}
                             readOnly={detailReadOnly}
                             onReply={replyFromDetail}
@@ -978,7 +971,7 @@ const StudentDashboard = ({ userId }) => {
             {/* PHASE 3: RESUBMIT MODAL */}
             {resubmitModal.isOpen && (
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'var(--overlay)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, overflowY: 'auto' }}>
-                    <div style={{ backgroundColor: 'var(--surface)', padding: '25px', borderRadius: '10px', width: '90vw', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 5px 15px rgba(0,0,0,0.3)' }}>
+                    <div style={{ backgroundColor: 'var(--surface)', padding: '25px', borderRadius: '10px', width: '90vw', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 5px 15px var(--shadow-modal)' }}>
                         <h3 style={{ marginTop: 0, color: 'var(--orange-text)' }}>{t('student_action_required')}</h3>
                         <ReplyDeadline deadline={resubmitModal.app.info_deadline} />
                         
@@ -1038,7 +1031,7 @@ const StudentDashboard = ({ userId }) => {
                                                 )}
                                                 <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                             </a>
-                                            <button onClick={() => handleDeleteResubmitFile(file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
+                                            <button onClick={() => handleDeleteResubmitFile(file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                         </div>
                                     ))}
                                 </div>
@@ -1049,7 +1042,7 @@ const StudentDashboard = ({ userId }) => {
                         
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
                             <button onClick={() => { setResubmitModal({ isOpen: false, app: null }); setResubmitHighlightFile(null); setResubmitNote(''); setResubmitFiles([]); }} style={{ padding: '10px 15px', cursor: 'pointer', border: '1px solid var(--border-strong)', borderRadius: '4px' }}>{t('student_cancel')}</button>
-                            <button onClick={submitResubmission} style={{ padding: '10px 15px', cursor: 'pointer', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('student_resubmit_button')}</button>
+                            <button onClick={submitResubmission} style={{ padding: '10px 15px', cursor: 'pointer', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>{t('student_resubmit_button')}</button>
                         </div>
                     </div>
                 </div>
@@ -1089,7 +1082,7 @@ const StudentDashboard = ({ userId }) => {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
                                     <h4 style={{ margin: 0, color: 'var(--link)' }}>{t('student_institution_heading', { n: i + 1 })}</h4>
                                     {institutions.length > 1 && (
-                                        <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveInstitution(inst.key)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_institution')}</button>
+                                        <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveInstitution(inst.key)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_institution')}</button>
                                     )}
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
@@ -1119,7 +1112,7 @@ const StudentDashboard = ({ userId }) => {
                                             onClick={() => gradingInputs.current[inst.key]?.click()}
                                             id={`inst-grading-btn-${inst.key}`}
                                             aria-describedby={`inst-grading-label-${inst.key} inst-grading-help-${inst.key}${fieldErrors[`inst:${inst.key}:grading_file`] ? ` inst-grading-btn-${inst.key}-error` : ''}`}
-                                            style={{ padding: '8px 12px', backgroundColor: inst.grading_file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                            style={{ padding: '8px 12px', backgroundColor: inst.grading_file ? 'var(--accent)' : 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                                         >
                                             {inst.grading_file ? t('student_grading_doc_replace') : t('student_grading_doc_upload')}
                                         </button>
@@ -1127,7 +1120,7 @@ const StudentDashboard = ({ userId }) => {
                                             <>
                                                 <span style={{ fontSize: '13px', color: 'var(--link-alt)', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(inst.grading_file)}</span>
                                                 <a href="#open-file" onClick={(e) => handleOpenFile(e, inst.grading_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
-                                                <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
+                                                <button type="button" disabled={gradingStatus[inst.key]?.uploading} onClick={() => handleRemoveGradingFile(inst.key, inst.grading_file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                             </>
                                         )}
                                     </div>
@@ -1144,7 +1137,7 @@ const StudentDashboard = ({ userId }) => {
                             </div>
                         ))}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                            <button type="button" onClick={handleAddInstitution} disabled={institutions.length >= LIMITS.institutions} aria-describedby={institutions.length >= LIMITS.institutions ? 'max-institutions-hint' : undefined} style={{ padding: '8px 12px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: institutions.length >= LIMITS.institutions ? 'not-allowed' : 'pointer', opacity: institutions.length >= LIMITS.institutions ? 0.6 : 1, fontWeight: 'bold' }}>{t('student_add_institution')}</button>
+                            <button type="button" onClick={handleAddInstitution} disabled={institutions.length >= LIMITS.institutions} aria-describedby={institutions.length >= LIMITS.institutions ? 'max-institutions-hint' : undefined} style={{ padding: '8px 12px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: institutions.length >= LIMITS.institutions ? 'not-allowed' : 'pointer', opacity: institutions.length >= LIMITS.institutions ? 0.6 : 1, fontWeight: 'bold' }}>{t('student_add_institution')}</button>
                             {institutions.length >= LIMITS.institutions && <span id="max-institutions-hint" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('student_max_institutions', { max: LIMITS.institutions })}</span>}
                         </div>
                     </section>
@@ -1156,7 +1149,7 @@ const StudentDashboard = ({ userId }) => {
                                 <h4 style={{ margin: 0, color: 'var(--link)' }}>{t('student_fulfilled_course_heading', { n: index + 1 })}</h4>
                                 {/* At least one row always stays, so the only row has no remove button */}
                                 {fulfilledCourses.length > 1 && (
-                                    <button type="button" onClick={() => handleRemoveCourseRow(course.id)} aria-label={t('student_remove_course_aria', { n: index + 1 })} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_course')}</button>
+                                    <button type="button" onClick={() => handleRemoveCourseRow(course.id)} aria-label={t('student_remove_course_aria', { n: index + 1 })} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_course')}</button>
                                 )}
                             </div>
                             
@@ -1207,7 +1200,7 @@ const StudentDashboard = ({ userId }) => {
                             </div>
                             
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <button type="button" id={`row-evidence-btn-${course.id}`} aria-describedby={fieldErrors[`row:${course.id}:file`] ? `row-evidence-btn-${course.id}-error` : undefined} onClick={() => triggerUploadForCourse(course.id)} style={{ padding: '8px 12px', backgroundColor: course.file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                <button type="button" id={`row-evidence-btn-${course.id}`} aria-describedby={fieldErrors[`row:${course.id}:file`] ? `row-evidence-btn-${course.id}-error` : undefined} onClick={() => triggerUploadForCourse(course.id)} style={{ padding: '8px 12px', backgroundColor: course.file ? 'var(--accent)' : 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
                                     {activeUploadId === course.id ? t('student_close_uploader') : (course.file ? t('student_replace_evidence') : t('student_upload_transcript'))}
                                 </button>
                                 
@@ -1226,7 +1219,7 @@ const StudentDashboard = ({ userId }) => {
                                             )}
                                             <span style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</span>
                                         </a>
-                                        <button onClick={() => handleDeleteUploadedFile(course.id, course.file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
+                                        <button onClick={() => handleDeleteUploadedFile(course.id, course.file)} style={{ padding: '6px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{t('student_remove_file')}</button>
                                     </div>
                                 )}
                             </div>
@@ -1253,7 +1246,7 @@ const StudentDashboard = ({ userId }) => {
                     ))}
 
                     <div style={{ marginBottom: '20px' }}>
-                        <button type="button" onClick={handleAddCourseRow} disabled={fulfilledCourses.length >= LIMITS.fulfilledCourses} aria-describedby={fulfilledCourses.length >= LIMITS.fulfilledCourses ? 'max-courses-hint' : undefined} style={{ padding: '10px', backgroundColor: 'var(--grey)', color: 'white', border: 'none', borderRadius: '5px', cursor: fulfilledCourses.length >= LIMITS.fulfilledCourses ? 'not-allowed' : 'pointer', opacity: fulfilledCourses.length >= LIMITS.fulfilledCourses ? 0.6 : 1, fontWeight: 'bold', width: '100%' }}>{t('student_add_course')}</button>
+                        <button type="button" onClick={handleAddCourseRow} disabled={fulfilledCourses.length >= LIMITS.fulfilledCourses} aria-describedby={fulfilledCourses.length >= LIMITS.fulfilledCourses ? 'max-courses-hint' : undefined} style={{ padding: '10px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: fulfilledCourses.length >= LIMITS.fulfilledCourses ? 'not-allowed' : 'pointer', opacity: fulfilledCourses.length >= LIMITS.fulfilledCourses ? 0.6 : 1, fontWeight: 'bold', width: '100%' }}>{t('student_add_course')}</button>
                         {fulfilledCourses.length >= LIMITS.fulfilledCourses && <p id="max-courses-hint" style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '5px 0 0 0', textAlign: 'center' }}>{t('student_max_courses', { max: LIMITS.fulfilledCourses })}</p>}
                     </div>
 
@@ -1271,9 +1264,9 @@ const StudentDashboard = ({ userId }) => {
                         {renderFieldError('target_course_ids')}
                         <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                             {selectedCourses.map(sc => (
-                                <span key={sc.id} style={{ backgroundColor: 'var(--teal)', color: 'white', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', display: 'inline-flex', alignItems: 'center' }}>
+                                <span key={sc.id} style={{ backgroundColor: 'var(--teal)', color: 'var(--text-on-primary)', padding: '5px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', display: 'inline-flex', alignItems: 'center' }}>
                                     {t('student_target_course_chip', { code: sc.course_code, name: sc.course_name, credits: sc.credits })}
-                                    <button type="button" aria-label={t('student_remove_target_course', { code: sc.course_code })} onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', marginLeft: '5px', flexShrink: 0 }}>×</button>
+                                    <button type="button" aria-label={t('student_remove_target_course', { code: sc.course_code })} onClick={() => setSelectedCourses(selectedCourses.filter(c => c.id !== sc.id))} style={{ background: 'none', border: 'none', color: 'var(--text-on-primary)', cursor: 'pointer', marginLeft: '5px', flexShrink: 0 }}>×</button>
                                 </span>
                             ))}
                         </div>
@@ -1302,7 +1295,7 @@ const StudentDashboard = ({ userId }) => {
                                             disabled={syllabusStatus[course.id]?.uploading}
                                             aria-describedby={fieldErrors[`row:${course.id}:syllabus_file`] ? `row-syllabus-btn-${course.id}-error` : undefined}
                                             onClick={() => chooseSyllabus(course.id)}
-                                            style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                            style={{ padding: '6px 10px', backgroundColor: course.syllabus_file ? 'var(--accent)' : 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                                         >
                                             {course.syllabus_file ? t('student_replace_syllabus') : t('student_upload_syllabus_button')}
                                         </button>
@@ -1310,7 +1303,7 @@ const StudentDashboard = ({ userId }) => {
                                             <>
                                                 <span style={{ fontSize: '13px', fontWeight: 'bold', wordBreak: 'break-all' }}>📄 {displayName(course.syllabus_file)}</span>
                                                 <a href="#open-file" onClick={(e) => handleOpenFile(e, course.syllabus_file)} style={{ fontSize: '12px', color: 'var(--success-accent)', fontWeight: 'bold' }}>{t('student_open_file')}</a>
-                                                <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
+                                                <button type="button" onClick={() => removeSyllabus(course.id, course.syllabus_file)} style={{ padding: '5px 10px', backgroundColor: 'var(--red)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>{t('student_remove_file')}</button>
                                             </>
                                         )}
                                     </div>
@@ -1371,7 +1364,7 @@ const StudentDashboard = ({ userId }) => {
                             width: '100%',
                             padding: '15px',
                             backgroundColor: canSubmit ? 'var(--brand)' : 'var(--grey)',
-                            color: 'white',
+                            color: 'var(--text-on-primary)',
                             fontWeight: 'bold',
                             cursor: canSubmit ? 'pointer' : 'not-allowed',
                             border: 'none',

@@ -140,7 +140,7 @@ const AcceptInvite = () => {
                     />
                     {fieldErrors.confirm && <div role="alert" style={fieldErrorStyle}>{fieldErrors.confirm}</div>}
                 </div>
-                <button type="submit" disabled={saving} style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'white', border: 'none', borderRadius: '5px', cursor: saving ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
+                <button type="submit" disabled={saving} style={{ padding: '12px', backgroundColor: 'var(--accent)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: saving ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '16px' }}>
                     {t('invite_button')}
                 </button>
             </form>

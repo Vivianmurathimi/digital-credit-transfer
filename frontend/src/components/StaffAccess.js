@@ -16,7 +16,8 @@ import Chip from './reviewer/Chip';
 const STATUS_CUES = { sent: 'pending', accepted: 'approved', expired: 'needs-info', cancelled: 'neutral' };
 const LANGUAGES = ['hu', 'en', 'de'];
 
-const card = { backgroundColor: 'var(--surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--border)', marginBottom: '30px' };
+// The admin section card (admin round Group 8: same as components/admin/adminStyles.js)
+const card = { backgroundColor: 'var(--section-bg)', padding: '20px', borderRadius: '10px', border: '1px solid var(--section-border)', boxShadow: '0 1px 2px var(--shadow-sm)', marginBottom: '30px' };
 const label = { display: 'block', fontWeight: 'bold', marginBottom: '4px' };
 const input = { width: '100%', padding: '8px', boxSizing: 'border-box', border: '1px solid var(--border-strong)', borderRadius: '4px', font: 'inherit' };
 const th = { padding: '8px', textAlign: 'left', borderBottom: '2px solid var(--border)', fontSize: '14px' };
