@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import ReviewerOverview from '../ReviewerOverview';
+import { formatDay } from '../../dates';
 import { card } from './adminStyles';
 
 // Overview (admin round Group 5): what needs attention, as warning cards that link to their
@@ -12,9 +13,12 @@ const warningCard = { backgroundColor: 'var(--danger-bg)', color: 'var(--danger-
 const countBox = { flex: '1 1 140px', padding: '12px', borderRadius: '6px', backgroundColor: 'var(--surface-2)', border: '1px solid var(--border)' };
 
 const AdminOverview = ({ summary }) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
+    const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     if (!summary) return null;
     const warnings = [
+        // Undecided applications from 7 days before the end until the close (admin round Group 7)
+        summary.endingSoon && { key: 'admin_warning_ending_soon', to: '/admin/applications', date: formatDay(summary.endingSoon.lastDay, language), pending: summary.endingSoon.pending, needsInfo: summary.endingSoon.needsInfo },
         // The active semester's last day has passed (admin round Group 6)
         summary.readyToClose && { key: 'admin_warning_ready_to_close', to: '/admin/semesters', name: summary.activeSemester?.name },
         !summary.activeSemester && { key: 'admin_warning_no_semester', to: '/admin/semesters' },
@@ -34,7 +38,7 @@ const AdminOverview = ({ summary }) => {
                     ? <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{t('admin_overview_all_good')}</p>
                     : warnings.map((w) => (
                         <div key={w.key} role="alert" style={warningCard}>
-                            {t(w.key, { count: w.count, name: w.name })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>
+                            {t(w.key, { count: w.count, name: w.name, date: w.date, pending: w.pending, needsInfo: w.needsInfo })} <Link to={w.to} style={{ color: 'inherit', fontWeight: 'bold' }}>{t('admin_overview_go')}</Link>
                         </div>
                     ))}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>

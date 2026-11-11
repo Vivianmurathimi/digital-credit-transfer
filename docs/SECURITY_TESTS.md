@@ -264,6 +264,13 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | After the close: reviewer, admin, admin acting as reviewer decide; student and admin acting as student withdraw; student replies; edit dates; Close now; Reopen; activate it again | each refused (`409 SEMESTER_ENDED` / `SEMESTER_CLOSED` / `SEMESTER_NOT_ACTIVE`), nothing changed |
 | | | Activate the semester waiting in setup | `200` |
 | | | Past semesters: list, search by name / Neptun + status / course, unknown status, a semester not closed, open one, another semester's application, CSV, PDF download, generate again | found; `400`; `404`; read-only; `404`; CSV with BOM in the chosen language; PDF; a new book |
+| 4q | **Analytics and reports (admin round Group 7)** | Analytics and its CSV without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | Bad semester id, unknown semester, unknown table, a semester in setup | `400 INVALID_ID` / `404` / `400 INVALID_TABLE` / `400 SEMESTER_IN_SETUP` |
+| | | A closed test semester counted by hand (approved after 2 and 4 days, one with 2 days waiting for the student; a System rejection; a withdrawal) | statuses exact; time to decision 3 / 3 days, without waiting 2 / 2 (System left out); top courses without the withdrawn one |
+| | | The active semester (the default) | matches an independent SQL count; only active and closed semesters offered |
+| | | CSV of the time to decision | BOM, header, the "All programmes" line |
+| | | "Ends soon" warning 10 days before / 3 days before / 5 days after the last day | none / both numbers / still shown until closed |
+| | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
 | | | Superadmin reads the settings and the user list | `200` |

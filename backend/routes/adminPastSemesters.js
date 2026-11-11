@@ -10,6 +10,7 @@ const { ARCHIVE_BUCKET } = require('../config/buckets');
 const { normalizeLanguage, statusLabels, reasons } = require('../utils/emailTemplates');
 const { closePreview, closeSemester, generateSemesterBook } = require('../utils/semesterClose');
 const { loadApplicationDetails } = require('../utils/applicationDetails');
+const { budapest, sendCsv } = require('../utils/csv');
 
 // Closing a semester and the Past semesters section (admin round Group 6), superadmin only.
 
@@ -125,20 +126,13 @@ router.get('/admin/past-semesters/:id/applications/:appId', ...adminOnly, requir
     }
 });
 
-// CSV: ";" (Hungarian Excel), UTF-8 with a BOM (so Excel reads the accents), every cell quoted.
-// A cell starting with = + - @ gets a leading ' so a spreadsheet never runs it as a formula.
-const cell = (value) => {
-    let text = value === null || value === undefined ? '' : String(value);
-    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-    return `"${text.replace(/"/g, '""')}"`;
-};
+// CSV format: utils/csv.js
 const CSV_HEADERS = {
     en: ['Application', 'Submitted', 'Student', 'Email', 'Neptun code', 'Programme', 'Course code', 'Course', 'Credits', 'Status', 'Final grade', 'Decided by', 'Decided at', 'Reason'],
     hu: ['Kérelem', 'Beküldve', 'Hallgató', 'E-mail', 'Neptun-kód', 'Szak', 'Tárgykód', 'Kurzus', 'Kredit', 'Állapot', 'Végső jegy', 'Döntött', 'Döntés ideje', 'Indoklás'],
     de: ['Antrag', 'Eingereicht', 'Studierende/r', 'E-Mail', 'Neptun-Code', 'Studiengang', 'Kurscode', 'Kurs', 'Credits', 'Status', 'Endnote', 'Entschieden von', 'Entschieden am', 'Begründung'],
 };
 const DECIDERS = { en: { admin: 'Admin', system: 'System' }, hu: { admin: 'Admin', system: 'Rendszer' }, de: { admin: 'Admin', system: 'System' } };
-const budapest = (at) => (at ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Budapest', dateStyle: 'short', timeStyle: 'short' }).format(new Date(at)) : '');
 
 // GET /api/admin/past-semesters/:id/export.csv?q=&status=&lang=: the search results as CSV
 router.get('/admin/past-semesters/:id/export.csv', ...adminOnly, requireIdParam('id'), async (req, res) => {
@@ -149,7 +143,7 @@ router.get('/admin/past-semesters/:id/export.csv', ...adminOnly, requireIdParam(
         const semester = await closedSemester(req.ids.id);
         if (!semester) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No closed semester with this id');
         const { rows } = await pool.query(`SELECT ${LIST_COLUMNS} ${from} ORDER BY a.created_at, a.id LIMIT ${EXPORT_LIMIT}`, params);
-        const lines = [CSV_HEADERS[lang].map(cell).join(';')];
+        const lines = [CSV_HEADERS[lang]];
         for (const r of rows) {
             const decider = r.decided_by_role === 'reviewer' ? r.decided_by_name : DECIDERS[lang][r.decided_by_role] || '';
             const reason = r.decision_rationale || (r.reason_code ? reasons[lang]?.[r.reason_code] || r.reason_code : '');
@@ -157,13 +151,9 @@ router.get('/admin/past-semesters/:id/export.csv', ...adminOnly, requireIdParam(
                 r.id, budapest(r.submitted_at), r.student_name, r.student_email,
                 r.neptun_code, r.programme_code, r.target_course_code, r.target_course_name, r.credits,
                 statusLabels[lang][r.status] || r.status, r.final_grade, decider, budapest(r.decided_at), reason,
-            ].map(cell).join(';'));
+            ]);
         }
-        const fileName = `applications-${semester.name.replace(/[^A-Za-z0-9._-]+/g, '-')}.csv`;
-        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-        res.setHeader('Cache-Control', 'no-store');
-        res.send(`﻿${lines.join('\r\n')}\r\n`);
+        sendCsv(res, `applications-${semester.name}.csv`, lines);
     } catch (err) {
         console.error('❌ Past semester export error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not export the applications');
