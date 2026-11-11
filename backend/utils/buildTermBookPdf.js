@@ -40,6 +40,20 @@ const statusColor = (status) => COLORS.status[status] || COLORS.text;
 // An application the system closed at the semester end is listed as not reviewed (still counted as rejected)
 const appStatusLabel = (app) => (app.notReviewedBySemesterEnd ? 'Not reviewed before semester close' : statusLabel(app.status));
 const contentWidth = (doc) => doc.page.width - 2 * MARGIN;
+
+// The compact decision line in the footer of every page of an application (admin round Group 7):
+// status (or "Not reviewed before semester close"), final grade, who decided (reviewer name, Admin
+// or System) and when. The same values as the Decision block of the application page.
+const decisionLine = (app) => {
+    const d = app.decision;
+    return [
+        `Application #${app.id}`,
+        appStatusLabel(app),
+        `Final grade: ${d && d.finalGrade ? gradeLabel(d.finalGrade, 'en') : '—'}`,
+        `Decided by: ${d && d.decidedBy ? d.decidedBy : '—'}`,
+        `Decided on: ${d ? formatDateTime(d.decidedAt) : '—'}`,
+    ].join('  ·  ');
+};
 const currentPageIndex = (doc) => {
     const range = doc.bufferedPageRange();
     return range.start + range.count - 1;
@@ -229,13 +243,20 @@ const drawEvidencePage = (doc, app, item, result) => {
     }
 };
 
-// Header (semester) and footer (Page X of Y) on every page, drawn last so the total is known
-const drawHeadersAndFooters = (doc, data) => {
+// Header (semester) and footer (Page X of Y) on every page, drawn last so the total is known.
+// pageApps: page index -> the application on it; those pages also get its decision line.
+const drawHeadersAndFooters = (doc, data, pageApps = {}) => {
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i += 1) {
         doc.switchToPage(i);
         doc.font('Body').fontSize(8).fillColor(COLORS.muted);
         writeInMargin(doc, `PTE Credit Transfer Archive · Semester ${data.label || `${data.from} – ${data.to}`}`, HEADER_Y, { align: 'right' });
+        const app = pageApps[i];
+        if (app) {
+            doc.font('Bold').fontSize(7.5).fillColor(statusColor(app.status));
+            writeInMargin(doc, decisionLine(app), doc.page.height - FOOTER_OFFSET - 4 * MM, { align: 'center' });
+            doc.font('Body').fontSize(8).fillColor(COLORS.muted);
+        }
         writeInMargin(doc, `Page ${i + 1} of ${range.count}`, doc.page.height - FOOTER_OFFSET, { align: 'center' });
     }
 };
@@ -262,8 +283,10 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
     const chunks = [];
     let pages = 0;
     let embeddedImages = 0;
+    let decisionLinePages = 0; // pages that got an application's decision line (the tests check: all of them)
+    let firstApplicationPage = null;
     doc.on('data', (chunk) => chunks.push(chunk));
-    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages, embeddedImages }));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages, embeddedImages, decisionLinePages, firstApplicationPage }));
     doc.on('error', reject);
 
     doc.registerFont('Body', path.join(FONT_DIR, 'NotoSans-Regular.ttf'));
@@ -277,6 +300,7 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
         for (let i = 0; i < indexPageCount(data); i += 1) doc.addPage();
 
         const startPages = {};
+        const pageApps = {};
         for (const app of data.applications) {
             doc.addPage();
             startPages[app.id] = currentPageIndex(doc);
@@ -291,11 +315,15 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
                 embeddedImages += 1;
                 evidenceResults[i].buffer = null; // free the image as soon as it is drawn
             });
+            // Every page of this application (it may run over several), evidence pages included
+            for (let p = startPages[app.id]; p <= currentPageIndex(doc); p += 1) pageApps[p] = app;
         }
 
         drawIndex(doc, data, firstIndexPage, startPages);
-        drawHeadersAndFooters(doc, data);
+        drawHeadersAndFooters(doc, data, pageApps);
         pages = doc.bufferedPageRange().count;
+        decisionLinePages = Object.keys(pageApps).length;
+        firstApplicationPage = data.applications.length ? startPages[data.applications[0].id] : null;
         doc.end();
     };
 

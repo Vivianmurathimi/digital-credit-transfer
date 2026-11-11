@@ -12,6 +12,7 @@ const { FRONTEND_URL } = require('../config/urls');
 const { normalizeEmail } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
 const { isValidInviteEmail } = require('../utils/staffInvites');
+const { SEMESTER_END_WARNING_DAYS } = require('../utils/semesters');
 
 // The application period's controls (admin round Group 5), superadmin only:
 //   Close now / Reopen until on the active semester (they change its closing time; the period
@@ -218,7 +219,9 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const { rows } = await pool.query(
-            `WITH active AS (SELECT id, name, (end_date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' <= now() AS ready_to_close
+            `WITH active AS (SELECT id, name, (end_date + 1)::timestamp AT TIME ZONE 'Europe/Budapest' <= now() AS ready_to_close,
+                                    (end_date - ($1::int - 1))::timestamp AT TIME ZONE 'Europe/Budapest' <= now() AS ending_soon,
+                                    to_char(end_date, 'YYYY-MM-DD') AS last_day
                              FROM semesters WHERE status = 'active' LIMIT 1),
                   programmes_needing AS (
                       SELECT p.id,
@@ -232,7 +235,8 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                     (SELECT count(*)::int FROM programmes_needing WHERE no_courses) AS programmes_without_courses,
                     (SELECT count(*)::int FROM allowed_domains) AS domains,
                     (SELECT count(*)::int FROM late_access l, active WHERE l.semester_id = active.id AND l.revoked_at IS NULL AND l.deadline > now()) AS late_access_active,
-                    (SELECT count(*)::int FROM semesters WHERE status = 'setup') AS setup_semesters`
+                    (SELECT count(*)::int FROM semesters WHERE status = 'setup') AS setup_semesters`,
+            [SEMESTER_END_WARNING_DAYS]
         );
         const r = rows[0];
         res.json({
@@ -241,6 +245,11 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 activeSemester: r.active_semester && { id: r.active_semester.id, name: r.active_semester.name },
                 // The active semester's last day has passed: the admin can close it (admin round Group 6)
                 readyToClose: !!r.active_semester?.ready_to_close,
+                // From SEMESTER_END_WARNING_DAYS before the end until the semester is actually closed,
+                // while anything is undecided (admin round Group 7)
+                endingSoon: r.active_semester?.ending_soon && r.pending + r.needs_info > 0
+                    ? { lastDay: r.active_semester.last_day, pending: r.pending, needsInfo: r.needs_info }
+                    : null,
                 pending: r.pending,
                 needsInfo: r.needs_info,
                 programmesWithoutReviewer: r.programmes_without_reviewer,

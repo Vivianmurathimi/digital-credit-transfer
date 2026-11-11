@@ -78,7 +78,13 @@ const createSemester = async (db, { name, applyFrom, applyUntil, ends, status = 
 const semesterEndedSql = (table = 'applications') =>
     `EXISTS (SELECT 1 FROM semester_bounds ended WHERE ended.id = ${table}.semester_id AND ended.status = 'closed')`;
 
+// How many days before a semester's end its undecided applications are pointed out (admin round
+// Group 7): the reviewer's first reminder email and the admin's "semester ends soon" warning both
+// start at 00:00 Budapest time on the day this many days before the end (the end = the moment after
+// the last day), i.e. this many minus one days before the last day. The one place to change it.
+const SEMESTER_END_WARNING_DAYS = 7;
+
 // SQL for "the current semester" (admin round Group 4): the active one, set by the admin
 const CURRENT_SEMESTER_SQL = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";
 
-module.exports = { CURRENT_SEMESTER_SQL, semesterEndedSql, createSemester, adoptIntoSemester };
+module.exports = { SEMESTER_END_WARNING_DAYS, CURRENT_SEMESTER_SQL, semesterEndedSql, createSemester, adoptIntoSemester };

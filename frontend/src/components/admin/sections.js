@@ -1,7 +1,7 @@
 // The admin menu (admin round Group 5, B4): one entry per section, in menu order. Each section has
 // its own URL (/admin/<path>; /admin is Overview). `components` lists the screens a section shows:
 // every admin screen of Groups 1-5 appears in exactly one section (npm run check:admin-menu).
-// Group 6 added "Past semesters"; Group 7 adds "Analytics" here.
+// Group 6 added "Past semesters", Group 7 "Analytics".
 
 export const SECTIONS = [
     { id: 'overview', path: '', labelKey: 'admin_menu_overview', components: ['ReviewerOverview', 'AdminOverview'] },
@@ -10,6 +10,7 @@ export const SECTIONS = [
     { id: 'catalogue', path: 'catalogue', labelKey: 'admin_menu_catalogue', components: ['CatalogueImport', 'Catalogue'] },
     { id: 'applications', path: 'applications', labelKey: 'admin_menu_applications', components: ['ApplicationsSection'] },
     { id: 'past-semesters', path: 'past-semesters', labelKey: 'admin_menu_past_semesters', components: ['PastSemesters', 'TermArchive'] },
+    { id: 'analytics', path: 'analytics', labelKey: 'admin_menu_analytics', components: ['Analytics'] },
     { id: 'reviewers', path: 'reviewers', labelKey: 'admin_menu_reviewers', components: ['StaffAccess:reviewer', 'ActAs:reviewer'] },
     { id: 'students', path: 'students', labelKey: 'admin_menu_students', components: ['StudentProgrammes', 'ActAs:student'] },
     { id: 'admins', path: 'admins', labelKey: 'admin_menu_admins', components: ['StaffAccess:superadmin'] },
