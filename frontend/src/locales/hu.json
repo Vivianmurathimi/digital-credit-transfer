@@ -199,7 +199,7 @@
   "student_syllabus_reason_CREDIT_GAP": "Az Ön kreditértéke kevesebb, mint a választott PTE-kurzusé.",
   "student_syllabus_reason_CREDIT_SYSTEMS": "A kreditek nem hasonlíthatók össze automatikusan (eltérő kreditrendszerek).",
   "student_syllabus_reason_COMBINED_COURSES": "Ehhez a PTE-kurzushoz több teljesített kurzust kombinál.",
-  "student_syllabus_for_course": "{{n}}. kurzus tantárgyleírása ({{name}})",
+  "student_syllabus_upload_in_rows": "Minden fenti kurzushoz töltse fel a tantárgyleírást, a tanulmányi kivonata mellé.",
   "student_upload_syllabus_button": "Tantárgyleírás feltöltése",
   "student_replace_syllabus": "Tantárgyleírás cseréje",
   "student_syllabi_attached": "✓ Tantárgyleírások csatolva",
