@@ -1,7 +1,8 @@
 const pool = require('../db');
 const notifyStudent = require('../utils/notifyStudent');
 const sendEmail = require('../utils/sendEmail');
-const { buildReviewerEmail, buildAdminEmail } = require('../utils/emailTemplates');
+const { buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail } = require('../utils/emailTemplates');
+const { seesProgrammeSql } = require('../utils/reviewers');
 const inTransaction = require('../utils/transaction');
 const { REVIEW_WARNING_DAYS } = require('../utils/semesters');
 
@@ -17,8 +18,9 @@ const { REVIEW_WARNING_DAYS } = require('../utils/semesters');
 // (a fixed time in the tests and with `npm run jobs:run -- --now=...`, the real time otherwise),
 // `notify` sends the student email (notifyStudent by default), `remind` the reviewer's review-deadline
 // reminder (remindReviewer by default), `alert` the admins' review-deadline email (alertAdmins by
-// default), and `only` / `onlyDraftsOf` (tests only) limit the step to these application ids and
-// these students' drafts, so a test never touches real data.
+// default), `summarize` the reviewer's daily summary (sendReviewerSummary by default), and `only` /
+// `onlyDraftsOf` / `onlyReviewers` (tests only) limit the step to these application ids, these
+// students' drafts and these reviewers, so a test never touches real data.
 //
 // Catching up: every condition compares with `now` ("the deadline has passed", "the last days have
 // started"), so whatever passed while the server was off is handled by the first run after it starts.
@@ -157,13 +159,13 @@ const remindReviewer = async (reminder) => {
 
 /**
  * Reviewer reminders before the REVIEW DEADLINE (reviewer Group 7; round 2 Group 1: counted down to
- * the review deadline, not the semester's end). For each programme whose main reviewer still has
- * undecided applications (pending or needs_info) in a semester in progress:
+ * the review deadline, not the semester's end). For each programme with undecided applications
+ * (pending or needs_info) in a semester in progress, to EVERYONE who can see it (its main reviewer,
+ * and extra reviewers while allowed to assist; utils/reviewers.js):
  *   7_days: from REVIEW_WARNING_DAYS (7) days before the review deadline
  *   1_day:  from 1 day before it, until the deadline
- * (Budapest wall clock, so a clock change never moves them by an hour.) Part E of round 2 sends
- * them to everyone who can see the programme.
- * The reminder is recorded first (reviewer_reminders, one row per semester, programme and kind);
+ * (Budapest wall clock, so a clock change never moves them by an hour.)
+ * The reminder is recorded first (reviewer_reminders, one row per semester, programme, kind and reviewer);
  * only a run whose insert succeeded sends the email, so it goes out once, also with two processes.
  * A server that was off for the whole 7-day window sends only the 1-day reminder (no stale week
  * notice). With nothing undecided nothing is recorded, so a reminder still goes out if
@@ -179,7 +181,7 @@ const remindReviewersBeforeReviewDeadline = async ({ now, remind = remindReviewe
                     count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info_count
              FROM semester_bounds sb
              JOIN applications a ON a.semester_id = sb.id AND a.status IN ('pending', 'needs_info')
-             JOIN staff_programmes sp ON sp.programme_id = a.programme_id AND sp.role = 'main' AND sp.ended_at IS NULL
+             JOIN staff_programmes sp ON sp.programme_id = a.programme_id AND ${seesProgrammeSql('sp')}
              JOIN users r ON r.id = sp.user_id AND r.deactivated_at IS NULL
              WHERE sb.status = 'active' AND ${beforeDeadline('$3::int')} <= $1 AND sb.review_ends_at > $1
                AND ($2::int[] IS NULL OR a.id = ANY($2))
@@ -187,7 +189,7 @@ const remindReviewersBeforeReviewDeadline = async ({ now, remind = remindReviewe
          ), recorded AS (
              INSERT INTO reviewer_reminders (semester_id, programme_id, kind, reviewer_id, pending_count, needs_info_count, sent_at)
              SELECT semester_id, programme_id, kind, reviewer_id, pending_count, needs_info_count, $1 FROM due
-             ON CONFLICT (semester_id, programme_id, kind) DO NOTHING
+             ON CONFLICT (semester_id, programme_id, kind, reviewer_id) DO NOTHING
              RETURNING semester_id, programme_id, kind, reviewer_id, pending_count, needs_info_count
          )
          SELECT recorded.*, r.name AS reviewer_name, r.email AS reviewer_email, r.preferred_language,
@@ -207,6 +209,98 @@ const remindReviewersBeforeReviewDeadline = async ({ now, remind = remindReviewe
         }
     }
     return rows.length;
+};
+
+// The reviewers' daily summary (round 2 Group 1): at this hour, Budapest time. The one place to change it.
+const DAILY_SUMMARY_HOUR = 7;
+
+// One reviewer's daily summary email, in their language. Never throws.
+const sendReviewerSummary = async (summary) => {
+    try {
+        const email = buildReviewerSummaryEmail(summary.preferred_language, {
+            name: summary.reviewer_name, newApplications: summary.newApplications, replies: summary.replies, waiting: summary.waiting,
+        });
+        await sendEmail({ email: summary.reviewer_email, subject: email.subject, html: email.html });
+    } catch (err) {
+        console.error(`❌ Daily summary for reviewer ${summary.reviewer_id} failed:`, err.message);
+    }
+};
+
+/**
+ * The reviewers' daily summary (round 2 Group 1), instead of an email per new application and per
+ * student reply. From DAILY_SUMMARY_HOUR (07:00) Budapest time, on the Budapest clock (a clock
+ * change never moves it), each active reviewer who can see a programme gets one summary a day:
+ *   - the first run at or after 07:00 records the day (reviewer_summaries; a run that finds it
+ *     already recorded does nothing: never twice, also after a restart or with two processes)
+ *     and covers everything since the previous summary (the first one: the last 24 hours);
+ *   - what is new: applications submitted and student replies in the programmes the reviewer can
+ *     see at that moment (main reviewer, or extra reviewer while allowed to assist), not withdrawn;
+ *   - nothing new: recorded, no email (later news waits for the next day's summary).
+ * A server that was off at 07:00 sends it at the next run the same day; off for days: the next
+ * summary covers everything since the last one.
+ */
+const sendDailySummaries = async ({ now, summarize = sendReviewerSummary, onlyReviewers = null }) => {
+    const { rows: recorded } = await pool.query(
+        `WITH clock AS (SELECT ($1::timestamptz AT TIME ZONE 'Europe/Budapest') AS local),
+         due AS (
+             SELECT u.id AS reviewer_id FROM users u, clock
+             WHERE u.role = 'reviewer' AND u.deactivated_at IS NULL
+               AND clock.local::time >= make_time($3::int, 0, 0)
+               AND ($2::int[] IS NULL OR u.id = ANY($2))
+               AND EXISTS (SELECT 1 FROM staff_programmes sp WHERE sp.user_id = u.id AND ${seesProgrammeSql('sp')})
+               AND NOT EXISTS (SELECT 1 FROM reviewer_summaries r WHERE r.reviewer_id = u.id AND r.day = clock.local::date)
+         )
+         INSERT INTO reviewer_summaries (reviewer_id, day, covered_from, covered_until)
+         SELECT d.reviewer_id, (SELECT local::date FROM clock),
+                LEAST(COALESCE((SELECT max(p.covered_until) FROM reviewer_summaries p WHERE p.reviewer_id = d.reviewer_id), $1 - interval '24 hours'), $1),
+                $1
+         FROM due d
+         ON CONFLICT (reviewer_id, day) DO NOTHING
+         RETURNING reviewer_id, day, covered_from, covered_until`,
+        [now, onlyReviewers, DAILY_SUMMARY_HOUR]
+    );
+    let emailed = 0;
+    for (const row of recorded) {
+        const programmeIds = (await pool.query(
+            `SELECT sp.programme_id FROM staff_programmes sp WHERE sp.user_id = $1 AND ${seesProgrammeSql('sp')}`, [row.reviewer_id]
+        )).rows.map((r) => r.programme_id);
+        const events = (await pool.query(
+            `SELECT e.kind, s.name AS student, p.code AS programme,
+                    a.target_course_code || COALESCE(' – ' || (a.target_courses->0->>'course_name'), '') AS course
+             FROM application_events e
+             JOIN applications a ON a.id = e.application_id
+             JOIN users s ON s.id = a.student_id
+             JOIN programmes p ON p.id = a.programme_id
+             WHERE e.kind IN ('submitted', 'replied') AND e.created_at > $2 AND e.created_at <= $3
+               AND a.programme_id = ANY($1) AND a.status <> 'withdrawn'
+             ORDER BY e.created_at, e.id`,
+            [programmeIds, row.covered_from, row.covered_until]
+        )).rows;
+        const newApplications = events.filter((e) => e.kind === 'submitted');
+        const replies = events.filter((e) => e.kind === 'replied');
+        await pool.query(
+            'UPDATE reviewer_summaries SET new_applications = $3, student_replies = $4, emailed = $5 WHERE reviewer_id = $1 AND day = $2',
+            [row.reviewer_id, row.day, newApplications.length, replies.length, events.length > 0]
+        );
+        if (events.length === 0) continue;
+        const reviewer = (await pool.query('SELECT name, email, preferred_language FROM users WHERE id = $1', [row.reviewer_id])).rows[0];
+        const waiting = (await pool.query(
+            `SELECT count(*)::int AS n FROM applications a
+             WHERE a.programme_id = ANY($1) AND a.status = 'pending'
+               AND NOT EXISTS (SELECT 1 FROM semesters c WHERE c.id = a.semester_id AND c.status = 'closed')`,
+            [programmeIds]
+        )).rows[0].n;
+        try {
+            await summarize({
+                reviewer_id: row.reviewer_id, reviewer_name: reviewer.name, reviewer_email: reviewer.email, preferred_language: reviewer.preferred_language,
+                day: row.day, newApplications, replies, waiting,
+            });
+            emailed += 1;
+        } catch (err) {
+            console.error(`❌ Daily summary for reviewer ${row.reviewer_id} failed:`, err.message);
+        }
+    }
+    return emailed;
 };
 
 // The admins' "review deadline passed" email: every active admin, in their language. Never throws.
@@ -275,6 +369,7 @@ const alertReviewDeadlinePassed = async ({ now, alert = alertAdmins, only = null
 // The steps of one run, in order. Each is independent; a failing one never stops the others.
 const STEPS = [
     ['unsent draft reminders', remindUnsentDrafts],
+    ['reviewer daily summaries', sendDailySummaries],
     ['reviewer reminders', remindReviewersBeforeReviewDeadline],
     ['review deadline passed', alertReviewDeadlinePassed],
     ['deadline reminders', sendDeadlineReminders],
@@ -285,11 +380,16 @@ const STEPS = [
  * One run of every step. A failing step is logged and the next one still runs.
  * @returns {Promise<Record<string, number|string>>} what each step did (count, or 'failed')
  */
-const runApplicationJobs = async ({ now = new Date(), notify = notifyStudent, remind = remindReviewer, alert = alertAdmins, only = null, onlyDraftsOf = null } = {}) => {
+const runApplicationJobs = async ({
+    now = new Date(), notify = notifyStudent, remind = remindReviewer, alert = alertAdmins, summarize = sendReviewerSummary,
+    only = null, onlyDraftsOf = null, onlyReviewers = null,
+} = {}) => {
     const results = {};
+    // A run limited to some applications (the tests) never summarises real reviewers: only the named ones
+    const reviewers = only !== null && onlyReviewers === null ? [] : onlyReviewers;
     for (const [name, step] of STEPS) {
         try {
-            results[name] = await step({ now, notify, remind, alert, only, onlyDraftsOf });
+            results[name] = await step({ now, notify, remind, alert, summarize, only, onlyDraftsOf, onlyReviewers: reviewers });
             if (results[name] > 0) console.log(`⏱️  Background job, ${name}: ${results[name]}`);
         } catch (err) {
             results[name] = 'failed';
@@ -325,5 +425,6 @@ const withJobsLock = async (work) => {
 
 module.exports = {
     runApplicationJobs, withJobsLock, JOBS_LOCK_KEY, sendDeadlineReminders, rejectOverdueInfoRequests, remindUnsentDrafts,
-    remindReviewersBeforeReviewDeadline, remindReviewer, alertReviewDeadlinePassed, alertAdmins, rejectAutomatically, rejectInTransaction, notifyEach, REJECTION_REASONS,
+    remindReviewersBeforeReviewDeadline, remindReviewer, alertReviewDeadlinePassed, alertAdmins, sendDailySummaries, sendReviewerSummary,
+    DAILY_SUMMARY_HOUR, rejectAutomatically, rejectInTransaction, notifyEach, REJECTION_REASONS,
 };

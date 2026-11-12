@@ -4,7 +4,6 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const notifyStudent = require('../utils/notifyStudent');
-const notifyReviewer = require('../utils/notifyReviewer');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
 const { positiveInt } = require('../utils/validate');
@@ -143,7 +142,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
 
         // Respond first, then email in the background (never blocks or fails the request)
         notifyStudent(student_id, 'submitted');
-        notifyReviewer(inserted.id, 'newApplication'); // the programme's active reviewer (if any)
+        // Reviewers are not emailed per application: their daily summary tells them (round 2 Group 1)
     } catch (err) {
         console.error('❌ Submission error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Submission failed');
@@ -417,7 +416,7 @@ router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), as
 
         // Respond first, then email in the background (never blocks or fails the request)
         notifyStudent(req.user.id, 'resubmitted');
-        notifyReviewer(id, 'studentReplied'); // the programme's active reviewer (if any)
+        // Reviewers are not emailed per reply: their daily summary tells them (round 2 Group 1)
     } catch (err) {
         console.error('❌ Resubmit error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Resubmit failed');

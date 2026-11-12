@@ -448,20 +448,22 @@ const reminderCounts = (language, { programme, pending, needsInfo }) => {
     return `<p>${words.programme}: <strong>${programme}</strong></p><ul><li>${words.pending}: <strong>${pending}</strong></li><li>${words.needsInfo}: <strong>${needsInfo}</strong></li></ul>`;
 };
 
-// Emails to the programme's reviewer (reviewer Group 6): a new application, and a student's reply
-// to a request for information. In the reviewer's saved language; the button opens the login page.
+// Emails to reviewers, in the reviewer's saved language; the button opens the login page. Round 2
+// Group 1: no email per new application or reply any more, one daily summary instead (dailySummary),
+// and the reminders before the review deadline.
 const reviewerTemplates = {
     hu: {
         greeting: (name) => `Kedves ${name}!`,
         button: 'Bejelentkezés',
         signature: 'PTE Kreditátvitel',
-        newApplication: {
-            subject: 'Új kreditátviteli kérelem érkezett',
-            body: ({ student, course }) => `<p>Új kérelem érkezett a szakjára: <strong>${student}</strong>, ${course}.</p><p>A kérelem az Elbírálásra vár fülön található.</p>`,
-        },
-        studentReplied: {
-            subject: 'Egy hallgató válaszolt a kiegészítési kérésére',
-            body: ({ student, course }) => `<p><strong>${student}</strong> válaszolt a kiegészítési kérésére: ${course}.</p><p>A kérelem ismét az Elbírálásra vár fülön található.</p>`,
+        // The daily summary (round 2 Group 1): what is new since the last one, at 07:00 Budapest time
+        dailySummary: {
+            subject: 'Napi összefoglaló: új kérelmek és válaszok',
+            intro: '<p>Az előző összefoglaló óta ez történt az Ön szakjain:</p>',
+            newApplications: 'Új kérelmek',
+            replies: 'Hallgatói válaszok a kiegészítési kérésekre',
+            more: (count) => `… és még ${count}`,
+            waiting: (count) => `<p>Jelenleg az Ön döntésére vár: <strong>${count}</strong>.</p>`,
         },
         // Before the review deadline (round 2 Group 1): 7 days before, and 1 day before. A target:
         // nothing is rejected when it passes
@@ -479,13 +481,13 @@ const reviewerTemplates = {
         greeting: (name) => `Dear ${name},`,
         button: 'Log in',
         signature: 'PTE Credit Transfer',
-        newApplication: {
-            subject: 'New credit transfer application',
-            body: ({ student, course }) => `<p>A new application has arrived in your programme: <strong>${student}</strong>, ${course}.</p><p>You will find it under Pending.</p>`,
-        },
-        studentReplied: {
-            subject: 'A student replied to your request for information',
-            body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
+        dailySummary: {
+            subject: 'Daily summary: new applications and replies',
+            intro: '<p>This happened in your programmes since your last summary:</p>',
+            newApplications: 'New applications',
+            replies: 'Student replies to requests for information',
+            more: (count) => `… and ${count} more`,
+            waiting: (count) => `<p>Waiting for your decision now: <strong>${count}</strong>.</p>`,
         },
         reviewDeadlineSoon: {
             subject: 'The review deadline is coming: applications are waiting for your decision',
@@ -501,13 +503,13 @@ const reviewerTemplates = {
         greeting: (name) => `Liebe/r ${name},`,
         button: 'Anmelden',
         signature: 'PTE-Kreditübertragung',
-        newApplication: {
-            subject: 'Neuer Antrag auf Kreditübertragung',
-            body: ({ student, course }) => `<p>In Ihrem Studiengang ist ein neuer Antrag eingegangen: <strong>${student}</strong>, ${course}.</p><p>Sie finden ihn unter „Ausstehend“.</p>`,
-        },
-        studentReplied: {
-            subject: 'Ein Studierender hat auf Ihre Informationsanfrage geantwortet',
-            body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
+        dailySummary: {
+            subject: 'Tägliche Zusammenfassung: neue Anträge und Antworten',
+            intro: '<p>Seit Ihrer letzten Zusammenfassung ist in Ihren Studiengängen Folgendes geschehen:</p>',
+            newApplications: 'Neue Anträge',
+            replies: 'Antworten von Studierenden auf Informationsanfragen',
+            more: (count) => `… und ${count} weitere`,
+            waiting: (count) => `<p>Jetzt warten auf Ihre Entscheidung: <strong>${count}</strong>.</p>`,
         },
         reviewDeadlineSoon: {
             subject: 'Die Prüfungsfrist rückt näher: Anträge warten auf Ihre Entscheidung',
@@ -523,7 +525,7 @@ const reviewerTemplates = {
 
 /**
  * An email to a reviewer.
- * @param {'newApplication'|'studentReplied'|'reviewDeadlineSoon'|'reviewDeadlineTomorrow'} type
+ * @param {'reviewDeadlineSoon'|'reviewDeadlineTomorrow'} type  (the daily summary: buildReviewerSummaryEmail)
  * @param {{ name: string, student?: string, course?: string, programme?: string, deadline?: Date|string, pending?: number, needsInfo?: number }} data
  *   every text is escaped here; deadline (the review deadline, a moment) is written in Budapest time, in the language
  */
@@ -629,7 +631,37 @@ const buildAdminEmail = (type, lang, { name, programme = '', extras = '', semest
     return { subject: template.subject, html };
 };
 
+const SUMMARY_LIST_MAX = 30; // longer lists end with "… and N more"
+
+/**
+ * The reviewer's daily summary (round 2 Group 1), in their language. Every value is escaped here.
+ * @param {{ name: string, newApplications: Array<{ student, course, programme }>, replies: Array<{ student, course, programme }>, waiting: number }} data
+ */
+const buildReviewerSummaryEmail = (lang, { name, newApplications = [], replies = [], waiting = 0 }) => {
+    const language = normalizeLanguage(lang);
+    const words = reviewerTemplates[language];
+    const template = words.dailySummary;
+    const list = (title, items) => {
+        if (items.length === 0) return '';
+        const shown = items.slice(0, SUMMARY_LIST_MAX).map((i) => `<li><strong>${escapeHtml(i.student)}</strong>, ${escapeHtml(i.course)} (${escapeHtml(i.programme)})</li>`);
+        if (items.length > SUMMARY_LIST_MAX) shown.push(`<li>${escapeHtml(template.more(items.length - SUMMARY_LIST_MAX))}</li>`);
+        return `<h3 style="color: ${C.brand}; font-size: 15px;">${escapeHtml(title)} (${items.length})</h3><ul>${shown.join('')}</ul>`;
+    };
+    const html = `
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
+            <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
+            <p>${escapeHtml(words.greeting(name || ''))}</p>
+            ${template.intro}
+            ${list(template.newApplications, newApplications)}
+            ${list(template.replies, replies)}
+            ${template.waiting(Number(waiting) || 0)}
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+        </div>`;
+    return { subject: template.subject, html };
+};
+
 // Every text table by language, for the translation check (frontend: npm run check:translations)
 const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels, adminTemplates };
 
-module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, buildAdminEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };

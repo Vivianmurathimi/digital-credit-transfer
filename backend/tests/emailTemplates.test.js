@@ -8,7 +8,7 @@ require('dotenv').config();
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildEmail, buildReviewerEmail, buildAdminEmail, gradeLabel } = require('../utils/emailTemplates');
+const { buildEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, gradeLabel } = require('../utils/emailTemplates');
 
 const LANGUAGES = ['hu', 'en', 'de'];
 
@@ -45,15 +45,19 @@ test('the request-for-information email says by when to reply', () => {
     }
 });
 
-test('reviewer emails: new application and student reply, in every language, escaped', () => {
+test("reviewers' daily summary: new applications and replies, the waiting count, in every language, escaped", () => {
+    const item = { student: 'Kovács <Ödön>', course: 'IVM123 – Statika', programme: 'CIVIL' };
     for (const lang of LANGUAGES) {
-        for (const type of ['newApplication', 'studentReplied']) {
-            const email = buildReviewerEmail(type, lang, { name: 'Dr. Nagy', student: 'Kovács <Ödön>', course: 'IVM123 – Statika' });
-            assert.ok(email && email.subject, `${lang} ${type}: subject`);
-            assert.ok(email.html.includes('Kovács &lt;Ödön&gt;') && email.html.includes('IVM123 – Statika'), `${lang} ${type}: student and course`);
-            assert.ok(email.html.includes('/login'), `${lang} ${type}: login link`);
-        }
+        const email = buildReviewerSummaryEmail(lang, { name: 'Dr. Nagy', newApplications: [item, item], replies: [item], waiting: 5 });
+        assert.ok(email && email.subject, `${lang}: subject`);
+        assert.ok(email.html.includes('Kovács &lt;Ödön&gt;') && email.html.includes('IVM123 – Statika') && email.html.includes('(CIVIL)'), `${lang}: student, course, programme`);
+        assert.ok(email.html.includes('(2)') && email.html.includes('(1)') && email.html.includes('<strong>5</strong>'), `${lang}: counts`);
+        assert.ok(email.html.includes('/login'), `${lang}: login link`);
     }
+    const many = buildReviewerSummaryEmail('en', { name: 'x', newApplications: Array(35).fill(item), replies: [], waiting: 0 });
+    assert.ok(many.html.includes('and 5 more'), 'long lists are cut');
+    // No email per new application or reply any more (round 2 Group 1)
+    assert.equal(buildReviewerEmail('newApplication', 'en', { name: 'x' }), null);
     assert.equal(buildReviewerEmail('nothing', 'en', { name: 'x' }), null);
 });
 
