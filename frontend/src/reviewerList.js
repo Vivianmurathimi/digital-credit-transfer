@@ -67,20 +67,34 @@ export const sortByLastAction = (apps) => [...apps].sort((a, b) => (
     (new Date(a.last_action_at) - new Date(b.last_action_at)) || (a.id - b.id)
 ));
 
+// Sharing work (round 2 Group 1): who an application is assigned to. 'all' everything the
+// reviewer sees, 'mine' assigned to them, 'unassigned' shared (nobody assigned).
+export const ASSIGNMENT_FILTERS = ['all', 'mine', 'unassigned'];
+export const matchesAssignment = (app, assignment = 'all', me = null) => {
+    const assigned = app.assigned_reviewer_id ?? null;
+    if (assignment === 'mine') return assigned !== null && assigned === me;
+    if (assignment === 'unassigned') return assigned === null;
+    return true;
+};
+// Assigned to another reviewer: deciding it asks "This is assigned to X. Decide anyway?"
+export const assignedToSomeoneElse = (app, me) => (app.assigned_reviewer_id ?? null) !== null && app.assigned_reviewer_id !== me;
+
 /**
  * The rows of one tab: matching the search and, when set, only one student's applications of one
- * semester (the "other applications from this student" filter). Sorted oldest first.
+ * semester (the "other applications from this student" filter) and the assignment filter (me: the
+ * reviewer's id). Sorted oldest first.
  * @param {{ studentId: number, semesterId: number|null } | null} student
  */
-export const rowsFor = (apps, { tab, query = '', student = null }) => sortByLastAction(apps.filter((app) => (
+export const rowsFor = (apps, { tab, query = '', student = null, assignment = 'all', me = null }) => sortByLastAction(apps.filter((app) => (
     tabOf(app) === tab
     && matchesSearch(app, query)
     && (!student || (app.student_id === student.studentId && (app.semester_id ?? null) === (student.semesterId ?? null)))
+    && matchesAssignment(app, assignment, me)
 )));
 
-// How many rows each tab has with the same search and student filter
-export const countsFor = (apps, { query = '', student = null }) => Object.fromEntries(
-    TABS.map((tab) => [tab, rowsFor(apps, { tab, query, student }).length])
+// How many rows each tab has with the same search, student and assignment filter
+export const countsFor = (apps, { query = '', student = null, assignment = 'all', me = null }) => Object.fromEntries(
+    TABS.map((tab) => [tab, rowsFor(apps, { tab, query, student, assignment, me }).length])
 );
 
 // ---------- the details (reviewer Group 4) ----------

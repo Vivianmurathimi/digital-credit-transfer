@@ -227,12 +227,17 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                   programmes_needing AS (
                       SELECT p.id,
                              NOT ${programmeHasReviewerSql('p.id')} AS no_reviewer,
+                             -- no main reviewer, but an extra reviewer still assisting (round 2 Group 1)
+                             ${programmeHasReviewerSql('p.id')} AND NOT EXISTS (
+                                 SELECT 1 FROM staff_programmes m JOIN users mu ON mu.id = m.user_id AND mu.deactivated_at IS NULL
+                                 WHERE m.programme_id = p.id AND m.role = 'main' AND m.ended_at IS NULL) AS no_main,
                              NOT EXISTS (SELECT 1 FROM courses c, active WHERE c.programme_id = p.id AND c.semester_id = active.id AND c.status = 'active') AS no_courses
                       FROM programmes p WHERE p.status = 'active')
              SELECT (SELECT row_to_json(active) FROM active) AS active_semester,
                     (SELECT count(*)::int FROM applications a, active WHERE a.semester_id = active.id AND a.status = 'pending') AS pending,
                     (SELECT count(*)::int FROM applications a, active WHERE a.semester_id = active.id AND a.status = 'needs_info') AS needs_info,
                     (SELECT count(*)::int FROM programmes_needing WHERE no_reviewer) AS programmes_without_reviewer,
+                    (SELECT count(*)::int FROM programmes_needing WHERE no_main) AS programmes_without_main,
                     (SELECT count(*)::int FROM programmes_needing WHERE no_courses) AS programmes_without_courses,
                     (SELECT count(*)::int FROM allowed_domains) AS domains,
                     (SELECT count(*)::int FROM late_access l, active WHERE l.semester_id = active.id AND l.revoked_at IS NULL AND l.deadline > now()) AS late_access_active,
@@ -254,6 +259,8 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 pending: r.pending,
                 needsInfo: r.needs_info,
                 programmesWithoutReviewer: r.programmes_without_reviewer,
+                // An assisting extra reviewer keeps working, but the admin should choose a main reviewer
+                programmesWithoutMain: r.programmes_without_main,
                 programmesWithoutCourses: r.active_semester ? r.programmes_without_courses : 0,
                 domains: r.domains,
                 lateAccessActive: r.late_access_active,

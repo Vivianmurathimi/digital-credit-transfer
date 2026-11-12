@@ -24,6 +24,7 @@ const AdminOverview = ({ summary }) => {
         !summary.activeSemester && { key: 'admin_warning_no_semester', to: '/admin/semesters' },
         summary.activeSemester && summary.programmesWithoutCourses > 0 && { key: 'admin_warning_no_courses', to: '/admin/catalogue', count: summary.programmesWithoutCourses },
         summary.programmesWithoutReviewer > 0 && { key: 'admin_warning_no_reviewer', to: '/admin/reviewers', count: summary.programmesWithoutReviewer },
+        summary.programmesWithoutMain > 0 && { key: 'admin_warning_no_main', to: '/admin/reviewers', count: summary.programmesWithoutMain },
         summary.domains === 0 && { key: 'domains_empty_warning', to: '/admin/domains' },
     ].filter(Boolean);
 

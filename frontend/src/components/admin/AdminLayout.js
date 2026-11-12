@@ -11,6 +11,7 @@ import PastSemesters from './PastSemesters';
 import Analytics from './Analytics';
 import ActAs from './ActAs';
 import StaffAccess from '../StaffAccess';
+import ReviewerSharing from './ReviewerSharing';
 import StudentProgrammes from '../StudentProgrammes';
 import AllowedDomains from '../AllowedDomains';
 
@@ -48,6 +49,9 @@ const AdminLayout = ({ onActingStarted }) => {
         http.get('admin/summary').json().then((data) => setSummary(data.summary)).catch(() => setSummary(null));
     }, []);
     useEffect(() => { refresh(); setMenuOpen(false); }, [refresh, location.pathname]);
+    // Reviewers section: a change in the staff list or the sharing panel reloads both, and the badges
+    const [staffVersion, setStaffVersion] = useState(0);
+    const staffChanged = useCallback(() => { setStaffVersion((v) => v + 1); refresh(); }, [refresh]);
 
     if (!section) return <Navigate to="/admin" replace />;
 
@@ -60,7 +64,8 @@ const AdminLayout = ({ onActingStarted }) => {
         applications: <ApplicationsSection onChange={refresh} />,
         'past-semesters': <PastSemesters />,
         analytics: <Analytics />,
-        reviewers: <><StaffAccess role="reviewer" onChange={refresh} /><ActAs role="reviewer" onActingStarted={startActing} /></>,
+        // The staff list and the sharing panel reload each other (staffVersion) after a change
+        reviewers: <><StaffAccess role="reviewer" version={staffVersion} onChange={staffChanged} /><ReviewerSharing version={staffVersion} onChange={staffChanged} /><ActAs role="reviewer" onActingStarted={startActing} /></>,
         students: <><StudentProgrammes /><ActAs role="student" onActingStarted={startActing} /></>,
         admins: <StaffAccess role="superadmin" onChange={refresh} />,
         domains: <AllowedDomains onChange={refresh} />,

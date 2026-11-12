@@ -19,10 +19,10 @@ const report = (ok, name, detail = '') => {
     console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`);
 };
 
-// Every admin screen built in Groups 1-5 (component, or component:role when one serves two roles)
+// Every admin screen built in Groups 1-5 and round 2 (component, or component:role when one serves two roles)
 const ADMIN_SCREENS = [
     'ReviewerOverview', 'AdminOverview', 'Semesters', 'PeriodControls', 'LateAccess', 'CatalogueImport', 'Catalogue',
-    'ApplicationsSection', 'PastSemesters', 'TermArchive', 'Analytics', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'ActAs:reviewer', 'ActAs:student',
+    'ApplicationsSection', 'PastSemesters', 'TermArchive', 'Analytics', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'ReviewerSharing', 'ActAs:reviewer', 'ActAs:student',
     'StudentProgrammes', 'AllowedDomains',
 ];
 
@@ -58,6 +58,8 @@ const calm = { pending: 0, programmesWithoutReviewer: 0, domains: 2, activeSemes
 report(SECTIONS.every((s) => badgeFor(s.id, calm) === null), 'Nothing to do: no badge anywhere');
 report(badgeFor('semesters', { ...calm, readyToClose: true }) === '!', 'Semester: ready to close (Group 6)');
 report(badgeFor('applications', { ...calm, pending: 4 }) === '4', 'Applications: the pending count');
+report(badgeFor('reviewers', { ...calm, programmesWithoutMain: 1 }) === '1' && badgeFor('reviewers', { ...calm, programmesWithoutReviewer: 1, programmesWithoutMain: 2 }) === '3',
+    'Reviewers: programmes nobody reviews plus programmes without a main reviewer (round 2)');
 report(badgeFor('reviewers', { ...calm, programmesWithoutReviewer: 1 }) === '1', 'Reviewers: programmes without one');
 report(badgeFor('domains', { ...calm, domains: 0 }) === '!', 'Allowed domains: an empty list');
 report(badgeFor('semesters', { ...calm, activeSemester: null }) === '!' && badgeFor('semesters', { ...calm, programmesWithoutCourses: 2 }) === '!', 'Semester: no active semester, or programmes without courses');

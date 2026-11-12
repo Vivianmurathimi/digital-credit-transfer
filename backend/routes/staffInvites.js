@@ -11,6 +11,7 @@ const { normalizeLanguage } = require('../utils/emailTemplates');
 const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 const { checkPassword } = require('../utils/passwordRules');
 const { STAFF_ROLES, lockProgrammes, mainReviewerOf, endLink } = require('../utils/reviewers');
+const { notifyAdminsNoMainReviewer } = require('../utils/notifyAdmins');
 const {
     INVITE_DAYS, INVITE_ROLES, INVITE_STATUSES, INVITE_STATUS_SQL, OPEN_INVITE,
     newToken, hashToken, inviteLink, isValidInviteEmail, sendInviteEmail, checkInviteAddress, createInvite,
@@ -292,20 +293,22 @@ router.put('/users/:id/remove-reviewer', verifyToken, requireRole('superadmin'),
             if (user.role !== 'reviewer') return { error: [400, 'NOT_A_REVIEWER', 'This user is not a reviewer'] };
             if (user.deactivated_at) return { alreadyRemoved: true, unassigned: 0 };
 
-            const links = (await client.query('SELECT id, programme_id FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
+            const links = (await client.query('SELECT id, programme_id, role FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
             await lockProgrammes(client, links.map((l) => l.programme_id));
             await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1 AND deactivated_at IS NULL', [id]);
             let unassigned = 0;
             for (const link of links) unassigned += await endLink(client, { linkId: link.id, userId: id, programmeId: link.programme_id });
             // Admins acting as this reviewer: their sessions end too
             await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [id]);
-            return { alreadyRemoved: false, unassigned };
+            return { alreadyRemoved: false, unassigned, lostMain: links.filter((l) => l.role === 'main').map((l) => l.programme_id) };
         });
         if (result.error) {
             const [status, code, message] = result.error;
             return sendError(res, status, code, message);
         }
-        res.json({ success: true, ...result });
+        const { lostMain = [], ...answer } = result;
+        res.json({ success: true, ...answer });
+        notifyAdminsNoMainReviewer(lostMain); // a main reviewer left while extra reviewers remain: the admins choose
     } catch (err) {
         console.error('❌ Remove reviewer error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not remove the reviewer');
@@ -409,13 +412,16 @@ router.post('/users/:id/programmes', verifyToken, requireRole('superadmin'), req
                 'INSERT INTO staff_programmes (user_id, programme_id, role, created_by) VALUES ($1, $2, $3, $4)',
                 [id, programme.id, choice.role, req.actor.id]
             );
-            return { changed: Boolean(current), swapped, moved };
+            // The main reviewer became an extra one: the programme has no main reviewer now
+            return { changed: Boolean(current), swapped, moved, lostMain: current && current.role === 'main' ? [programme.id] : [] };
         });
         if (result.error) {
             const [status, code2, message, field] = result.error;
             return sendError(res, status, code2, message, { field });
         }
-        res.status(result.changed ? 200 : 201).json({ success: true, ...result });
+        const { lostMain = [], ...answer } = result;
+        res.status(result.changed ? 200 : 201).json({ success: true, ...answer });
+        notifyAdminsNoMainReviewer(lostMain);
     } catch (err) {
         if (isSecondMain(err)) return sendError(res, 409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a main reviewer');
         console.error('❌ Add programme error:', err.message);
@@ -437,17 +443,20 @@ router.delete('/users/:id/programmes/:code', verifyToken, requireRole('superadmi
             await lockProgrammes(client, [programme.id]);
             const found = await activeReviewer(client, id);
             if (found.error) return found;
-            const links = (await client.query('SELECT id, programme_id FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
+            const links = (await client.query('SELECT id, programme_id, role FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
             const link = links.find((l) => l.programme_id === programme.id);
             if (!link) return { error: [404, 'LINK_NOT_FOUND', 'This reviewer is not linked to this programme'] };
             if (links.length === 1) return { error: [409, 'LAST_PROGRAMME', 'This is the reviewer\'s only programme: remove the reviewer instead'] };
-            return { unassigned: await endLink(client, { linkId: link.id, userId: id, programmeId: programme.id }) };
+            const unassigned = await endLink(client, { linkId: link.id, userId: id, programmeId: programme.id });
+            return { unassigned, lostMain: link.role === 'main' ? [programme.id] : [] };
         });
         if (result.error) {
             const [status, code, message] = result.error;
             return sendError(res, status, code, message);
         }
-        res.json({ success: true, ...result });
+        const { lostMain = [], ...answer } = result;
+        res.json({ success: true, ...answer });
+        notifyAdminsNoMainReviewer(lostMain);
     } catch (err) {
         console.error('❌ Remove programme error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not change the reviewer\'s programmes');

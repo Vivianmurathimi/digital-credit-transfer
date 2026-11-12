@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import http from '../http';
 import { getErrorMessage } from '../errorMessage';
-import { countsFor, rowsFor } from '../reviewerList';
+import { ASSIGNMENT_FILTERS, assignedToSomeoneElse, countsFor, rowsFor } from '../reviewerList';
 import ReviewerHeader from './reviewer/ReviewerHeader';
 import ReviewerTabs from './reviewer/ReviewerTabs';
 import ReviewerSearch from './reviewer/ReviewerSearch';
@@ -32,6 +32,7 @@ const ReviewerDashboard = () => {
     const [notice, setNotice] = useState(''); // "Decision saved." after the panel closes
     const [semesters, setSemesters] = useState(null); // { current, past: [{ id, name, ends_on }] }
     const [semesterId, setSemesterId] = useState(null); // null = the current view
+    const [assignment, setAssignment] = useState('all'); // all / mine / unassigned (round 2 Group 1)
 
     const load = useCallback(async () => {
         try {
@@ -66,8 +67,17 @@ const ReviewerDashboard = () => {
     };
 
     const applications = useMemo(() => data?.applications || [], [data]);
-    const rows = useMemo(() => rowsFor(applications, { tab, query, student }), [applications, tab, query, student]);
-    const counts = useMemo(() => countsFor(applications, { query, student }), [applications, query, student]);
+    const me = data?.reviewer?.id ?? null;
+    // Past semesters are read-only: nothing to share there, so no assignment filter
+    const assignmentFilter = readOnly ? 'all' : assignment;
+    const rows = useMemo(() => rowsFor(applications, { tab, query, student, assignment: assignmentFilter, me }), [applications, tab, query, student, assignmentFilter, me]);
+    const counts = useMemo(() => countsFor(applications, { query, student, assignment: assignmentFilter, me }), [applications, query, student, assignmentFilter, me]);
+    // Deciding an application assigned to someone else is allowed after a confirmation (the first decision wins)
+    const startDecision = (app, type) => {
+        if (assignedToSomeoneElse(app, me) && !window.confirm(t('reviewer_decide_assigned_confirm', { name: app.assigned_name || '—' }))) return;
+        setNotice('');
+        setDecision({ app, type });
+    };
 
     const showStudent = (app) => {
         setStudent({ studentId: app.student_id, semesterId: app.semester_id ?? null, name: app.student_name });
@@ -78,7 +88,7 @@ const ReviewerDashboard = () => {
     const emptyText = () => {
         if (readOnly && rowsFor(applications, { tab }).length === 0) return t('reviewer_empty_past');
         if (tab === 'completed' && data && !data.semester) return t('reviewer_no_semester');
-        const anyInTab = rowsFor(applications, { tab }).length > 0;
+        const anyInTab = rowsFor(applications, { tab }).length > 0; // the search, student or assignment filter hides them
         return anyInTab ? t('reviewer_no_search_results') : t(EMPTY_TEXT[tab]);
     };
 
@@ -96,6 +106,14 @@ const ReviewerDashboard = () => {
             {notice && <div role="status" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--success-border)' }}>{notice}</div>}
             <ReviewerTabs tab={tab} counts={counts} onChange={(name) => { setTab(name); setOpenId(null); }} />
             <ReviewerSearch query={query} onQueryChange={setQuery} student={student} onClearStudent={() => setStudent(null)} />
+            {!readOnly && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', margin: '0 0 12px' }}>
+                    <label htmlFor="reviewer-assignment">{t('reviewer_assignment_label')}</label>
+                    <select id="reviewer-assignment" value={assignment} onChange={(e) => { setAssignment(e.target.value); setOpenId(null); }} style={{ padding: '6px' }}>
+                        {ASSIGNMENT_FILTERS.map((name) => <option key={name} value={name}>{t(`reviewer_assignment_${name}`)}</option>)}
+                    </select>
+                </div>
+            )}
 
             {!data && !loadError ? (
                 <p role="status" style={{ color: 'var(--text-muted)' }}>{t('reviewer_loading')}</p>
@@ -109,7 +127,8 @@ const ReviewerDashboard = () => {
                             showProgramme={(data?.reviewer?.programmes || []).filter((p) => p.sees).length > 1}
                             onToggle={() => setOpenId(openId === app.id ? null : app.id)}
                             onShowStudent={() => showStudent(app)}
-                            onDecide={(type) => { setNotice(''); setDecision({ app, type }); }}
+                            me={me}
+                            onDecide={(type) => startDecision(app, type)}
                         />
                     ))}
                 </ul>
