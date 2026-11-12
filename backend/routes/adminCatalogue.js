@@ -7,6 +7,7 @@ const requireRole = require('../middleware/requireRole');
 const { requireIdParam, positiveInt } = require('../utils/validate');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
+const { programmeHasReviewerSql } = require('../utils/reviewers');
 const { readNeptunFile, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
 const { MAX_BYTES } = require('../utils/neptun/parse');
 
@@ -129,11 +130,11 @@ router.put('/admin/semesters/:id', ...adminOnly, requireIdParam('id'), async (re
 });
 
 // What to fix before opening: active programmes with no active course in the semester, or no
-// active reviewer. Shown in the Activate confirmation; they do not block it.
+// reviewer who can see it (main, or extra while assisting). Shown in the Activate confirmation; they do not block it.
 const semesterWarnings = async (db, semesterId) => (await db.query(
     `SELECT p.code, p.name_en, p.name_hu, p.name_de,
             NOT EXISTS (SELECT 1 FROM courses c WHERE c.programme_id = p.id AND c.semester_id = $1 AND c.status = 'active') AS no_courses,
-            NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id) AS no_reviewer
+            NOT ${programmeHasReviewerSql('p.id')} AS no_reviewer
      FROM programmes p WHERE p.status = 'active' ORDER BY p.code`,
     [semesterId]
 )).rows.filter((p) => p.no_courses || p.no_reviewer);

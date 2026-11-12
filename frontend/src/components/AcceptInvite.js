@@ -97,7 +97,10 @@ const AcceptInvite = () => {
     return (
         <div style={boxStyle}>
             <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t(isAdmin ? 'invite_title_admin' : 'invite_title')}</h2>
-            <p>{isAdmin ? t('invite_intro_admin') : t('invite_intro', { programme: programmeName(invite.programme, i18n) })}</p>
+            <p>{isAdmin ? t('invite_intro_admin') : t('invite_intro', {
+                // "Computer Science Engineering (Main reviewer), Civil Engineering (Extra reviewer)"
+                programme: (invite.programmes || []).map((link) => t('staff_link_summary', { programme: programmeName(link, i18n), role: t(`staff_link_role_${link.role}`) })).join(', '),
+            })}</p>
 
             {error && <div role="alert" style={dangerBox}>{error}</div>}
 

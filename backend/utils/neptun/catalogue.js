@@ -80,9 +80,11 @@ const readNeptunFile = (buffer) => {
 const programmeBlockers = async (db, programmeId, semesterId) => {
     const { rows } = await db.query(
         `SELECT
-            (SELECT count(*)::int FROM users WHERE programme_id = $1) AS people,
+            -- students of the programme, and staff ever linked to it (ended links are history too)
+            (SELECT count(*)::int FROM users WHERE programme_id = $1)
+              + (SELECT count(*)::int FROM staff_programmes WHERE programme_id = $1) AS people,
             (SELECT count(*)::int FROM applications WHERE programme_id = $1) AS applications,
-            (SELECT count(*)::int FROM staff_invites WHERE programme_id = $1) AS invites,
+            (SELECT count(*)::int FROM staff_invite_programmes WHERE programme_id = $1) AS invites,
             (SELECT count(*)::int FROM student_programme_changes WHERE old_programme_id = $1 OR new_programme_id = $1) AS changes,
             (SELECT count(*)::int FROM courses WHERE programme_id = $1 AND semester_id IS DISTINCT FROM $2) AS other_semester_courses`,
         [programmeId, semesterId]

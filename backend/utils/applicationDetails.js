@@ -11,11 +11,11 @@ const asList = (value) => (Array.isArray(value) ? value : []);
 /**
  * @param {{ query: Function }} db
  * @param {number} id  the application
- * @param {{ programmeId?: number|null, semesterId?: number|null }} limits  null = no limit
+ * @param {{ programmeIds?: number[]|null, semesterId?: number|null }} limits  null = no limit (programmeIds: a reviewer's visible programmes)
  * @returns {Promise<object|null>}  null when it isn't there (or withdrawn, or outside the limits)
  */
 // includeWithdrawn: the admin's Past semesters shows withdrawn applications too (the reviewer never sees them)
-const loadApplicationDetails = async (db, id, { programmeId = null, semesterId = null, includeWithdrawn = false } = {}) => {
+const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId = null, includeWithdrawn = false } = {}) => {
     const found = (await db.query(
         `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
                 a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
@@ -27,9 +27,9 @@ const loadApplicationDetails = async (db, id, { programmeId = null, semesterId =
          JOIN programmes p ON p.id = a.programme_id
          LEFT JOIN semesters sem ON sem.id = a.semester_id
          LEFT JOIN users decider ON decider.id = a.decided_by
-         WHERE a.id = $1 AND ($2::int IS NULL OR a.programme_id = $2) AND ($3::int IS NULL OR a.semester_id = $3)
+         WHERE a.id = $1 AND ($2::int[] IS NULL OR a.programme_id = ANY($2::int[])) AND ($3::int IS NULL OR a.semester_id = $3)
            AND ($4::boolean OR a.status <> 'withdrawn')`,
-        [id, programmeId, semesterId, includeWithdrawn]
+        [id, programmeIds, semesterId, includeWithdrawn]
     )).rows[0];
     if (!found) return null;
 

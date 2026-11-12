@@ -11,7 +11,7 @@ const inTransaction = require('../utils/transaction');
 const { semesterEndedSql } = require('../utils/semesters');
 const { periodFor, refuseUnlessSubmitting } = require('../utils/applicationPeriod');
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
-const { programmeScopeOf, lockProgramme, resolveReviewerView } = require('../utils/reviewers');
+const { programmeScopeOf, programmeHasReviewerSql, resolveReviewerView } = require('../utils/reviewers');
 const { DECIDABLE_STATUS, checkDecision, refusalFor } = require('../utils/decisions');
 const { sendValidationErrors } = sendError;
 const {
@@ -118,14 +118,12 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // The application and the first step of its history are saved together
         const studentNote = normalizeNote(student_note);
         const inserted = await inTransaction(async (client) => {
-            // The programme's active reviewer gets it (or nobody while the programme has none).
-            // The lock waits for a reviewer change running at this moment (utils/reviewers.js).
-            await lockProgramme(client, programmeId, 'SHARE');
+            // A new application is shared (assigned_reviewer_id NULL): everyone who can see the
+            // programme sees it; the admin may assign it later (round 2 Group 1)
             const { rows } = await client.query(
                 `INSERT INTO applications 
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11,
-                        (SELECT id FROM users WHERE role = 'reviewer' AND deactivated_at IS NULL AND programme_id = $2)) RETURNING id`,
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id) 
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11) RETURNING id`,
                 [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: studentNote });
@@ -178,7 +176,7 @@ router.get('/applications/mine/:id', verifyToken, requireRole('student'), async 
 
 // One student's applications as that student sees them, for reviewers and the superadmin.
 // A reviewer gets only the ones in
-// their own programme (reviewer Group 2).
+// the programmes they can see now (utils/reviewers.js).
 router.get('/applications/student/:id', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const requestedId = Number(req.params.id);
     if (!Number.isSafeInteger(requestedId)) return res.json({ success: true, applications: [] });
@@ -207,28 +205,28 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
 });
 
 
-// Every application a reviewer may see: only their own programme's (reviewer Group 2).
+// Every application a reviewer may see: only the programmes they can see now (utils/reviewers.js).
 // The superadmin sees every programme. decided_by_name: the deciding reviewer's name (admin round
 // Group 1); "Admin" and "System" are shown without a name, and old rows without a record as "—".
-// programme_has_reviewer (admin round Group 2): false = nobody reviews this programme now, so the
-// admin decides its applications directly (recorded as admin).
+// programme_has_reviewer (admin round Group 2): false = nobody can review this programme now (no
+// main reviewer and no assisting extra one), so the admin decides its applications directly.
 router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     try {
         const view = await resolveReviewerView(pool, req);
-        const programmeId = view.all ? null : view.reviewer.programme_id;
-        // The admin sees the ACTIVE semester only (admin round Group 6); older ones: Past semesters
-        const activeOnly = view.all;
+        const programmeIds = view.all ? null : view.reviewer.programmeIds;
+        // The admin sees the ACTIVE semester only (admin round Group 6); older ones: Past semesters.
+        // Boolean: for a reviewer view.all is undefined, which SQL would read as NULL (filtering too)
+        const activeOnly = Boolean(view.all);
         const result = await pool.query(
             `SELECT a.*, u.name as student_name,
                     CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name,
-                    EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL
-                            AND r.programme_id = a.programme_id) AS programme_has_reviewer
+                    ${programmeHasReviewerSql('a.programme_id')} AS programme_has_reviewer
              FROM applications a JOIN users u ON a.student_id=u.id
              LEFT JOIN users d ON d.id = a.decided_by
-             WHERE ($1::int IS NULL OR a.programme_id = $1)
+             WHERE ($1::int[] IS NULL OR a.programme_id = ANY($1::int[]))
                AND (NOT $2::boolean OR a.semester_id = (SELECT id FROM semesters WHERE status = 'active'))
              ORDER BY a.created_at DESC`,
-            [programmeId, activeOnly]
+            [programmeIds, activeOnly]
         );
         res.json({ success: true, applications: result.rows });
     } catch (err) {
@@ -242,7 +240,7 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
 // rejected (with a reason) or sent back for information (with a message). The update only
 // happens while the application is still pending, so of two people deciding at the same moment
 // one succeeds and the other gets 409 ALREADY_DECIDED. The decision and its history entry are
-// saved together. Reviewers only reach their own programme's applications (others: 404).
+// saved together. Reviewers only reach the programmes they can see now (others: 404).
 router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
@@ -267,7 +265,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                     decided_by_role       = CASE WHEN $7::boolean THEN $8::varchar END,
                     decided_at            = CASE WHEN $7::boolean THEN now() END,
                     decision_rationale    = CASE WHEN $7::boolean THEN $2::text END
-                 WHERE id = $4 AND status = $9 AND ($10::int IS NULL OR programme_id = $10) AND NOT ${semesterEndedSql()}
+                 WHERE id = $4 AND status = $9 AND ($10::int[] IS NULL OR programme_id = ANY($10::int[])) AND NOT ${semesterEndedSql()}
                  RETURNING student_id, info_deadline`,
                 [status, note, req.actor.id, id, status === 'needs_info', finalGrade, isDecision, actorRole, DECIDABLE_STATUS, programmeScopeOf(req.user)]
             );
@@ -275,7 +273,7 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
                 // Not changed: not found (or another programme's), its semester has ended (past
                 // semesters are read-only, reviewer group L3), or no longer pending
                 const current = await client.query(
-                    `SELECT status, ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND ($2::int IS NULL OR programme_id = $2)`,
+                    `SELECT status, ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND ($2::int[] IS NULL OR programme_id = ANY($2::int[]))`,
                     [id, programmeScopeOf(req.user)]
                 );
                 if (current.rows.length === 0) return { notFound: true };

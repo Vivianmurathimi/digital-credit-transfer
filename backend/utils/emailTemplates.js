@@ -293,6 +293,13 @@ const buildEmail = (type, lang, data) => {
 // Sent in the language chosen when registering / the account's saved language.
 // reviewerInvite (reviewer Group 2) and adminInvite (admin round Group 2): the superadmin's
 // invitation, in the language chosen for it.
+// A reviewer's role in a programme (round 2 Group 1), e.g. in the invite: "Civil Engineering (extra reviewer)"
+const staffRoleLabels = {
+    hu: { main: 'fő bíráló', extra: 'további bíráló' },
+    en: { main: 'main reviewer', extra: 'extra reviewer' },
+    de: { main: 'Hauptgutachter', extra: 'zusätzlicher Gutachter' },
+};
+
 const accountTemplates = {
     hu: {
         verifyAccount: {
@@ -312,7 +319,7 @@ const accountTemplates = {
         reviewerInvite: {
             subject: 'Meghívó bírálónak – PTE Kreditátvitel',
             heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
-            text: (programme) => `Meghívást kapott a(z) ${programme} szak bírálójának. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
+            text: (programme) => `Meghívást kapott bírálónak: ${programme}. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
             button: 'Meghívó elfogadása',
             footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
@@ -349,7 +356,7 @@ const accountTemplates = {
         reviewerInvite: {
             subject: 'Reviewer invitation – PTE Credit Transfer',
             heading: 'Invitation to the PTE Credit Transfer System',
-            text: (programme) => `You have been invited to be the reviewer for the ${programme} programme. Click the button below to set your password and activate your account.`,
+            text: (programme) => `You have been invited as a reviewer for: ${programme}. Click the button below to set your password and activate your account.`,
             button: 'Accept invitation',
             footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
         },
@@ -386,7 +393,7 @@ const accountTemplates = {
         reviewerInvite: {
             subject: 'Einladung als Gutachter – PTE-Kreditübertragung',
             heading: 'Einladung zum PTE-Kreditübertragungssystem',
-            text: (programme) => `Sie wurden als Gutachter für den Studiengang ${programme} eingeladen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.`,
+            text: (programme) => `Sie wurden als Gutachter eingeladen für: ${programme}. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.`,
             button: 'Einladung annehmen',
             footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
         },
@@ -538,6 +545,6 @@ const buildReviewerEmail = (type, lang, { name, student = '', course = '', progr
 };
 
 // Every text table by language, for the translation check (frontend: npm run check:translations)
-const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates };
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels };
 
-module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, translatedTables };
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };

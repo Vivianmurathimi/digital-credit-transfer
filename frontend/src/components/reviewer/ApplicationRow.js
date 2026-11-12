@@ -13,7 +13,8 @@ import Chip, { STATUS_ICONS } from './Chip';
 const WAITING_CUES = { warn: { cue: 'needs-info', icon: '⏱' }, late: { cue: 'rejected', icon: '⚠' } };
 
 // readOnly: a past semester (reviewer group L3): no waiting or deadline cues, no decision buttons
-const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, onDecide }) => {
+// showProgramme: the reviewer sees more than one programme (round 2 Group 1): the row names its programme's code
+const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, onToggle, onShowStudent, onDecide }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const target = targetCourse(app);
@@ -46,7 +47,7 @@ const ApplicationRow = ({ app, open, readOnly = false, onToggle, onShowStudent, 
                     </span>
                 </div>
                 <div style={{ marginTop: '4px' }}>
-                    {app.student_name}{app.neptun_code ? ` · ${app.neptun_code}` : ''}
+                    {app.student_name}{app.neptun_code ? ` · ${app.neptun_code}` : ''}{showProgramme && app.programme_code ? ` · ${app.programme_code}` : ''}
                 </div>
                 <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
                     <span>{t('reviewer_submitted_on', { date: formatDate(app.submitted_at, language) })}</span>
