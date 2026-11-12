@@ -138,6 +138,9 @@ export const conversationOf = (events) => sortEvents(events)
  * a personal name. labelKey: the translation key to use instead of a name.
  */
 export const authorOf = (event) => {
+    // The committee's step (round 2 Group 2): "Committee", or for the admin who acted
+    if (event.actor_role === 'admin' && event.kind?.startsWith('committee_')) return { labelKey: 'committee_by_admin' };
+    if (event.actor_role === 'committee') return event.actor_name ? { name: event.actor_name } : { labelKey: 'reviewer_author_committee' };
     if (event.actor_role === 'admin') return { labelKey: 'reviewer_author_admin' };
     if (event.actor_role === 'system') return { labelKey: 'reviewer_author_system' };
     if (event.actor_name) return { name: event.actor_name };

@@ -67,9 +67,9 @@ const gradeLabel = (grade, language) => {
 };
 
 const common = {
-    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', gradeTitle: 'Végső jegy:', signature: 'PTE Kreditátvitel' },
-    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', gradeTitle: 'Final grade:', signature: 'PTE Credit Transfer' },
-    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', gradeTitle: 'Endnote:', signature: 'PTE Kreditübertragung' },
+    hu: { greeting: (name) => `Kedves ${name}!`, button: 'Irányítópult megnyitása', linkNote: 'Biztonsági okokból ez a link 10 percig érvényes. Ezután jelentkezzen be a szokásos módon.', noteTitle: 'A bíráló üzenete:', reasonTitle: 'Indoklás:', gradeTitle: 'Végső jegy:', committeeTitle: 'A bizottság döntése:', signature: 'PTE Kreditátvitel' },
+    en: { greeting: (name) => `Dear ${name},`, button: 'Open my dashboard', linkNote: 'For your security, this link is valid for 10 minutes. After that, please log in as usual.', noteTitle: "Reviewer's message:", reasonTitle: 'Reason:', gradeTitle: 'Final grade:', committeeTitle: 'Decision of the committee:', signature: 'PTE Credit Transfer' },
+    de: { greeting: (name) => `Liebe/r ${name},`, button: 'Mein Dashboard öffnen', linkNote: 'Aus Sicherheitsgründen ist dieser Link 10 Minuten gültig. Danach melden Sie sich bitte wie gewohnt an.', noteTitle: 'Nachricht des Gutachters:', reasonTitle: 'Begründung:', gradeTitle: 'Endnote:', committeeTitle: 'Entscheidung des Ausschusses:', signature: 'PTE Kreditübertragung' },
 };
 
 const templates = {
@@ -230,7 +230,7 @@ const noteBlock = (title, note) => `
  * @param {'submitted'|'resubmitted'|'needsInfo'|'reminder'|'withdrawn'|'statusUpdate'|'programmeChanged'|'draftReminder'} type
  * @param {string} lang  user's preferred language (falls back to Hungarian)
  * programmeChanged also takes { fromProgramme, toProgramme, withdrawn: ['CODE – Name'], draftRemoved }
- * @param {{ name: string, status?: string, note?: string, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
+ * @param {{ name: string, status?: string, note?: string, byCommittee?: boolean, reasonCode?: string, finalGrade?: number, deadline?: Date|string, linkUrl?: string }} data
  * @returns {{ subject: string, html: string } | null}  null when there is nothing to send
  */
 const buildEmail = (type, lang, data) => {
@@ -264,6 +264,9 @@ const buildEmail = (type, lang, data) => {
         // a rejection's rationale is shown as the reason, an approval's note as the reviewer's message
         const reason = data.reasonCode && (reasons[language] || {})[data.reasonCode];
         if (reason) content += noteBlock(words.reasonTitle, reason);
+        // The committee's final decision (round 2 Group 2): one heading for the reviewer's reason (on Keep)
+        // and the committee's note
+        else if (hasNote && data.byCommittee) content += noteBlock(words.committeeTitle, data.note);
         else if (hasNote) content += noteBlock(data.status === 'rejected' ? words.reasonTitle : words.noteTitle, data.note);
         if (data.status === 'rejected') content += template.rejectedExtra;
     } else {
@@ -484,6 +487,8 @@ const reviewerTemplates = {
             intro: '<p>Az előző összefoglaló óta ez történt az Ön szakjain:</p>',
             newApplications: 'Új kérelmek',
             replies: 'Hallgatói válaszok a kiegészítési kérésekre',
+            changed: 'A bizottság által megváltoztatott döntések',
+            changedTo: (label) => `most: ${label}`,
             more: (count) => `… és még ${count}`,
             waiting: (count) => `<p>Jelenleg az Ön döntésére vár: <strong>${count}</strong>.</p>`,
         },
@@ -508,6 +513,8 @@ const reviewerTemplates = {
             intro: '<p>This happened in your programmes since your last summary:</p>',
             newApplications: 'New applications',
             replies: 'Student replies to requests for information',
+            changed: 'Decisions changed by the committee',
+            changedTo: (label) => `now: ${label}`,
             more: (count) => `… and ${count} more`,
             waiting: (count) => `<p>Waiting for your decision now: <strong>${count}</strong>.</p>`,
         },
@@ -530,6 +537,8 @@ const reviewerTemplates = {
             intro: '<p>Seit Ihrer letzten Zusammenfassung ist in Ihren Studiengängen Folgendes geschehen:</p>',
             newApplications: 'Neue Anträge',
             replies: 'Antworten von Studierenden auf Informationsanfragen',
+            changed: 'Vom Ausschuss geänderte Entscheidungen',
+            changedTo: (label) => `jetzt: ${label}`,
             more: (count) => `… und ${count} weitere`,
             waiting: (count) => `<p>Jetzt warten auf Ihre Entscheidung: <strong>${count}</strong>.</p>`,
         },
@@ -657,15 +666,18 @@ const SUMMARY_LIST_MAX = 30; // longer lists end with "… and N more"
 
 /**
  * The reviewer's daily summary (round 2 Group 1), in their language. Every value is escaped here.
- * @param {{ name: string, newApplications: Array<{ student, course, programme }>, replies: Array<{ student, course, programme }>, waiting: number }} data
+ * @param {{ name: string, newApplications: Array<{ student, course, programme }>, replies: Array<{ student, course, programme }>,
+ *   changed?: Array<{ student, course, programme, status }>, waiting: number }} data
+ *   changed (round 2 Group 2): decisions the committee changed, with the final status
  */
-const buildReviewerSummaryEmail = (lang, { name, newApplications = [], replies = [], waiting = 0 }) => {
+const buildReviewerSummaryEmail = (lang, { name, newApplications = [], replies = [], changed = [], waiting = 0 }) => {
     const language = normalizeLanguage(lang);
     const words = reviewerTemplates[language];
     const template = words.dailySummary;
     const list = (title, items) => {
         if (items.length === 0) return '';
-        const shown = items.slice(0, SUMMARY_LIST_MAX).map((i) => `<li><strong>${escapeHtml(i.student)}</strong>, ${escapeHtml(i.course)} (${escapeHtml(i.programme)})</li>`);
+        const outcome = (i) => (i.status && statusLabels[language][i.status] ? `: ${escapeHtml(template.changedTo(statusLabels[language][i.status]))}` : '');
+        const shown = items.slice(0, SUMMARY_LIST_MAX).map((i) => `<li><strong>${escapeHtml(i.student)}</strong>, ${escapeHtml(i.course)} (${escapeHtml(i.programme)})${outcome(i)}</li>`);
         if (items.length > SUMMARY_LIST_MAX) shown.push(`<li>${escapeHtml(template.more(items.length - SUMMARY_LIST_MAX))}</li>`);
         return `<h3 style="color: ${C.brand}; font-size: 15px;">${escapeHtml(title)} (${items.length})</h3><ul>${shown.join('')}</ul>`;
     };
@@ -676,6 +688,7 @@ const buildReviewerSummaryEmail = (lang, { name, newApplications = [], replies =
             ${template.intro}
             ${list(template.newApplications, newApplications)}
             ${list(template.replies, replies)}
+            ${list(template.changed, changed)}
             ${template.waiting(Number(waiting) || 0)}
             <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
             <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>

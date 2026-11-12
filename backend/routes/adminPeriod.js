@@ -297,7 +297,13 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                                count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
                         FROM applications a JOIN programmes p ON p.id = a.programme_id
                         WHERE a.semester_id = sb.id AND a.status IN ('pending', 'needs_info')
-                        GROUP BY p.id) x), '[]') AS undecided_by_programme
+                        GROUP BY p.id) x), '[]') AS undecided_by_programme,
+                    -- awaiting the committee, per programme (round 2 Group 2)
+                    COALESCE((SELECT json_agg(x ORDER BY x.code) FROM (
+                        SELECT p.code, p.name_en, p.name_hu, p.name_de, count(*)::int AS awaiting
+                        FROM applications a JOIN programmes p ON p.id = a.programme_id
+                        WHERE a.semester_id = sb.id AND a.status = 'awaiting_committee'
+                        GROUP BY p.id) x), '[]') AS awaiting_by_programme
              FROM semester_bounds sb WHERE sb.status = 'active'
              ORDER BY sb.opens_at`
         )).rows.map((r) => {
@@ -308,6 +314,7 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 reviewSoon: r.review_soon && undecided > 0,
                 reviewPassed: r.review_passed && undecided > 0,
                 undecidedByProgramme: r.review_passed ? r.undecided_by_programme : [],
+                awaitingByProgramme: r.awaiting_by_programme,
                 // nothing undecided and nothing awaiting the committee (round 2 Group 2)
                 canClose: r.period_over && r.late_access === 0 && undecided === 0 && r.awaiting_committee === 0,
             };

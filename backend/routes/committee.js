@@ -100,8 +100,6 @@ router.get('/committee/applications/:id', verifyToken, requireCommittee, require
     try {
         const application = await loadApplicationDetails(pool, req.ids.id, { programmeIds: req.user.committeeProgrammeIds || [], committeeOnly: true });
         if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
-        // The committee acts as a body: whether a member or the admin took the step is the admin's to see
-        application.decision.committee_by_role = null;
         application.decided_by_me = (await pool.query('SELECT decided_by = $2 AS mine FROM applications WHERE id = $1', [req.ids.id, req.user.id])).rows[0].mine === true;
         res.json({ success: true, application, read_only: true });
     } catch (err) {
@@ -121,7 +119,7 @@ const answerStep = async (req, res, programmeIds) => {
         if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2], { field: result.error[3] });
         res.json({ success: true, status: result.done.status, final_grade: result.done.finalGrade });
         // The student learns the final result now (not at the reviewer's decision)
-        notifyStudent(result.done.studentId, 'statusUpdate', { status: result.done.status, note: result.done.emailNote, finalGrade: result.done.finalGrade });
+        notifyStudent(result.done.studentId, 'statusUpdate', { status: result.done.status, note: result.done.emailNote, finalGrade: result.done.finalGrade, byCommittee: true });
         return undefined;
     } catch (err) {
         console.error('❌ Committee step error:', err.message);

@@ -16,13 +16,16 @@ const asList = (value) => (Array.isArray(value) ? value : []);
  */
 // includeWithdrawn: the admin's Past semesters shows withdrawn applications too (the reviewer never sees them)
 // committeeOnly (round 2 Group 2): only what a committee member may see (decided by a reviewer or
-// admin: awaiting the committee or handled by it), and who in the committee acted stays hidden
-const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId = null, includeWithdrawn = false, committeeOnly = false } = {}) => {
+// admin: awaiting the committee or handled by it).
+// showCommitteeMember: who in the committee acted (a member's name, or the admin): the admin's views
+// only; otherwise both stay null, since the committee acts as a body.
+const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId = null, includeWithdrawn = false, committeeOnly = false, showCommitteeMember = false } = {}) => {
     const found = (await db.query(
         `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
                 a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
                 a.decision_rationale, a.info_deadline AS respond_by,
                 a.reviewer_decision, a.reviewer_grade, a.committee_state, a.committee_at, a.committee_note, a.committee_by_role,
+                member.name AS committee_by_name,
                 ${semesterEndedSql('a')} AS read_only, sem.id AS semester_id, sem.name AS semester_name,
                 u.name AS student_name, u.neptun_code, p.code AS programme_code, p.name_en, p.name_hu, p.name_de
          FROM applications a
@@ -30,6 +33,7 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
          JOIN programmes p ON p.id = a.programme_id
          LEFT JOIN semesters sem ON sem.id = a.semester_id
          LEFT JOIN users decider ON decider.id = a.decided_by
+         LEFT JOIN users member ON member.id = a.committee_by
          WHERE a.id = $1 AND ($2::int[] IS NULL OR a.programme_id = ANY($2::int[])) AND ($3::int IS NULL OR a.semester_id = $3)
            AND ($4::boolean OR a.status <> 'withdrawn')
            AND (NOT $5::boolean OR a.committee_state IN ('awaiting', 'kept', 'changed'))`,
@@ -40,9 +44,12 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
     const courses = asList(found.fulfilled_courses_json);
     const institutions = asList(found.institutions);
     // The history. actor_id stays on the server: only the name is sent (no email addresses), and
-    // only for students and reviewers; an admin is shown as "Admin", the system as "System"
+    // only for students and reviewers; an admin is shown as "Admin", the system as "System". The
+    // committee's step shows as "Committee" (round 2 Group 2); the admin's views also say who acted.
     const events = (await db.query(
-        `SELECT e.id, e.kind, e.actor_role, CASE WHEN e.actor_role IN ('student', 'reviewer') THEN u.name END AS actor_name,
+        `SELECT e.id, e.kind,
+                CASE WHEN e.kind IN ('committee_kept', 'committee_changed') AND NOT $2::boolean THEN 'committee' ELSE e.actor_role END AS actor_role,
+                CASE WHEN e.actor_role IN ('student', 'reviewer') OR (e.actor_role = 'committee' AND $2::boolean) THEN u.name END AS actor_name,
                 e.status, e.note, e.reason_code,
                 -- an automatic rejection has no text, only its reason code: still a "system" note
                 COALESCE(n.note_type, CASE WHEN e.kind = 'auto_rejected' AND e.reason_code IS NOT NULL THEN 'system' END) AS note_type,
@@ -52,7 +59,7 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
          LEFT JOIN users u ON u.id = e.actor_id
          WHERE e.application_id = $1
          ORDER BY e.created_at, e.id`,
-        [id]
+        [id, showCommitteeMember]
     )).rows;
     // Reply files sit with their reply. Files only in the old comma list (from before the history
     // kept them; migration 007 copied the latest ones over) are listed on their own.
@@ -100,7 +107,8 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
                 committee_state: found.committee_state,
                 committee_at: found.committee_at,
                 committee_note: found.committee_note,
-                committee_by_role: found.committee_by_role,
+                committee_by_role: showCommitteeMember ? found.committee_by_role : null,
+                committee_by_name: showCommitteeMember && found.committee_by_role === 'committee' ? found.committee_by_name : null,
                 decided_by_role: found.decided_by_role,
                 decided_by_name: found.decided_by_role === 'reviewer' ? found.decided_by_name : null,
                 decided_at: found.decided_at,

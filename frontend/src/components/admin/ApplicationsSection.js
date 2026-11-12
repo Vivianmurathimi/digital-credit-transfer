@@ -7,6 +7,7 @@ import downloadPdf from '../../downloadPdf';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import CommitteeDecisionModal from '../committee/CommitteeDecisionModal';
+import CommitteeOutcome from '../committee/CommitteeOutcome';
 import Chip from '../reviewer/Chip';
 import StatusChip from '../StatusChip';
 import { card } from './adminStyles';
@@ -26,6 +27,8 @@ const parseCourses = (value) => {
     try { return JSON.parse(value); } catch { return []; }
 };
 
+const COMMITTEE_FILTERS = ['awaiting', 'kept', 'changed'];
+
 const ApplicationsSection = ({ onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const [applications, setApplications] = useState([]);
@@ -34,6 +37,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
     const [notice, setNotice] = useState('');
     const [semesters, setSemesters] = useState([]); // the semesters in progress, for the filter
     const [semesterId, setSemesterId] = useState(''); // '' = all in progress
+    const [committeeFilter, setCommitteeFilter] = useState(''); // '' = all; awaiting, kept, changed, none (round 2 Group 2)
     const [pdfError, setPdfError] = useState('');
     // One application as a PDF (round 2 Group 1), the same pages as in the book
     const savePdf = async (app) => {
@@ -52,6 +56,11 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
     useEffect(() => {
         api.get('/api/admin/summary').then((res) => setSemesters(res.data.summary?.semesters || [])).catch(() => setSemesters([]));
     }, []);
+
+    // The committee filter: awaiting / kept / changed, or none (never went to the committee: open,
+    // withdrawn, System decisions, decisions from before the committee existed)
+    const shown = committeeFilter === '' ? applications
+        : applications.filter((app) => (COMMITTEE_FILTERS.includes(app.committee_state) ? app.committee_state : 'none') === committeeFilter);
 
     // "Reviewer: <name>", "Admin" or "System", with the date; "—" for older rows without a record
     const decidedBy = (app) => {
@@ -88,6 +97,13 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                         </select>
                     </p>
                 )}
+                <p>
+                    <label htmlFor="applications-committee">{t('applications_committee_filter')} </label>
+                    <select id="applications-committee" value={committeeFilter} onChange={(e) => setCommitteeFilter(e.target.value)} style={{ padding: '6px' }}>
+                        <option value="">{t('applications_committee_all')}</option>
+                        {[...COMMITTEE_FILTERS, 'none'].map((value) => <option key={value} value={value}>{t(`applications_committee_${value}`)}</option>)}
+                    </select>
+                </p>
                 {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
                 {pdfError && <p role="alert" style={{ color: 'var(--error-text)' }}>{pdfError}</p>}
                 <div style={{ overflowX: 'auto' }}>
@@ -98,13 +114,14 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                 <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_mapped_package_column')}</th>
                                 <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_status_column')}</th>
                                 <th style={{ padding: '12px', textAlign: 'left' }}>{t('superadmin_decided_by_column')}</th>
+                                <th style={{ padding: '12px', textAlign: 'left' }}>{t('applications_committee_column')}</th>
                                 <th style={{ padding: '12px', textAlign: 'center' }}>{t('superadmin_action_column')}</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {applications.length === 0 ? (
-                                <tr><td colSpan="5" style={{ textAlign: 'center', padding: '20px' }}>{t('superadmin_no_applications')}</td></tr>
-                            ) : applications.map((app) => {
+                            {shown.length === 0 ? (
+                                <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>{t(applications.length === 0 ? 'superadmin_no_applications' : 'applications_committee_none_match')}</td></tr>
+                            ) : shown.map((app) => {
                                 const fulfilledNames = parseCourses(app.fulfilled_courses_json).map((c) => c.course_name).join(', ');
                                 return (
                                     <tr key={app.id} style={{ borderBottom: '2px solid var(--border)' }}>
@@ -129,6 +146,17 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                                     {t('pdf_download_application')}
                                                 </button>
                                             </div>
+                                        </td>
+                                        {/* The committee (round 2 Group 2): awaiting, or kept/changed with who acted */}
+                                        <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>
+                                            {app.committee_state === 'awaiting' ? <Chip cue="awaiting">{t('status_awaiting_committee')}</Chip>
+                                                : app.committee_state === 'kept' || app.committee_state === 'changed' ? (
+                                                    <>
+                                                        {app.reviewer_decision && <div>{t('committee_reviewer_label')} {t(`status_${app.reviewer_decision}`)}</div>}
+                                                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} at={app.committee_at}
+                                                            note={app.committee_note} byRole={app.committee_by_role} byName={app.committee_by_name} />
+                                                    </>
+                                                ) : '—'}
                                         </td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                             {/* No active reviewer for this programme: the admin decides (recorded as Admin) */}

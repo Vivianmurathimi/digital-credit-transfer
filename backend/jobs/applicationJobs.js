@@ -220,7 +220,7 @@ const DAILY_SUMMARY_HOUR = 7;
 const sendReviewerSummary = async (summary) => {
     try {
         const email = buildReviewerSummaryEmail(summary.preferred_language, {
-            name: summary.reviewer_name, newApplications: summary.newApplications, replies: summary.replies, waiting: summary.waiting,
+            name: summary.reviewer_name, newApplications: summary.newApplications, replies: summary.replies, changed: summary.changed || [], waiting: summary.waiting,
         });
         await sendEmail({ email: summary.reviewer_email, subject: email.subject, html: email.html });
     } catch (err) {
@@ -237,6 +237,8 @@ const sendReviewerSummary = async (summary) => {
  *     and covers everything since the previous summary (the first one: the last 24 hours);
  *   - what is new: applications submitted and student replies in the programmes the reviewer can
  *     see at that moment (main reviewer, or extra reviewer while allowed to assist), not withdrawn;
+ *     and (round 2 Group 2) decisions the committee CHANGED there, with the final status (kept
+ *     ones are not news; who in the committee acted is never said);
  *   - nothing new: recorded, no email (later news waits for the next day's summary).
  * A server that was off at 07:00 sends it at the next run the same day; off for days: the next
  * summary covers everything since the last one.
@@ -267,19 +269,20 @@ const sendDailySummaries = async ({ now, summarize = sendReviewerSummary, onlyRe
             `SELECT sp.programme_id FROM staff_programmes sp WHERE sp.user_id = $1 AND ${seesProgrammeSql('sp')}`, [row.reviewer_id]
         )).rows.map((r) => r.programme_id);
         const events = (await pool.query(
-            `SELECT e.kind, s.name AS student, p.code AS programme,
+            `SELECT e.kind, e.status, s.name AS student, p.code AS programme,
                     a.target_course_code || COALESCE(' – ' || (a.target_courses->0->>'course_name'), '') AS course
              FROM application_events e
              JOIN applications a ON a.id = e.application_id
              JOIN users s ON s.id = a.student_id
              JOIN programmes p ON p.id = a.programme_id
-             WHERE e.kind IN ('submitted', 'replied') AND e.created_at > $2 AND e.created_at <= $3
+             WHERE e.kind IN ('submitted', 'replied', 'committee_changed') AND e.created_at > $2 AND e.created_at <= $3
                AND a.programme_id = ANY($1) AND a.status <> 'withdrawn'
              ORDER BY e.created_at, e.id`,
             [programmeIds, row.covered_from, row.covered_until]
         )).rows;
         const newApplications = events.filter((e) => e.kind === 'submitted');
         const replies = events.filter((e) => e.kind === 'replied');
+        const changed = events.filter((e) => e.kind === 'committee_changed');
         await pool.query(
             'UPDATE reviewer_summaries SET new_applications = $3, student_replies = $4, emailed = $5 WHERE reviewer_id = $1 AND day = $2',
             [row.reviewer_id, row.day, newApplications.length, replies.length, events.length > 0]
@@ -295,7 +298,7 @@ const sendDailySummaries = async ({ now, summarize = sendReviewerSummary, onlyRe
         try {
             await summarize({
                 reviewer_id: row.reviewer_id, reviewer_name: reviewer.name, reviewer_email: reviewer.email, preferred_language: reviewer.preferred_language,
-                day: row.day, newApplications, replies, waiting,
+                day: row.day, newApplications, replies, changed, waiting,
             });
             emailed += 1;
         } catch (err) {

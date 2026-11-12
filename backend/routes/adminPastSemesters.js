@@ -119,7 +119,7 @@ router.get('/admin/past-semesters/:id/applications/:appId', ...adminOnly, requir
     res.set('Cache-Control', 'no-store');
     try {
         if (!(await closedSemester(req.ids.id))) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No closed semester with this id');
-        const application = await loadApplicationDetails(pool, req.ids.appId, { semesterId: req.ids.id, includeWithdrawn: true });
+        const application = await loadApplicationDetails(pool, req.ids.appId, { semesterId: req.ids.id, includeWithdrawn: true, showCommitteeMember: true });
         if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
         res.json({ success: true, application });
     } catch (err) {

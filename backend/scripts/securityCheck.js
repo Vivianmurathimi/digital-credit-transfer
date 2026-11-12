@@ -3251,6 +3251,75 @@ const run = async () => {
         }
     }
 
+    section('4y. Who sees what of the committee (round 2 Group 2 Part E): the student, the reviewer, the member, the admin');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}E${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Views', 'Security Check Views', 'Security Check Views') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, linkRole) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role, name",
+                    [`Views ${key}`, `${STAFF_TEST_PREFIX}cy-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, $3)', [user.id, programmeId, linkRole]);
+                return user;
+            };
+            const main = await person('main', 'reviewer', 'main');
+            const member = await person('member', 'committee', 'committee');
+            const [TM, TC] = [tokenFor(main), tokenFor(member)];
+            const activeSemester = (await pool.query("SELECT id FROM semesters WHERE status = 'active' ORDER BY id LIMIT 1")).rows[0]?.id || null;
+            const app = async (n) => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5) RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify([{ course_code: `CY${n}`, course_name: 'Views check' }]), `CY${n}${stamp}`.slice(0, 20), activeSemester]
+            )).rows[0].id;
+            const changed = await app(1);
+            const waiting = await app(2);
+            await expect('The reviewer approves (grade 4, with a note)', call('PUT', `applications/${changed}/status`, { token: TM, json: { status: 'approved', final_grade: 4, note: 'Reviewer reason CY' } }), 200);
+            await expect('The reviewer approves the second one', call('PUT', `applications/${waiting}/status`, { token: TM, json: { status: 'approved', final_grade: 3 } }), 200);
+            await expect('The member changes it to rejected', call('PUT', `committee/applications/${changed}/decision`, { token: TC, json: { action: 'change', note: 'Committee note CY' } }), 200);
+
+            // The student: the final result only, by "committee"; on Change only the committee's note
+            const mine = (await call('GET', `applications/mine/${changed}`, { token: A })).body?.application || {};
+            report(mine.status === 'rejected' && mine.decided_by === 'committee', 'The student: final status, decided by the committee', `${mine.status} ${mine.decided_by}`);
+            report(mine.committee_note === 'Committee note CY' && !mine.decision_rationale && mine.final_grade == null, "The student: the committee's note only, no reviewer reason or grade");
+            report(!JSON.stringify(mine).includes('Reviewer reason CY') && !(mine.events || []).some((e) => e.kind === 'decided'), "The student never gets the reviewer's reason or decided step");
+            report(!('committee_by' in mine) && !('reviewer_decision' in mine) && !('reviewer_grade' in mine), "The student: nothing of who acted or the reviewer's decision");
+
+            // The reviewer: Kept/Changed and the final result, never who in the committee acted
+            const reviewerRow = ((await call('GET', 'applications', { token: TM })).body?.applications || []).find((a) => a.id === changed) || {};
+            report(reviewerRow.committee_state === 'changed' && reviewerRow.committee_note === 'Committee note CY', 'The reviewer list: changed, with the note');
+            report(!('committee_by' in reviewerRow) && !('committee_by_role' in reviewerRow) && !('committee_by_name' in reviewerRow), "The reviewer list: not who in the committee acted");
+            const reviewerDetails = (await call('GET', `reviewer/applications/${changed}`, { token: TM })).body?.application || {};
+            report(reviewerDetails.decision?.committee_state === 'changed' && reviewerDetails.decision?.reviewer_decision === 'approved' && reviewerDetails.decision?.reviewer_grade === 4,
+                'The reviewer details: their decision and grade kept, changed by the committee');
+            report(reviewerDetails.decision?.committee_by_role === null && reviewerDetails.decision?.committee_by_name === null, 'The reviewer details: not who acted');
+            const step = (reviewerDetails.events || []).find((e) => e.kind === 'committee_changed') || {};
+            report(step.actor_role === 'committee' && step.actor_name === null, 'The reviewer history: "Committee", no name', `${step.actor_role} ${step.actor_name}`);
+            const memberDetails = (await call('GET', `committee/applications/${changed}`, { token: TC })).body?.application || {};
+            report(memberDetails.decision?.committee_by_role === null && memberDetails.decision?.committee_by_name === null, 'The member details: not who acted either');
+
+            // The admin: who acted, by name
+            const adminRow = ((await call('GET', 'applications', { token: S })).body?.applications || []).find((a) => a.id === changed) || {};
+            report(adminRow.committee_by_role === 'committee' && adminRow.committee_by_name === member.name, 'The admin list: the member who acted, by name', `${adminRow.committee_by_role} ${adminRow.committee_by_name}`);
+            const adminWaiting = ((await call('GET', 'applications', { token: S })).body?.applications || []).find((a) => a.id === waiting) || {};
+            report(adminWaiting.committee_state === 'awaiting' && adminWaiting.status === 'awaiting_committee', 'The admin list: the other one awaits the committee');
+            if (activeSemester) {
+                const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+                const row = (summary.semesters || []).find((x) => x.id === activeSemester)?.awaitingByProgramme?.find((p) => p.code === code);
+                report(row?.awaiting === 1, 'The admin overview: awaiting the committee per programme', JSON.stringify(row));
+            } else {
+                skip('The admin overview: awaiting per programme', 'no semester in progress');
+            }
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary views programme (${removed}) with its people and applications)`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

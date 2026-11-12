@@ -37,6 +37,18 @@ test('the rejection email carries the rationale as the reason, escaped', () => {
     assert.ok(buildEmail('statusUpdate', 'en', { name: 'A', status: 'rejected', note: 'x' }).html.includes('Reason:'));
 });
 
+test("the committee's final decision: one heading for the reasons, the final grade (round 2 Group 2)", () => {
+    const headings = { hu: 'A bizottság döntése:', en: 'Decision of the committee:', de: 'Entscheidung des Ausschusses:' };
+    for (const lang of LANGUAGES) {
+        const { html } = buildEmail('statusUpdate', lang, { name: 'Anna', status: 'approved', finalGrade: 5, note: 'Reviewer <reason>\n\nCommittee note', byCommittee: true });
+        assert.ok(html.includes(headings[lang]), `${lang}: the committee heading`);
+        assert.ok(html.includes('Reviewer &lt;reason&gt;') && html.includes('Committee note'), `${lang}: both texts, escaped`);
+        assert.ok(html.includes(gradeLabel(5, lang)), `${lang}: the final grade`);
+    }
+    const rejected = buildEmail('statusUpdate', 'en', { name: 'A', status: 'rejected', note: 'Not equivalent.', byCommittee: true }).html;
+    assert.ok(rejected.includes('Decision of the committee:') && !rejected.includes('Reason:') && !rejected.includes("Reviewer's message"), 'no reviewer heading');
+});
+
 test('the request-for-information email says by when to reply', () => {
     const deadline = new Date('2026-11-10T22:59:59Z'); // 23:59:59 on 10 November in Budapest
     for (const lang of LANGUAGES) {
@@ -54,6 +66,13 @@ test("reviewers' daily summary: new applications and replies, the waiting count,
         assert.ok(email.html.includes('(2)') && email.html.includes('(1)') && email.html.includes('<strong>5</strong>'), `${lang}: counts`);
         assert.ok(email.html.includes('/login'), `${lang}: login link`);
     }
+    // Decisions the committee changed (round 2 Group 2), with the final status in the reviewer's language
+    const changedTo = { hu: 'most: Elutasítva', en: 'now: Rejected', de: 'jetzt: Abgelehnt' };
+    for (const lang of LANGUAGES) {
+        const email = buildReviewerSummaryEmail(lang, { name: 'x', changed: [{ ...item, status: 'rejected' }], waiting: 0 });
+        assert.ok(email.html.includes(changedTo[lang]) && email.html.includes('Kovács &lt;Ödön&gt;'), `${lang}: changed decision`);
+    }
+    assert.ok(!buildReviewerSummaryEmail('en', { name: 'x', newApplications: [item], waiting: 0 }).html.includes('committee'), 'no changed list without changes');
     const many = buildReviewerSummaryEmail('en', { name: 'x', newApplications: Array(35).fill(item), replies: [], waiting: 0 });
     assert.ok(many.html.includes('and 5 more'), 'long lists are cut');
     // No email per new application or reply any more (round 2 Group 1)

@@ -252,6 +252,12 @@ export const syllabusReasonsWhileEditing = (rows, targetCourse) => {
 export const STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 export const statusKey = (status) => (STATUSES.includes(status) ? status : 'unknown');
 
+// The committee's final decision (round 2 Group 2), as the server sends it to the student: decided by
+// "committee"; on Keep the reviewer's reason plus the committee's note, on Change only the committee's
+// note (the server leaves the reviewer's reason out). Shown under one heading, "Decision of the committee".
+export const isCommitteeDecision = (app) => app?.decided_by === 'committee' && ['approved', 'rejected'].includes(app.status);
+export const committeeDecisionText = (app) => [app.decision_rationale, app.committee_note].filter(Boolean).join('\n\n');
+
 // ---------------------------------------------------------------------------------------------
 // One active application per PTE course: the same statuses and code comparison as the server
 // (backend/utils/applicationForm.js). Every other status (rejected, a future "withdrawn") allows a new one.
