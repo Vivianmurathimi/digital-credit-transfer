@@ -12,7 +12,8 @@
 //
 // Days are elapsed time (hours / 24), rounded to one decimal when sent.
 
-const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+// awaiting_committee (round 2 Group 2): the reviewer decided, the committee hasn't yet
+const STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 const TOP_COURSES = 10;
 
 const round1 = (value) => (value === null || value === undefined ? null : Math.round(Number(value) * 10) / 10);
@@ -55,7 +56,7 @@ const semesterAnalytics = async (db, semesterId) => {
                  ) nxt ON true
                  WHERE e.application_id = a.id AND e.kind = 'info_requested' AND e.created_at <= a.decided_at
              ) w ON true
-             WHERE a.semester_id = $1 AND a.status IN ('approved', 'rejected')
+             WHERE a.semester_id = $1 AND a.status IN ('approved', 'rejected', 'awaiting_committee')
                AND a.decided_by_role IN ('reviewer', 'admin') AND a.decided_at IS NOT NULL
          )
          SELECT d.programme_id, p.code AS programme_code, p.name_en, p.name_hu, p.name_de,

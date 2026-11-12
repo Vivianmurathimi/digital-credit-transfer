@@ -38,9 +38,9 @@ const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
 // Same labels the student sees in My Status (student_status_* keys in the frontend locales)
 const statusLabels = {
-    hu: { pending: 'Elbírálás alatt', needs_info: 'Kiegészítés szükséges', approved: 'Elfogadva', rejected: 'Elutasítva', withdrawn: 'Visszavonva' },
-    en: { pending: 'Under review', needs_info: 'Information needed', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' },
-    de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
+    hu: { pending: 'Elbírálás alatt', needs_info: 'Kiegészítés szükséges', awaiting_committee: 'Bizottsági elbírálás alatt', approved: 'Elfogadva', rejected: 'Elutasítva', withdrawn: 'Visszavonva' },
+    en: { pending: 'Under review', needs_info: 'Information needed', awaiting_committee: 'Under committee review', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' },
+    de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', awaiting_committee: 'Prüfung durch den Ausschuss', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
 };
 
 // Reasons stored as codes (automatic decisions, jobs/applicationJobs.js; PROGRAMME_CHANGED: withdrawn

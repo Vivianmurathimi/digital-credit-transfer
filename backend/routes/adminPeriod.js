@@ -287,6 +287,7 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                     ${reviewSoonSql('sb', 'now()')} AND sb.review_ends_at > now() AS review_soon,
                     (SELECT count(*)::int FROM applications a WHERE a.semester_id = sb.id AND a.status = 'pending') AS pending,
                     (SELECT count(*)::int FROM applications a WHERE a.semester_id = sb.id AND a.status = 'needs_info') AS needs_info,
+                    (SELECT count(*)::int FROM applications a WHERE a.semester_id = sb.id AND a.status = 'awaiting_committee') AS awaiting_committee,
                     (SELECT count(*)::int FROM late_access l WHERE l.semester_id = sb.id AND l.revoked_at IS NULL AND l.deadline > now()) AS late_access,
                     COALESCE((SELECT json_agg(x ORDER BY x.code) FROM (
                         SELECT p.code, p.name_en, p.name_hu, p.name_de,
@@ -301,11 +302,12 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
             const undecided = r.pending + r.needs_info;
             return {
                 id: r.id, name: r.name, opensAt: r.opens_at, closesAt: r.closes_at, reviewEndsAt: r.review_ends_at,
-                periodOpen: r.period_open, pending: r.pending, needsInfo: r.needs_info, lateAccess: r.late_access,
+                periodOpen: r.period_open, pending: r.pending, needsInfo: r.needs_info, awaitingCommittee: r.awaiting_committee, lateAccess: r.late_access,
                 reviewSoon: r.review_soon && undecided > 0,
                 reviewPassed: r.review_passed && undecided > 0,
                 undecidedByProgramme: r.review_passed ? r.undecided_by_programme : [],
-                canClose: r.period_over && r.late_access === 0 && undecided === 0,
+                // nothing undecided and nothing awaiting the committee (round 2 Group 2)
+                canClose: r.period_over && r.late_access === 0 && undecided === 0 && r.awaiting_committee === 0,
             };
         });
         const { rows } = await pool.query(
@@ -336,6 +338,7 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 readyToClose: semesters.some((sem) => sem.canClose),
                 pending: sum('pending'),
                 needsInfo: sum('needsInfo'),
+                awaitingCommittee: sum('awaitingCommittee'),
                 programmesWithoutReviewer: r.programmes_without_reviewer,
                 // An assisting extra reviewer keeps working, but the admin should choose a main reviewer
                 programmesWithoutMain: r.programmes_without_main,

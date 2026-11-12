@@ -23,7 +23,8 @@ const IN_PROGRESS_SEMESTERS = `
  * What the dashboard lists, in one query:
  * - pending and needs_info: from any semester not closed yet (a semester closes only when nothing
  *   is undecided, utils/semesterClose.js)
- * - approved and rejected (also by the system): only in the semesters in progress
+ * - decided ones: approved, rejected (also by the system) and awaiting the committee (round 2
+ *   Group 2: the reviewer decided, the committee confirms), only in the semesters in progress
  * - $2: one semester in progress only (the semester filter), or null for all of them
  * - withdrawn: never
  * last_action_at: the submission or the student's latest reply. waiting_days: Budapest calendar days since then.
@@ -34,7 +35,7 @@ const IN_PROGRESS_SEMESTERS = `
 // The current view: open applications of any semester, decided ones of the current semester
 const CURRENT_VIEW = `a.programme_id = ANY($1::int[])
           AND (a.status IN ('pending', 'needs_info')
-               OR (a.status IN ('approved', 'rejected') AND a.semester_id IN (SELECT id FROM cur)))
+               OR (a.status IN ('approved', 'rejected', 'awaiting_committee') AND a.semester_id IN (SELECT id FROM cur)))
           AND ($2::int IS NULL OR a.semester_id = $2)`;
 // A past semester (reviewer group L3, read-only): every application of it except withdrawn ones
 const PAST_VIEW = "a.programme_id = ANY($1::int[]) AND a.semester_id = $2 AND a.status <> 'withdrawn'";
@@ -61,6 +62,7 @@ const listQuery = (view) => `
            ((now() AT TIME ZONE 'Europe/Budapest')::date - (l.last_action_at AT TIME ZONE 'Europe/Budapest')::date) AS waiting_days,
            l.info_deadline AS respond_by,
            l.decided_by_role, decider.name AS decided_by_name, l.decided_at, l.final_grade,
+           l.reviewer_decision, l.reviewer_grade, l.committee_state, l.committee_at, l.committee_note,
            l.assigned_reviewer_id, assignee.name AS assigned_name,
            (SELECT count(*)::int FROM listed o
             WHERE o.student_id = l.student_id AND o.id <> l.id AND o.semester_id IS NOT DISTINCT FROM l.semester_id) AS other_count

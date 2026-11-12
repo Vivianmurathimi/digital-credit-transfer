@@ -12,7 +12,7 @@ import { chartColorForStatus } from '../../theme/statusCues';
 // reviewer or an admin (System auto-rejections left out); it is shown again without the time spent
 // waiting for the student's reply.
 
-const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+const STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 
 
 // A bar whose length is the value's share of the largest one

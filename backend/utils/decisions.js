@@ -17,6 +17,7 @@ const REFUSED_FROM = {
     approved: ['ALREADY_DECIDED', 'This application has already been decided'],
     rejected: ['ALREADY_DECIDED', 'This application has already been decided'],
     withdrawn: ['APPLICATION_WITHDRAWN', 'The student has withdrawn this application'],
+    awaiting_committee: ['ALREADY_DECIDED', 'This application has already been decided (it is with the committee)'],
     needs_info: ['WAITING_FOR_STUDENT', 'This application is waiting for the student\'s reply'],
 };
 const refusalFor = (currentStatus) => REFUSED_FROM[currentStatus] || ['ALREADY_DECIDED', 'This application can no longer be decided'];

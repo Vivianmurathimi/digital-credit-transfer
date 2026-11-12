@@ -866,7 +866,8 @@
     "REVIEW_BEFORE_CLOSE": "Az elbírálási határidő nem lehet a jelentkezés zárása előtt.",
     "PERIODS_OVERLAP": "Ez átfedne a következő félév jelentkezési időszakával.",
     "NO_PROGRAMME": "Jelenleg egy szakot sem lát.",
-    "COMMITTEE_ONLY": "Bizottsági tag csak bizottsági tagként kapcsolható szakhoz."
+    "COMMITTEE_ONLY": "Bizottsági tag csak bizottsági tagként kapcsolható szakhoz.",
+    "AWAITING_COMMITTEE": "Ezt a kérelmet már elbírálták, és a bizottságnál van: már nem vonható vissza."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -1016,7 +1017,7 @@
   "close_blocker_UNDECIDED_APPLICATIONS": "Még vannak elbírálásra vagy kiegészítésre váró kérelmek. Előbb bírálják el őket (Kérelmek, vagy a bírálók):",
   "close_blocker_SEMESTER_NOT_ACTIVE": "Ez a félév nincs folyamatban.",
   "close_blocker_ALREADY_CLOSED": "Ez a félév már le van zárva.",
-  "close_undecided_programme": "{{programme}}: {{pending}} elbírálásra vár, {{needsInfo}} a hallgató válaszára vár",
+  "close_undecided_programme": "{{programme}}: {{pending}} elbírálásra vár, {{needsInfo}} a hallgató válaszára vár, {{awaiting}} a bizottságra vár",
   "close_nothing_undecided": "Minden kérelem el van bírálva vagy vissza van vonva; nem fut késői hozzáférés.",
   "close_before_review": "Az elbírálási határidő ({{date}}) még nem járt le: most is lezárható, mert minden el van bírálva.",
   "close_preview_drafts_kept": "A következő jelentkezési időszakra megtartott piszkozatok: {{count}}",
@@ -1057,5 +1058,10 @@
   "committee_load_failed": "A bizottsági oldalt nem sikerült betölteni.",
   "workspace_label": "Az Ön feladatai",
   "workspace_reviewer": "Bíráló",
-  "workspace_committee": "Bizottság"
+  "workspace_committee": "Bizottság",
+  "status_awaiting_committee": "Bizottságra vár",
+  "student_status_awaiting_committee": "Bizottsági elbírálás alatt",
+  "student_status_hint_awaiting_committee": "A kérelmét elbírálták; a bizottság megerősíti a döntést. A végleges eredményről e-mailt kap.",
+  "reviewer_your_decision": "Az Ön döntése: {{decision}}",
+  "close_blocker_AWAITING_COMMITTEE": "Döntések még a bizottságra várnak:"
 }

@@ -866,7 +866,8 @@
     "REVIEW_BEFORE_CLOSE": "The review deadline cannot be before applications close.",
     "PERIODS_OVERLAP": "This would overlap the next semester's application period.",
     "NO_PROGRAMME": "You cannot see any programme right now.",
-    "COMMITTEE_ONLY": "A committee member can only be linked as a committee member."
+    "COMMITTEE_ONLY": "A committee member can only be linked as a committee member.",
+    "AWAITING_COMMITTEE": "This application has been decided and is with the committee: it can no longer be withdrawn."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
@@ -1016,7 +1017,7 @@
   "close_blocker_UNDECIDED_APPLICATIONS": "Applications are still pending or in needs info. Decide them first (Applications, or the reviewers):",
   "close_blocker_SEMESTER_NOT_ACTIVE": "This semester is not in progress.",
   "close_blocker_ALREADY_CLOSED": "This semester is already closed.",
-  "close_undecided_programme": "{{programme}}: {{pending}} pending, {{needsInfo}} waiting for the student's reply",
+  "close_undecided_programme": "{{programme}}: {{pending}} pending, {{needsInfo}} waiting for the student's reply, {{awaiting}} awaiting the committee",
   "close_nothing_undecided": "Every application is decided or withdrawn; no late access runs.",
   "close_before_review": "The review deadline ({{date}}) has not passed yet: closing now is allowed, since everything is decided.",
   "close_preview_drafts_kept": "Unsent drafts kept for the next application period: {{count}}",
@@ -1057,5 +1058,10 @@
   "committee_load_failed": "The committee page could not be loaded.",
   "workspace_label": "Your work",
   "workspace_reviewer": "Reviewer",
-  "workspace_committee": "Committee"
+  "workspace_committee": "Committee",
+  "status_awaiting_committee": "Awaiting committee",
+  "student_status_awaiting_committee": "Under committee review",
+  "student_status_hint_awaiting_committee": "Your application has been reviewed; the committee confirms the decision. You will get an email with the final result.",
+  "reviewer_your_decision": "Your decision: {{decision}}",
+  "close_blocker_AWAITING_COMMITTEE": "Decisions are still waiting for the committee:"
 }

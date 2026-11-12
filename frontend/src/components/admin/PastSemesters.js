@@ -13,7 +13,7 @@ import { card, input, label, smallButton, td, th } from './adminStyles';
 // term book (moved here from Applications). Nothing here changes an application: a closed semester
 // is read-only on the server for everyone.
 
-const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+const STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 
 // The routes need the login token, so the file is fetched and saved from the browser
 const saveBlob = (blob, fileName) => {

@@ -159,15 +159,21 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                 </div>
             </section>
 
-            {(details.status === 'approved' || details.status === 'rejected') && (
+            {['approved', 'rejected', 'awaiting_committee'].includes(details.status) && (
                 <section style={box}>
                     <h4 style={sectionTitle}>{t('reviewer_decision_heading')}</h4>
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
                         {(() => {
-                            const cue = statusCue(details.status, details.decision.decided_by_role);
+                            // The reviewer's (or admin's) own decision, kept for good (round 2 Group 2); before the
+                            // committee existed, and for System, the status itself
+                            const decided = details.decision.reviewer_decision || details.status;
+                            const cue = statusCue(decided, details.decision.decided_by_role);
                             return <Chip cue={cue.cue} icon={STATUS_ICONS[cue.cue]} size="large">{t(cue.labelKey)}</Chip>;
                         })()}
-                        {details.status === 'approved' && <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</span>}
+                        {(details.decision.reviewer_decision || details.status) === 'approved' && (
+                            <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.reviewer_grade ?? details.decision.final_grade, t, language) })}</span>
+                        )}
+                        {details.status === 'awaiting_committee' && <Chip cue="awaiting">{t('status_awaiting_committee')}</Chip>}
                     </div>
                     <div style={muted}>
                         {t('reviewer_decided_line', {

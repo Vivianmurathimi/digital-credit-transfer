@@ -23,6 +23,7 @@ const BRAND_COLORS = {
         approved: '#17552b',
         rejected: '#8a1c25',
         withdrawn: '#3d4550',
+        awaiting_committee: '#0d5552',
     },
 };
 
@@ -31,7 +32,7 @@ const THEME_TOKENS = {
     brand: '--brand', red: '--red', text: '--text', textStrong: '--text-strong', textMuted: '--text-muted',
     textOnPrimary: '--text-on-primary', line: '--border-strong', panel: '--cue-note-student-bg', panelBorder: '--cue-note-student-border',
     'status.pending': '--cue-pending-text', 'status.needs_info': '--cue-needs-info-text', 'status.approved': '--cue-approved-text',
-    'status.rejected': '--cue-rejected-text', 'status.withdrawn': '--cue-withdrawn-text',
+    'status.rejected': '--cue-rejected-text', 'status.withdrawn': '--cue-withdrawn-text', 'status.awaiting_committee': '--cue-awaiting-text',
 };
 
 module.exports = { BRAND_COLORS, THEME_TOKENS };

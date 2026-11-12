@@ -40,8 +40,8 @@ const waitingApplication = async ({ deadline = at(72 * HOUR), status = 'needs_in
     const code = `JOBTEST${run}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
         `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, reviewer_note,
-                                   info_requested_at, info_deadline)
-         VALUES ($1, $2, '[]', $3, $4, $5, 'Please add the syllabus.', $6, $7) RETURNING id`,
+                                   info_requested_at, info_deadline, committee_state)
+         VALUES ($1, $2, '[]', $3, $4, $5, 'Please add the syllabus.', $6, $7, CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
         [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Job test', credits: 1 }]), code, status,
             status === 'needs_info' ? BASE : null, status === 'needs_info' ? deadline : null]
     );

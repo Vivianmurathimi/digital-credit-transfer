@@ -112,6 +112,8 @@
   /* Status chips everywhere (admin round Group 8): admin, reviewer and student screens show a status
      with the same chip (theme/statusCues.js maps a status to its cue). Withdrawn = the neutral cue. */
   --cue-withdrawn-bg: #eef0f3;     --cue-withdrawn-text: #3d4550;     --cue-withdrawn-border: #cfd5dc;
+  /* Awaiting the committee (round 2 Group 2): decided by a reviewer, not final yet */
+  --cue-awaiting-bg: #e3f3f2;      --cue-awaiting-text: #0d5552;      --cue-awaiting-border: #94cfca;
 
   /* Admin screens (admin round Group 8) */
   --section-bg: #f6f8fb;           /* section cards */
@@ -129,6 +131,7 @@
   /* Analytics bars (shapes: at least 3:1 against white) */
   --chart-pending: #4a7fc1;  --chart-needs-info: #b7860b;  --chart-approved: #2e8b4f;
   --chart-rejected: #c0392b; --chart-withdrawn: #7b8594;   --chart-neutral: #004085;
+  --chart-awaiting: #1b7f79;
   --chart-track: #eef0f3;
 
   /* The syllabus highlighter (canvas and the saved PDF read these through theme/colors.js) */

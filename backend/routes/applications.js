@@ -255,6 +255,9 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     if (errors) return sendValidationErrors(res, errors);
     const { status, note, finalGrade } = decision;
     const isDecision = status === 'approved' || status === 'rejected';
+    // Round 2 Group 2: an approve or reject waits for the programme's committee (status
+    // awaiting_committee). The decision itself is kept in reviewer_decision / reviewer_grade (and
+    // decided_*); the final status and grade are the committee's. The student is told then, not now.
     // 'reviewer', or 'admin' for the superadmin, also while acting as the reviewer (admin round Group 1):
     // then decided_by, reviewed_by and the history are the admin, never the reviewer
     const actorRole = actorRoleOf(req.actor);
@@ -262,11 +265,15 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
     try {
         const result = await inTransaction(async (client) => {
             const { rows } = await client.query(
-                `UPDATE applications SET status = $1, reviewer_note = $2::text, reviewed_by = $3::int, reviewed_at = NOW(),
+                `UPDATE applications SET status = CASE WHEN $7::boolean THEN 'awaiting_committee' ELSE $1 END,
+                    reviewer_note = $2::text, reviewed_by = $3::int, reviewed_at = NOW(),
                     info_requested_at     = CASE WHEN $5::boolean THEN now() END,
                     info_deadline         = CASE WHEN $5::boolean THEN info_reply_deadline(now()) END,
                     info_reminder_sent_at = NULL,
-                    final_grade           = $6::smallint,
+                    final_grade           = NULL,
+                    reviewer_decision     = CASE WHEN $7::boolean THEN $1::varchar END,
+                    reviewer_grade        = CASE WHEN $7::boolean THEN $6::smallint END,
+                    committee_state       = CASE WHEN $7::boolean THEN 'awaiting' END,
                     decided_by            = CASE WHEN $7::boolean THEN $3::int END,
                     decided_by_role       = CASE WHEN $7::boolean THEN $8::varchar END,
                     decided_at            = CASE WHEN $7::boolean THEN now() END,
@@ -296,9 +303,9 @@ router.put('/applications/:id/status', verifyToken, requireRole('reviewer', 'sup
         if (result.refused) return sendError(res, 409, result.refused[0], result.refused[1]);
         res.json({ success: true });
 
-        // Respond first, then email in the background (never blocks or fails the request)
+        // Respond first, then email in the background (never blocks or fails the request). An approve
+        // or reject is not told to the student now: the committee's decision is (round 2 Group 2)
         if (status === 'needs_info') notifyStudent(result.student_id, 'needsInfo', { note, deadline: result.info_deadline });
-        else notifyStudent(result.student_id, 'statusUpdate', { status, note, finalGrade });
     } catch (err) {
         console.error('❌ Status update error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Update failed');
@@ -323,15 +330,18 @@ router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), as
                 [id, req.user.id, WITHDRAWABLE_STATUSES]
             );
             if (rowCount === 0) {
-                const own = await client.query(`SELECT ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND student_id = $2`, [id, req.user.id]);
+                const own = await client.query(`SELECT status, ${semesterEndedSql()} AS semester_ended FROM applications WHERE id = $1 AND student_id = $2`, [id, req.user.id]);
                 if (own.rows.length === 0) return 'not_found';
-                return own.rows[0].semester_ended ? 'semester_ended' : 'not_allowed';
+                if (own.rows[0].semester_ended) return 'semester_ended';
+                // The reviewer has decided: it is with the committee now (round 2 Group 2)
+                return own.rows[0].status === 'awaiting_committee' ? 'awaiting_committee' : 'not_allowed';
             }
             await addEvent(client, { applicationId: id, kind: 'withdrawn', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'withdrawn' });
             return 'withdrawn';
         });
         if (result === 'not_found') return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
         if (result === 'semester_ended') return sendError(res, 409, ...SEMESTER_ENDED_REFUSAL);
+        if (result === 'awaiting_committee') return sendError(res, 409, 'AWAITING_COMMITTEE', 'This application has been decided and is with the committee: it can no longer be withdrawn');
         if (result === 'not_allowed') return sendError(res, 409, 'CANNOT_WITHDRAW', 'Only an application under review or waiting for your reply can be withdrawn');
         res.json({ success: true });
 

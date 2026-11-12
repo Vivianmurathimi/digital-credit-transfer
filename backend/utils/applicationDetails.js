@@ -20,6 +20,7 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
         `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
                 a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
                 a.decision_rationale, a.info_deadline AS respond_by,
+                a.reviewer_decision, a.reviewer_grade, a.committee_state, a.committee_at, a.committee_note, a.committee_by_role,
                 ${semesterEndedSql('a')} AS read_only, sem.id AS semester_id, sem.name AS semester_name,
                 u.name AS student_name, u.neptun_code, p.code AS programme_code, p.name_en, p.name_hu, p.name_de
          FROM applications a
@@ -85,9 +86,18 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
             extra_files: extraFiles,
             files,
             events,
-            // The decision (reviewer Group 6); the decider's name only for a reviewer
+            // The decision (reviewer Group 6); the decider's name only for a reviewer. Round 2 Group 2:
+            // reviewer_decision / reviewer_grade = what the reviewer or admin decided (kept for good);
+            // final_grade and the application's status = the final result (the committee's); the
+            // committee's step (state, when, note). Who in the committee acted: only the admin's views.
             decision: {
                 final_grade: found.final_grade,
+                reviewer_decision: found.reviewer_decision,
+                reviewer_grade: found.reviewer_grade,
+                committee_state: found.committee_state,
+                committee_at: found.committee_at,
+                committee_note: found.committee_note,
+                committee_by_role: found.committee_by_role,
                 decided_by_role: found.decided_by_role,
                 decided_by_name: found.decided_by_role === 'reviewer' ? found.decided_by_name : null,
                 decided_at: found.decided_at,

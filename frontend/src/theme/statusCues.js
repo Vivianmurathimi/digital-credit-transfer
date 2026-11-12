@@ -7,6 +7,7 @@ export const STATUS_CUES = {
     approved: 'approved',
     rejected: 'rejected',
     withdrawn: 'withdrawn',
+    awaiting_committee: 'awaiting', // round 2 Group 2: decided by a reviewer, waiting for the committee
 };
 
 // Anything unexpected looks neutral
