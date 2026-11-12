@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import http from '../http';
-import { getErrorMessage } from '../errorMessage';
+import { getErrorMessage, unpackBlobError } from '../errorMessage';
+import downloadPdf from '../downloadPdf';
 import { ASSIGNMENT_FILTERS, assignedToSomeoneElse, countsFor, rowsFor } from '../reviewerList';
 import ReviewerHeader from './reviewer/ReviewerHeader';
 import ReviewerTabs from './reviewer/ReviewerTabs';
@@ -30,9 +31,10 @@ const ReviewerDashboard = () => {
     const [openId, setOpenId] = useState(null);
     const [decision, setDecision] = useState(null); // { app, type }
     const [notice, setNotice] = useState(''); // "Decision saved." after the panel closes
-    const [semesters, setSemesters] = useState(null); // { current, past: [{ id, name, ends_on }] }
+    const [semesters, setSemesters] = useState(null); // { inProgress: [{ id, name, review_ends_at }], past: [{ id, name, ends_on }] }
     const [semesterId, setSemesterId] = useState(null); // null = the current view
     const [assignment, setAssignment] = useState('all'); // all / mine / unassigned (round 2 Group 1)
+    const [bookState, setBookState] = useState(''); // '' | 'working' | an error text
 
     const load = useCallback(async () => {
         try {
@@ -56,14 +58,14 @@ const ReviewerDashboard = () => {
     }, []);
 
     const readOnly = !!data?.read_only;
-    const chooseSemester = (id) => {
+    const chooseSemester = (id, isPast = false) => {
         setSemesterId(id);
         setData(null);
         setOpenId(null);
         setStudent(null);
         setNotice('');
         // A past semester's applications are decided: start on Completed
-        setTab(id ? 'completed' : 'pending');
+        setTab(isPast ? 'completed' : 'pending');
     };
 
     const applications = useMemo(() => data?.applications || [], [data]);
@@ -94,10 +96,33 @@ const ReviewerDashboard = () => {
 
     return (
         <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
-            <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} />
+            <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} semesters={readOnly ? null : data?.semesters} />
             {loadError && <div role="alert" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--danger-border)' }}>{loadError}</div>}
 
             <SemesterSelect semesters={semesters} value={semesterId} onChange={chooseSemester} />
+            {/* The PDF book of the reviewer's programmes (round 2 Group 1): the chosen semester, or the only one in
+                progress; interim (not final) until the semester closes */}
+            {(() => {
+                const inProgress = semesters?.inProgress || [];
+                const bookSemester = semesterId || (inProgress.length === 1 ? inProgress[0].id : null);
+                if (!data || (!bookSemester && inProgress.length < 2)) return null;
+                const save = async () => {
+                    setBookState('working');
+                    try { await downloadPdf(`reviewer/book.pdf?semester=${bookSemester}`, 'book.pdf'); setBookState(''); }
+                    catch (err) { setBookState(getErrorMessage(await unpackBlobError(err), t, 'pdf_download_failed')); }
+                };
+                return (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
+                        {bookSemester ? (
+                            <button type="button" onClick={save} disabled={bookState === 'working'}
+                                style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border-strong)', backgroundColor: 'var(--surface)', color: 'var(--link)', fontWeight: 'bold', cursor: 'pointer', font: 'inherit' }}>
+                                {bookState === 'working' ? t('pdf_working') : t(readOnly ? 'pdf_download_book' : 'pdf_download_book_interim')}
+                            </button>
+                        ) : <span style={{ color: 'var(--text-secondary)' }}>{t('pdf_choose_semester')}</span>}
+                        {bookState && bookState !== 'working' && <span role="alert" style={{ color: 'var(--error-text)' }}>{bookState}</span>}
+                    </div>
+                );
+            })()}
             {readOnly && (
                 <div role="note" style={{ backgroundColor: 'var(--cue-system-bg)', color: 'var(--cue-system-text)', border: '1px solid var(--cue-system-border)', borderLeft: '4px solid var(--cue-note-system-border)', padding: '10px 12px', borderRadius: '5px', marginBottom: '15px', fontWeight: 'bold' }}>
                     <span aria-hidden="true">🔒 </span>{t('reviewer_past_banner', { name: data.semester?.name || '' })}

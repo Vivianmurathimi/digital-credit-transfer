@@ -168,7 +168,7 @@ const PastSemesters = () => {
                                                     </tr>
                                                     {openId === a.id && (
                                                         <tr><td colSpan="7" style={{ ...td, backgroundColor: 'var(--surface-2)' }}>
-                                                            <ApplicationDetails appId={a.id} readOnly url={`admin/past-semesters/${semesterId}/applications/${a.id}`} />
+                                                            <ApplicationDetails appId={a.id} readOnly url={`admin/past-semesters/${semesterId}/applications/${a.id}`} pdfUrl={`admin/applications/${a.id}/pdf`} />
                                                         </td></tr>
                                                     )}
                                                 </React.Fragment>

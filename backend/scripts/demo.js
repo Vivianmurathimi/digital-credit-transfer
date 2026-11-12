@@ -403,8 +403,9 @@ const seed = async (pool) => {
     // Moments for trying the automatic actions with npm run jobs:run -- --now=... (08:00 UTC on those days)
     const moments = (await pool.query(
         `SELECT to_char(($1::timestamptz AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_deadline,
-                to_char(ends_on - 6, 'YYYY-MM-DD') AS week_before, to_char(ends_on, 'YYYY-MM-DD') AS last_day,
-                to_char(ends_on + 1, 'YYYY-MM-DD') AS after_end
+                to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date - 6, 'YYYY-MM-DD') AS week_before,
+                to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date, 'YYYY-MM-DD') AS day_before,
+                to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_review
          FROM semester_bounds WHERE id = $2`,
         [cDeadline, semesters.current]
     )).rows[0];
@@ -420,7 +421,7 @@ const main = async () => {
     const pool = require('../db'); // after the database exists
     try {
         const { users, made, semesters, moments } = await seed(pool);
-        console.log(`\nSemesters: previous ${semesters.p_from} to ${semesters.p_ends} (ended), current ${semesters.c_from} to ${semesters.c_ends} (applications until ${semesters.c_until}).`);
+        console.log(`\nSemesters: previous ${semesters.p_from} to ${semesters.p_ends} (closed), current: applications ${semesters.c_from} to ${semesters.c_until}, review deadline ${moments.day_before} (14 days later).`);
         console.log('\nApplications:');
         made.forEach(([label, student, id]) => console.log(`  ${`#${id}`.padEnd(4)} ${student.padEnd(14)} ${label}`));
         console.log(`\nLogins (password for all: ${DEMO_PASSWORD}):`);
@@ -432,9 +433,10 @@ const main = async () => {
         const run = (day) => `DB_NAME=${DEMO_ENV.DB_NAME} npm run jobs:run -- --now=${day}T08:00:00Z --yes`;
         console.log('\nTrying the automatic actions on the demo database (demo:start may keep running):');
         console.log(`  Csilla's deadline has passed:      ${run(moments.after_deadline)}`);
-        console.log(`  7 days before the semester end:    ${run(moments.week_before)}`);
-        console.log(`  the semester's last day:           ${run(moments.last_day)}`);
-        console.log('  closing the semester: the admin does it (Semester section, after its last day), not the job');
+        console.log(`  7 days before the review deadline: ${run(moments.week_before)}`);
+        console.log(`  1 day before the review deadline:  ${run(moments.day_before)}`);
+        console.log(`  the review deadline has passed:    ${run(moments.after_review)}  (nothing rejected; the admins are emailed once)`);
+        console.log('  closing the semester: the admin does it (Semester section), once everything is decided; not the job');
     } finally {
         await pool.end();
     }

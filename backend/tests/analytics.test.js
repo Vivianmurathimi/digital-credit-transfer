@@ -56,8 +56,8 @@ before(async () => {
     programmes = (await pool.query('SELECT id, code FROM programmes ORDER BY code LIMIT 2')).rows;
     assert.ok(programmes.length === 2, 'needs two programmes');
     semesterId = (await pool.query(
-        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
-         VALUES ($1, 'setup', '2097-03-01T00:00:00Z', '2097-03-31T21:59:00Z', '2097-06-30') RETURNING id`,
+        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, review_end_at, end_date)
+         VALUES ($1, 'setup', '2097-03-01T00:00:00Z', '2097-03-31T21:59:00Z', '2097-04-14T21:59:00Z', '2097-06-30') RETURNING id`,
         [`Analytics test ${Date.now()}`]
     )).rows[0].id;
     const [P1, P2] = programmes;
@@ -124,8 +124,8 @@ test('the most-requested courses: withdrawn left out, auto-rejected counted, tie
 
 test('an empty semester gives zeros, not errors', async () => {
     const empty = (await pool.query(
-        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, end_date)
-         VALUES ($1, 'setup', '2096-03-01T00:00:00Z', '2096-03-31T21:59:00Z', '2096-06-30') RETURNING id`,
+        `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, review_end_at, end_date)
+         VALUES ($1, 'setup', '2096-03-01T00:00:00Z', '2096-03-31T21:59:00Z', '2096-04-14T21:59:00Z', '2096-06-30') RETURNING id`,
         [`Analytics empty ${Date.now()}`]
     )).rows[0].id;
     try {

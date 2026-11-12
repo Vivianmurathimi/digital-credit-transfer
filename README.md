@@ -1,7 +1,8 @@
 # PTE Credit Transfer
 
 Students apply to have courses from another university recognised for a PTE course; the
-programme's reviewer decides; the admin manages access, domains and students.
+programme's reviewers decide (a main reviewer, and extra reviewers while allowed to assist); the
+admin manages semesters, access, domains and students.
 `backend/` is the Express API (PostgreSQL, MinIO), `frontend/` the React app.
 More detail on the reviewer side: [backend/REVIEWER.md](backend/REVIEWER.md).
 
@@ -43,8 +44,10 @@ backend on them. Both refuse to run with `NODE_ENV=production`. Password for eve
 | Role | Login |
 |---|---|
 | Admin | `demo.admin@staff.example` |
-| Reviewer, Computer Science | `demo.reviewer.cs@staff.example` (Dr. Katalin Szabó) |
-| Reviewer, Civil Engineering | `demo.reviewer.civil@staff.example` (Dr. Péter Horváth) |
+| Main reviewer, Computer Science | `demo.reviewer.cs@staff.example` (Dr. Katalin Szabó) |
+| Main reviewer, Civil Engineering | `demo.reviewer.civil@staff.example` (Dr. Péter Horváth) |
+| Extra reviewer, Computer Science (assisting: sees CS) | `demo.extra.cs@staff.example` (Dr. Gergely Balogh) |
+| Extra reviewer, Civil Engineering (standby: sees nothing) | `demo.extra.civil@staff.example` (Dr. Réka Fehér) |
 | Students, Computer Science | `demo.anna@`, `demo.bence@`, `demo.csilla@`, `demo.daniel@` … `students.example` |
 | Students, Civil Engineering | `demo.eszter@`, `demo.ferenc@`, `demo.gabor@` … `students.example` |
 
@@ -54,7 +57,7 @@ The demo logins only work while the **demo** backend runs (`npm run demo:start`)
 
 `npm run seed:dev` adds test data to the development database (refused with `NODE_ENV=production`).
 Password: `Test1234!`. Accounts that would clash with existing data (same email or Neptun code, or a
-programme that already has an active reviewer) are skipped, and the test admin is only created when
+programme that already has a main reviewer) are skipped, and the test admin is only created when
 there is no active admin yet, so an existing database keeps its accounts.
 
 | Role | Login |
@@ -97,6 +100,17 @@ fails when the two differ.
 
 Admins land on `/admin` (Overview). Each area has its own address: `/admin/semesters`,
 `/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/analytics`, `/admin/reviewers`,
-`/admin/students`, `/admin/admins`, `/admin/domains`. Whether students can register or submit is
-decided only by the active semester's dates, Close now / Reopen until, and late access. A semester is
-closed only by the admin (Semester, after its last day); it is then read-only and listed under Past semesters.
+`/admin/students`, `/admin/admins`, `/admin/domains`.
+
+## The semester timeline
+
+Several semesters can be in progress at once: the next one's application period may open while the
+previous one is still being reviewed; application periods never overlap. Whether students can
+register or submit is decided only by the application period (`backend/utils/applicationPeriod.js`):
+its times, Close now / Reopen until, and late access (which submits into its own semester). Each
+semester has a **review deadline** (default: applications close + 14 days): a target, nothing is
+rejected when it passes; reviewers are reminded before it and the admins are told after it. The
+semester's last day is a label only. The admin closes a semester (Semester) once its application
+period is over, no late access runs and everything is decided; it is then read-only and listed under
+Past semesters. Reviewers get one daily summary email at 07:00 Budapest time instead of an email per
+application. More: [backend/REVIEWER.md](backend/REVIEWER.md).

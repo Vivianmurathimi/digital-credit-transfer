@@ -97,7 +97,10 @@ router.get('/countries', (req, res) => {
 // student, the student's rule applies); the admin round can narrow this.
 router.get('/pte-courses', verifyToken, async (req, res) => {
     try {
-        const semester = req.user.role === 'student' ? (await periodFor(pool, { userId: req.user.id })).semester : null;
+        // The catalogue of the semester a new application would go to (the late access's own semester,
+        // or the open period's), otherwise the semester the period rule talks about
+        const period = req.user.role === 'student' ? await periodFor(pool, { userId: req.user.id }) : null;
+        const semester = period ? period.submitSemester || period.semester : null;
         const result = req.user.role === 'student'
             ? await pool.query(
                 `SELECT c.id, c.course_code, c.course_name, c.credits

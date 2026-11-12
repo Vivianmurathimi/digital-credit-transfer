@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import http from '../http';
-import { formatDay } from '../dates';
+import { formatDateTime } from '../dates';
 import { programmeName } from '../programmeName';
 
 // The admin's banner per programme (reviewer Group 7): how many applications wait for a decision and
@@ -27,7 +27,8 @@ const ReviewerOverview = () => {
     if (failed) return <p role="alert" style={{ color: 'var(--error-text)', marginBottom: '20px' }}>{t('admin_overview_failed')}</p>;
     if (!overview) return null;
 
-    const endsOn = overview.semester ? formatDay(overview.semester.endsOn, language) : null;
+    // The review deadline that comes first among the semesters in progress (round 2 Group 1)
+    const endsOn = overview.semester ? formatDateTime(overview.semester.reviewEndsAt, language) : null;
 
     return (
         <section aria-labelledby="reviewer-overview-title" style={{ marginBottom: '30px', display: 'flex', flexDirection: 'column', gap: '8px' }}>

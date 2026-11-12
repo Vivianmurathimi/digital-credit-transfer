@@ -5,11 +5,14 @@ import { getErrorMessage } from '../../errorMessage';
 import { formatDateTime } from '../../dates';
 import Chip from '../reviewer/Chip';
 import { card, input, label, smallButton, td, th } from './adminStyles';
+import ReviewDeadlineMove, { reviewSituation, suggestedReviewEnd } from './ReviewDeadlineMove';
 
-// Late access (admin round Group 5): one or more student email addresses and a deadline. Those
-// students can register and submit until their deadline while the period is closed. Each address
-// is checked on its own (format, allowed domain, not a staff account); they get an email. The list
-// shows every grant of the active semester; revoking takes effect at once.
+// Late access (admin round Group 5; round 2 Group 1): one or more student email addresses and a
+// deadline, for one semester in progress (chosen here when several are). Those students can
+// register and submit into that semester until their deadline, also after its period closed. The
+// deadline may run up to the semester's review deadline; a later or tight one offers to move the
+// review deadline in the same step. Each address is checked on its own (format, allowed domain, not
+// a staff account); they get an email. Revoking takes effect at once.
 
 const STATUS_CUES = { active: 'approved', expired: 'needs-info', revoked: 'neutral' };
 const LANGUAGES = ['hu', 'en', 'de'];
@@ -17,7 +20,9 @@ const LANGUAGES = ['hu', 'en', 'de'];
 const LateAccess = ({ onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
-    const [data, setData] = useState(null); // { semester, grants }
+    const [data, setData] = useState(null); // { semesters, semester, grants, reviewMarginDays }
+    const [semesterId, setSemesterId] = useState(''); // '' = the server's default
+    const [reviewMove, setReviewMove] = useState('');
     const [emails, setEmails] = useState('');
     const [deadline, setDeadline] = useState('');
     const [emailLanguage, setEmailLanguage] = useState('hu');
@@ -25,8 +30,14 @@ const LateAccess = ({ onChange = () => {} }) => {
     const [error, setError] = useState('');
 
     const load = useCallback(async () => {
-        try { setData(await http.get('admin/late-access').json()); } catch (err) { setError(getErrorMessage(err, t, 'late_load_failed')); }
-    }, [t]);
+        try { setData(await http.get('admin/late-access', { searchParams: semesterId ? { semester_id: semesterId } : {} }).json()); }
+        catch (err) { setError(getErrorMessage(err, t, 'late_load_failed')); }
+    }, [t, semesterId]);
+    const margin = data?.reviewMarginDays;
+    const chooseDeadline = (value) => {
+        setDeadline(value);
+        setReviewMove(reviewSituation(value, data?.semester?.review_end_at, margin) ? suggestedReviewEnd(value, margin) : '');
+    };
     useEffect(() => { load(); }, [load]);
 
     const grant = async (e) => {
@@ -34,7 +45,9 @@ const LateAccess = ({ onChange = () => {} }) => {
         setError('');
         setResults(null);
         try {
-            const body = await http.post('admin/late-access', { json: { emails, deadline, language: emailLanguage } }).json();
+            const json = { emails, deadline, language: emailLanguage, semester_id: data.semester.id, ...(reviewMove ? { review_end_at: reviewMove } : {}) };
+            const body = await http.post('admin/late-access', { json }).json();
+            setReviewMove('');
             setResults(body.results);
             if (body.results.some((r) => r.ok)) setEmails(body.results.filter((r) => !r.ok).map((r) => r.email).join(', '));
             load();
@@ -58,6 +71,15 @@ const LateAccess = ({ onChange = () => {} }) => {
         <section aria-labelledby="late-title" style={card}>
             <h2 id="late-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t('late_title')}</h2>
             <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t('late_intro', { name: data?.semester?.name || '' })}</p>
+            {(data?.semesters || []).length > 1 && (
+                <div style={{ maxWidth: '360px', marginBottom: '10px' }}>
+                    <label htmlFor="late-semester" style={label}>{t('import_semester_label')}</label>
+                    <select id="late-semester" value={semesterId || String(data.semester?.id || '')} onChange={(e) => { setSemesterId(e.target.value); setReviewMove(''); setResults(null); }} style={input}>
+                        {data.semesters.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                </div>
+            )}
+            {data?.semester && <p style={{ marginTop: 0, fontSize: '13px' }}>{t('late_review_deadline', { date: formatDateTime(data.semester.review_end_at, language) })}</p>}
             <form onSubmit={grant} noValidate style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', alignItems: 'end' }}>
                 <div style={{ gridColumn: '1 / -1' }}>
                     <label htmlFor="late-emails" style={label}>{t('late_emails_label')}</label>
@@ -65,8 +87,9 @@ const LateAccess = ({ onChange = () => {} }) => {
                 </div>
                 <div>
                     <label htmlFor="late-deadline" style={label}>{t('late_deadline_label')}</label>
-                    <input id="late-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} style={input} />
+                    <input id="late-deadline" type="datetime-local" value={deadline} onChange={(e) => chooseDeadline(e.target.value)} style={input} />
                 </div>
+                <ReviewDeadlineMove id="late-review" newEnd={deadline} reviewEndAt={data?.semester?.review_end_at} margin={margin} value={reviewMove} onChange={setReviewMove} />
                 <div>
                     <label htmlFor="late-language" style={label}>{t('staff_language_label')}</label>
                     <select id="late-language" value={emailLanguage} onChange={(e) => setEmailLanguage(e.target.value)} style={input}>

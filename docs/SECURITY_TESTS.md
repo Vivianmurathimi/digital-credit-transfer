@@ -257,10 +257,10 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Late access: no addresses, past deadline; a mixed list (good, bad format, unlisted domain, staff address) | `400` / each address answered on its own |
 | | | With late access while closed: register (other case), status, submit; revoke; revoke again | `200`, deadline shown, period check passed / refused at once (`403`) / `alreadyRevoked` |
 | | | The admin summary (menu badges) | matches the database |
-| 4p | **Closing the semester (admin round Group 6)** | Close, preview and Past semesters routes without a token / as student / as reviewer | `401` / `403` / `403` |
-| | | Ready to close; the admin's Applications list | `readyToClose` true; only the active semester |
-| | | Preview, then close with a wrong name / no name / a semester that is not active | the counts; `400 CONFIRM_NAME_MISMATCH` / `400` / `409 SEMESTER_NOT_ACTIVE` |
-| | | Close | exactly the previewed counts rejected as System (`SEMESTER_ENDED`), one email each, PDF book created, late access ended, drafts deleted, closed_at / closed_by set, nothing deleted; again `409 ALREADY_CLOSED` |
+| 4p | **Closing the semester (admin round Group 6; round 2)** | Close, preview and Past semesters routes without a token / as student / as reviewer | `401` / `403` / `403` |
+| | | With undecided applications and late access: the summary; the admin's Applications list | not ready to close; only the semesters in progress |
+| | | Preview, then close with a wrong name / no name / a semester not in progress / while late access runs / while applications are undecided | blockers listed per programme; `400 CONFIRM_NAME_MISMATCH` / `400` / `409 SEMESTER_NOT_ACTIVE` / `409 LATE_ACCESS_ACTIVE` / `409 UNDECIDED_APPLICATIONS`; nobody rejected |
+| | | Everything decided (reviewer approves and rejects, the student withdraws), then close | "Ready to close"; nothing blocks it; closed with nobody rejected, every decision kept, PDF book created, late access ended, closed_at / closed_by set, nothing deleted; again `409 ALREADY_CLOSED` |
 | | | After the close: reviewer, admin, admin acting as reviewer decide; student and admin acting as student withdraw; student replies; edit dates; Close now; Reopen; activate it again | each refused (`409 SEMESTER_ENDED` / `SEMESTER_CLOSED` / `SEMESTER_NOT_ACTIVE`), nothing changed |
 | | | Activate the semester waiting in setup | `200` |
 | | | Past semesters: list, search by name / Neptun + status / course, unknown status, a semester not closed, open one, another semester's application, CSV, PDF download, generate again | found; `400`; `404`; read-only; `404`; CSV with BOM in the chosen language; PDF; a new book |
@@ -269,7 +269,26 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A closed test semester counted by hand (approved after 2 and 4 days, one with 2 days waiting for the student; a System rejection; a withdrawal) | statuses exact; time to decision 3 / 3 days, without waiting 2 / 2 (System left out); top courses without the withdrawn one |
 | | | The active semester (the default) | matches an independent SQL count; only active and closed semesters offered |
 | | | CSV of the time to decision | BOM, header, the "All programmes" line |
-| | | "Ends soon" warning 10 days before / 3 days before / 5 days after the last day | none / both numbers / still shown until closed |
+| | | "Review deadline" warnings 10 days before / 3 days before / 5 days after the review deadline (round 2) | none / "soon" with both numbers / "passed" with the counts per programme; nothing rejected |
+| 4r | **Staff linked to programmes (round 2 Part B)** | A second main reviewer; a programme on a reviewer's account; "assist" on a main reviewer (direct database writes) | refused by the database (`staff_programmes_one_main`, `users_programme_only_students`, `staff_programmes_assist_only_extra`) |
+| | | Invite: an extra that replaces someone, the same programme twice, an unknown role, a second main without replace, no programme | `400 REPLACE_ONLY_MAIN` / `400 DUPLICATE_PROGRAMME` / `400 INVALID_STAFF_ROLE` / `409 PROGRAMME_HAS_REVIEWER` / `400 INVALID_PROGRAMME` |
+| | | Invite and accept an extra reviewer | created; the main reviewer unchanged and still working |
+| | | Standby extra reviewer: dashboard, list, one application, one file | not listed; `404`; `404` |
+| | | Assisting (switched on in the database, no new login); switched off again | listed and opened, file `200`; `404` at once |
+| | | Link actions: same role again, main without replace, unknown programme, an admin account, as a reviewer, the only programme; a second programme; remove the reviewer | `409 ALREADY_LINKED` / `409 PROGRAMME_HAS_REVIEWER` / `400` / `400 NOT_A_REVIEWER` / `403` / `409 LAST_PROGRAMME`; `201`; every link ended and kept |
+| 4s | **Sharing work (round 2 Part C)**, a temporary programme with its own reviewers, student and applications | The panel and its actions as a reviewer / a student | `403 FORBIDDEN_ROLE` |
+| | | The panel | 3 reviewers, 5 open applications, no withdrawn one, no email addresses |
+| | | Assign to a standby or another programme's reviewer; a withdrawn application; another programme's application; a broken id list | `409 REVIEWER_CANNOT_SEE`; `409 NOT_ASSIGNABLE` (all or nothing); `400 INVALID_FIELD` |
+| | | Assign, distribute evenly, unassign | "Assigned to" on the main reviewer's list; 2 open each; needs info untouched; shared again |
+| | | **Two reviewers approving the same application at once** | one `200`, the other `409 ALREADY_DECIDED` |
+| | | Assisting off; on a main reviewer; a broken value | assigned ones shared again and out of reach; `400 ASSIST_ONLY_EXTRA`; `400 INVALID_FIELD` |
+| | | The main reviewer removed while an extra assists; then standby too; make an extra the main one | no promotion, the extra keeps working, counted in the summary; counted as nobody reviewing; the new main sees everything |
+| 4t | **PDFs (round 2 Part F)** | The reviewer's book, the reviewer's and the admin's application PDF without a token / as a student; the admin's as a reviewer | `401` / `403` / `403` |
+| | | The reviewer's book of a semester in progress; without a semester; of a semester in setup | a PDF; `404 SEMESTER_NOT_FOUND`; `404` |
+| | | One application of the reviewer's programme (reviewer, admin); another programme's; unknown; a withdrawn one (reviewer, admin) | PDF / PDF; `404`; `404`; `404` / PDF |
+| | | A standby extra reviewer: the book, an application | `404 NO_PROGRAMME`; `404` |
+
+Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
 | 5 | **Allowed reads** | A reads own applications; B opens own file | `200` |
 | | | Reviewer (of B's programme) reads the application list and opens B's file | `200` |
@@ -312,6 +331,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-12 | throwaway copy with migrations 019–021, round 2 Group 1 (staff and programmes, sharing, the timeline, reviewer emails, PDFs) | **840 passed, 0 failed, 1 skipped** (841 checks); the skip is the duplicate check (student B has no open application). Temporary programmes, reviewers, students, applications and semesters removed |
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, with rate limiting | **67 passed, 0 failed, 0 skipped**; 0 emails sent; all 81 test rate-limit rows removed |

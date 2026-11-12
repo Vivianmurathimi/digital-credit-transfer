@@ -12,26 +12,30 @@ import Catalogue from './Catalogue';
 const useSemesters = () => {
     const { t } = useTranslation();
     const [semesters, setSemesters] = useState([]);
+    // The timeline's numbers come from the server (utils/semesters.js), round 2 Group 1
+    const [numbers, setNumbers] = useState({ reviewDaysDefault: null, reviewMarginDays: null });
     const [error, setError] = useState('');
     const load = useCallback(async () => {
         try {
-            setSemesters((await http.get('admin/semesters').json()).semesters);
+            const data = await http.get('admin/semesters').json();
+            setSemesters(data.semesters);
+            setNumbers({ reviewDaysDefault: data.reviewDaysDefault, reviewMarginDays: data.reviewMarginDays });
             setError('');
         } catch (err) { setError(getErrorMessage(err, t, 'semesters_load_failed')); }
     }, [t]);
     useEffect(() => { load(); }, [load]);
-    return { semesters, error, load };
+    return { semesters, numbers, error, load };
 };
 
 const LoadError = ({ error }) => (error ? <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p> : null);
 
 // Semester: create, edit, activate; the active one's Close now, Reopen until, last-days warning
 export const SemesterSection = ({ onChange = () => {} }) => {
-    const { semesters, error, load } = useSemesters();
+    const { semesters, numbers, error, load } = useSemesters();
     return (
         <>
             <LoadError error={error} />
-            <Semesters semesters={semesters} onChange={() => { load(); onChange(); }} />
+            <Semesters semesters={semesters} reviewDaysDefault={numbers.reviewDaysDefault} reviewMarginDays={numbers.reviewMarginDays} onChange={() => { load(); onChange(); }} />
         </>
     );
 };

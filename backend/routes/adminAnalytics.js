@@ -16,10 +16,11 @@ const { sendCsv } = require('../utils/csv');
 const adminOnly = [verifyToken, requireRole('superadmin')];
 const TABLES = ['status', 'programmes', 'turnaround', 'courses'];
 
-// The semester to show: ?semester_id=, or the active one. [error] or [null, semester]
+// The semester to show: ?semester_id=, or the newest one in progress (several can be, round 2
+// Group 1). [error] or [null, semester]
 const pickSemester = async (value) => {
     if (value === undefined || value === '') {
-        const active = (await pool.query("SELECT id, name, status FROM semesters WHERE status = 'active'")).rows[0];
+        const active = (await pool.query("SELECT id, name, status FROM semesters WHERE status = 'active' ORDER BY applications_open_at DESC LIMIT 1")).rows[0];
         return active ? [null, active] : [[404, 'NO_ACTIVE_SEMESTER', 'There is no active semester: choose a closed one']];
     }
     const id = positiveInt(value);
@@ -36,7 +37,7 @@ router.get('/admin/analytics', ...adminOnly, async (req, res) => {
     try {
         const [problem, semester] = await pickSemester(req.query.semester_id);
         const semesters = (await pool.query(
-            "SELECT id, name, status FROM semesters WHERE status IN ('active', 'closed') ORDER BY (status = 'active') DESC, end_date DESC"
+            "SELECT id, name, status FROM semesters WHERE status IN ('active', 'closed') ORDER BY (status = 'active') DESC, applications_open_at DESC"
         )).rows;
         if (problem) {
             if (problem[1] === 'NO_ACTIVE_SEMESTER') return res.json({ success: true, semesters, semester: null, analytics: null });
