@@ -11,8 +11,9 @@ import { card } from './adminStyles';
 
 // The Applications section of the admin menu (admin round Group 5; built in Groups 1 and 2):
 // every application with who decided it, the overrides as before, and the Decide buttons for
-// pending applications of a programme with no active reviewer (recorded as Admin). Only the active
-// semester (Group 6); older ones are in Past semesters, with the term book.
+// pending applications of a programme with no active reviewer (recorded as Admin). The semesters in
+// progress (round 2 Group 1: several at once; a filter picks one); closed ones are in Past
+// semesters, with the term book.
 
 const DECIDE_TYPES = [['approved', 'approve', 'reviewer_approve'], ['needs_info', 'info', 'reviewer_request_info'], ['rejected', 'reject', 'reviewer_reject']];
 const OPEN_STATUSES = ['pending', 'needs_info'];
@@ -28,14 +29,19 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
     const [applications, setApplications] = useState([]);
     const [decision, setDecision] = useState(null); // { app, type } while the decision panel is open
     const [notice, setNotice] = useState('');
+    const [semesters, setSemesters] = useState([]); // the semesters in progress, for the filter
+    const [semesterId, setSemesterId] = useState(''); // '' = all in progress
 
     const fetchApplications = useCallback(async () => {
         try {
-            const res = await api.get('/api/applications');
+            const res = await api.get('/api/applications', { params: semesterId ? { semester_id: semesterId } : {} });
             if (res.data.success) setApplications(res.data.applications);
         } catch (err) { console.error('Error fetching apps', err); }
-    }, []);
+    }, [semesterId]);
     useEffect(() => { fetchApplications(); }, [fetchApplications]);
+    useEffect(() => {
+        api.get('/api/admin/summary').then((res) => setSemesters(res.data.summary?.semesters || [])).catch(() => setSemesters([]));
+    }, []);
 
     // "Reviewer: <name>", "Admin" or "System", with the date; "—" for older rows without a record
     const decidedBy = (app) => {
@@ -61,8 +67,17 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
         <>
             <section aria-labelledby="applications-title" style={{ ...card, border: '2px solid var(--heading)' }}>
                 <h2 id="applications-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t('superadmin_application_overrides_title')}</h2>
-                {/* The active semester only (admin round Group 6) */}
+                {/* The semesters in progress only (closed ones: Past semesters) */}
                 <p style={{ marginTop: 0 }}>{t('applications_past_hint')} <Link to="/admin/past-semesters" style={{ color: 'var(--link)', fontWeight: 'bold' }}>{t('admin_menu_past_semesters')}</Link></p>
+                {semesters.length > 1 && (
+                    <p>
+                        <label htmlFor="applications-semester">{t('import_semester_label')} </label>
+                        <select id="applications-semester" value={semesterId} onChange={(e) => setSemesterId(e.target.value)} style={{ padding: '6px' }}>
+                            <option value="">{t('applications_all_in_progress')}</option>
+                            {semesters.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                    </p>
+                )}
                 {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>

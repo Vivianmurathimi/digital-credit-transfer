@@ -30,7 +30,7 @@ const ReviewerDashboard = () => {
     const [openId, setOpenId] = useState(null);
     const [decision, setDecision] = useState(null); // { app, type }
     const [notice, setNotice] = useState(''); // "Decision saved." after the panel closes
-    const [semesters, setSemesters] = useState(null); // { current, past: [{ id, name, ends_on }] }
+    const [semesters, setSemesters] = useState(null); // { inProgress: [{ id, name, review_ends_at }], past: [{ id, name, ends_on }] }
     const [semesterId, setSemesterId] = useState(null); // null = the current view
     const [assignment, setAssignment] = useState('all'); // all / mine / unassigned (round 2 Group 1)
 
@@ -56,14 +56,14 @@ const ReviewerDashboard = () => {
     }, []);
 
     const readOnly = !!data?.read_only;
-    const chooseSemester = (id) => {
+    const chooseSemester = (id, isPast = false) => {
         setSemesterId(id);
         setData(null);
         setOpenId(null);
         setStudent(null);
         setNotice('');
         // A past semester's applications are decided: start on Completed
-        setTab(id ? 'completed' : 'pending');
+        setTab(isPast ? 'completed' : 'pending');
     };
 
     const applications = useMemo(() => data?.applications || [], [data]);
@@ -94,7 +94,7 @@ const ReviewerDashboard = () => {
 
     return (
         <div style={{ backgroundColor: 'var(--success-surface)', padding: '20px', borderRadius: '10px', border: '2px solid var(--success-border)' }}>
-            <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} />
+            <ReviewerHeader reviewer={data?.reviewer} semester={data?.semester} semesters={readOnly ? null : data?.semesters} />
             {loadError && <div role="alert" style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger-text)', padding: '10px', borderRadius: '5px', marginBottom: '15px', border: '1px solid var(--danger-border)' }}>{loadError}</div>}
 
             <SemesterSelect semesters={semesters} value={semesterId} onChange={chooseSemester} />

@@ -35,7 +35,8 @@ router.get('/admin/semesters/:id/close-preview', ...adminOnly, requireIdParam('i
     }
 });
 
-// POST /api/admin/semesters/:id/close { confirm_name }: only after the last day, the name typed exactly.
+// POST /api/admin/semesters/:id/close { confirm_name }: once the period is over, no late access runs and
+// nothing is undecided (utils/semesterClose.js), the name typed exactly.
 // The answer includes the real counts, the emails sent and the PDF book (or its error).
 router.post('/admin/semesters/:id/close', ...adminOnly, requireIdParam('id'), async (req, res) => {
     try {

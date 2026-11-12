@@ -7,6 +7,7 @@ const notifyStudent = require('../utils/notifyStudent');
 const notifyReviewer = require('../utils/notifyReviewer');
 const { findFilesNotOwnedBy, splitFileList } = require('../utils/fileOwner');
 const sendError = require('../utils/sendError');
+const { positiveInt } = require('../utils/validate');
 const inTransaction = require('../utils/transaction');
 const { semesterEndedSql } = require('../utils/semesters');
 const { periodFor, refuseUnlessSubmitting } = require('../utils/applicationPeriod');
@@ -43,9 +44,9 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
     const student_id = req.user.id;
 
     try {
-        // 0. Only inside the current semester's application period, with submissions open (Group 3)
         // 0. Only while the application period is open for this student (or with their late access,
-        //    admin round Group 5)
+        //    admin round Group 5). The application goes to submitSemester: the open period's
+        //    semester, or the late access's own semester (round 2 Group 1)
         const submission = await periodFor(pool, { userId: student_id });
         if (refuseUnlessSubmitting(res, submission)) return undefined;
 
@@ -72,7 +73,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
         // (hidden courses can't be picked, admin round Group 4)
         const found = await pool.query(
             "SELECT id, course_code, course_name, credits FROM courses WHERE id = ANY($1) AND programme_id = $2 AND semester_id = $3 AND status = 'active'",
-            [targetIds, programmeId, submission.semester.id]
+            [targetIds, programmeId, submission.submitSemester.id]
         );
         if (!programmeId || found.rows.length !== targetIds.length) {
             return sendError(res, 400, 'COURSE_NOT_IN_PROGRAMME', 'A chosen course is not part of your programme', { field: 'target_course_ids' });
@@ -124,7 +125,7 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
                 `INSERT INTO applications 
                 (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id) 
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11) RETURNING id`,
-                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.semester.id]
+                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.submitSemester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: studentNote });
             return rows[0];
@@ -214,9 +215,14 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
     try {
         const view = await resolveReviewerView(pool, req);
         const programmeIds = view.all ? null : view.reviewer.programmeIds;
-        // The admin sees the ACTIVE semester only (admin round Group 6); older ones: Past semesters.
+        // The admin sees the semesters IN PROGRESS (round 2 Group 1: several at once), or one of them
+        // with ?semester_id=; closed ones: Past semesters.
         // Boolean: for a reviewer view.all is undefined, which SQL would read as NULL (filtering too)
         const activeOnly = Boolean(view.all);
+        const semesterFilter = view.all && req.query.semester_id !== undefined && req.query.semester_id !== '' ? positiveInt(req.query.semester_id) : null;
+        if (view.all && req.query.semester_id !== undefined && req.query.semester_id !== '' && semesterFilter === null) {
+            return sendError(res, 400, 'INVALID_ID', 'semester_id must be a positive whole number', { field: 'semester_id' });
+        }
         const result = await pool.query(
             `SELECT a.*, u.name as student_name,
                     CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name,
@@ -224,9 +230,10 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
              FROM applications a JOIN users u ON a.student_id=u.id
              LEFT JOIN users d ON d.id = a.decided_by
              WHERE ($1::int[] IS NULL OR a.programme_id = ANY($1::int[]))
-               AND (NOT $2::boolean OR a.semester_id = (SELECT id FROM semesters WHERE status = 'active'))
+               AND (NOT $2::boolean OR a.semester_id IN (SELECT id FROM semesters WHERE status = 'active'))
+               AND ($3::int IS NULL OR a.semester_id = $3)
              ORDER BY a.created_at DESC`,
-            [programmeIds, activeOnly]
+            [programmeIds, activeOnly, semesterFilter]
         );
         res.json({ success: true, applications: result.rows });
     } catch (err) {

@@ -442,7 +442,7 @@ const buildAccountEmail = (type, lang, { url, programme = '', deadline = null })
     return { subject: words.subject, html };
 };
 
-// The programme and the two numbers of a semester-end reminder, as a list (no plural forms needed)
+// The programme and the two numbers of a review-deadline reminder, as a list (no plural forms needed)
 const reminderCounts = (language, { programme, pending, needsInfo }) => {
     const words = reviewerTemplates[language].counts;
     return `<p>${words.programme}: <strong>${programme}</strong></p><ul><li>${words.pending}: <strong>${pending}</strong></li><li>${words.needsInfo}: <strong>${needsInfo}</strong></li></ul>`;
@@ -463,14 +463,15 @@ const reviewerTemplates = {
             subject: 'Egy hallgató válaszolt a kiegészítési kérésére',
             body: ({ student, course }) => `<p><strong>${student}</strong> válaszolt a kiegészítési kérésére: ${course}.</p><p>A kérelem ismét az Elbírálásra vár fülön található.</p>`,
         },
-        // Before the semester ends (reviewer Group 7): 7 days before, and on the last day
-        semesterEndsSoon: {
-            subject: 'Hamarosan véget ér a félév: kérelmek várnak az elbírálására',
-            body: (data) => `<p>A félév utolsó napja: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A félév lezárásakor (az utolsó nap után, az adminisztrátor zárja le) a még el nem bírált kérelmeket a rendszer elutasítja.</p>`,
+        // Before the review deadline (round 2 Group 1): 7 days before, and 1 day before. A target:
+        // nothing is rejected when it passes
+        reviewDeadlineSoon: {
+            subject: 'Közeleg az elbírálási határidő: kérelmek várnak Önre',
+            body: (data) => `<p>Az elbírálási határidő: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>Kérjük, addig bírálja el őket. A határidő után semmit sem utasít el a rendszer, de az adminisztrátorok értesítést kapnak.</p>`,
         },
-        semesterEndsToday: {
-            subject: 'Ma van a félév utolsó napja: kérelmek várnak az elbírálására',
-            body: (data) => `<p>Ma van a félév utolsó napja (<strong>${data.date}</strong>).</p>${reminderCounts('hu', data)}<p>Ma után az adminisztrátor lezárhatja a félévet; ekkor a még el nem bírált kérelmeket a rendszer elutasítja.</p>`,
+        reviewDeadlineTomorrow: {
+            subject: 'Holnap jár le az elbírálási határidő: kérelmek várnak Önre',
+            body: (data) => `<p>Az elbírálási határidő holnap jár le: <strong>${data.date}</strong>.</p>${reminderCounts('hu', data)}<p>A határidő után semmit sem utasít el a rendszer, de az adminisztrátorok értesítést kapnak.</p>`,
         },
         counts: { programme: 'Szak', pending: 'Elbírálásra vár', needsInfo: 'A hallgató válaszára vár' },
     },
@@ -485,13 +486,14 @@ const reviewerTemplates = {
         studentReplied: {
             subject: 'A student replied to your request for information',
             body: ({ student, course }) => `<p><strong>${student}</strong> replied to your request for information: ${course}.</p><p>The application is back under Pending.</p>`,
-        },        semesterEndsSoon: {
-            subject: 'The semester ends soon: applications are waiting for your decision',
-            body: (data) => `<p>The last day of the semester is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Applications still undecided when the administrator closes the semester (after its last day) are rejected.</p>`,
         },
-        semesterEndsToday: {
-            subject: 'Today is the last day of the semester: applications are waiting for your decision',
-            body: (data) => `<p>Today (<strong>${data.date}</strong>) is the last day of the semester.</p>${reminderCounts('en', data)}<p>After today the administrator can close the semester; applications still undecided then are rejected.</p>`,
+        reviewDeadlineSoon: {
+            subject: 'The review deadline is coming: applications are waiting for your decision',
+            body: (data) => `<p>The review deadline is <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Please decide them by then. Nothing is rejected when the deadline passes, but the administrators are told.</p>`,
+        },
+        reviewDeadlineTomorrow: {
+            subject: 'The review deadline is tomorrow: applications are waiting for your decision',
+            body: (data) => `<p>The review deadline is tomorrow: <strong>${data.date}</strong>.</p>${reminderCounts('en', data)}<p>Nothing is rejected when the deadline passes, but the administrators are told.</p>`,
         },
         counts: { programme: 'Programme', pending: 'Waiting for your decision', needsInfo: "Waiting for the student's reply" },
     },
@@ -506,13 +508,14 @@ const reviewerTemplates = {
         studentReplied: {
             subject: 'Ein Studierender hat auf Ihre Informationsanfrage geantwortet',
             body: ({ student, course }) => `<p><strong>${student}</strong> hat auf Ihre Informationsanfrage geantwortet: ${course}.</p><p>Der Antrag steht wieder unter „Ausstehend“.</p>`,
-        },        semesterEndsSoon: {
-            subject: 'Das Semester endet bald: Anträge warten auf Ihre Entscheidung',
-            body: (data) => `<p>Der letzte Tag des Semesters ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Anträge, die beim Abschluss des Semesters durch den Administrator (nach dem letzten Tag) noch nicht entschieden sind, werden abgelehnt.</p>`,
         },
-        semesterEndsToday: {
-            subject: 'Heute ist der letzte Tag des Semesters: Anträge warten auf Ihre Entscheidung',
-            body: (data) => `<p>Heute (<strong>${data.date}</strong>) ist der letzte Tag des Semesters.</p>${reminderCounts('de', data)}<p>Nach heute kann der Administrator das Semester abschließen; dann noch nicht entschiedene Anträge werden abgelehnt.</p>`,
+        reviewDeadlineSoon: {
+            subject: 'Die Prüfungsfrist rückt näher: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Die Prüfungsfrist ist der <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Bitte entscheiden Sie bis dahin. Nach der Frist wird nichts abgelehnt, aber die Administration wird informiert.</p>`,
+        },
+        reviewDeadlineTomorrow: {
+            subject: 'Die Prüfungsfrist endet morgen: Anträge warten auf Ihre Entscheidung',
+            body: (data) => `<p>Die Prüfungsfrist endet morgen: <strong>${data.date}</strong>.</p>${reminderCounts('de', data)}<p>Nach der Frist wird nichts abgelehnt, aber die Administration wird informiert.</p>`,
         },
         counts: { programme: 'Studiengang', pending: 'Warten auf Ihre Entscheidung', needsInfo: 'Warten auf die Antwort der Studierenden' },
     },
@@ -520,18 +523,18 @@ const reviewerTemplates = {
 
 /**
  * An email to a reviewer.
- * @param {'newApplication'|'studentReplied'|'semesterEndsSoon'|'semesterEndsToday'} type
- * @param {{ name: string, student?: string, course?: string, programme?: string, endsOn?: string, pending?: number, needsInfo?: number }} data
- *   every text is escaped here; endsOn ('YYYY-MM-DD', the semester's last day) is written as a date in the language
+ * @param {'newApplication'|'studentReplied'|'reviewDeadlineSoon'|'reviewDeadlineTomorrow'} type
+ * @param {{ name: string, student?: string, course?: string, programme?: string, deadline?: Date|string, pending?: number, needsInfo?: number }} data
+ *   every text is escaped here; deadline (the review deadline, a moment) is written in Budapest time, in the language
  */
-const buildReviewerEmail = (type, lang, { name, student = '', course = '', programme = '', endsOn = null, pending = 0, needsInfo = 0 }) => {
+const buildReviewerEmail = (type, lang, { name, student = '', course = '', programme = '', deadline = null, pending = 0, needsInfo = 0 }) => {
     const language = normalizeLanguage(lang);
     const words = reviewerTemplates[language];
     const template = typeof words[type]?.body === 'function' ? words[type] : null;
     if (!template) return null;
     const body = template.body({
         student: escapeHtml(student), course: escapeHtml(course), programme: escapeHtml(programme),
-        date: endsOn ? escapeHtml(formatDay(endsOn, language)) : '', pending: Number(pending) || 0, needsInfo: Number(needsInfo) || 0,
+        date: deadline ? escapeHtml(formatDeadline(deadline, language)) : '', pending: Number(pending) || 0, needsInfo: Number(needsInfo) || 0,
     });
     const html = `
         <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
@@ -556,6 +559,13 @@ const adminTemplates = {
             subject: 'Egy szaknak nincs fő bírálója',
             body: ({ programme, extras }) => `<p>A(z) <strong>${programme}</strong> szaknak nincs többé fő bírálója. További bírálói: ${extras}.</p><p>A segítő további bírálók tovább dolgoznak a kérelmeken. Válasszon új fő bírálót a Bírálók menüben: tegyen meg egy további bírálót fő bírálónak, vagy hívjon meg valakit. Ha senki sem segíthet, a szak kérelmei Önre várnak.</p>`,
         },
+        // The review deadline passed with undecided applications (round 2 Group 1): nothing is rejected
+        reviewDeadlinePassed: {
+            subject: 'Lejárt az elbírálási határidő: el nem bírált kérelmek',
+            intro: ({ semester, date }) => `<p>A(z) <strong>${semester}</strong> félév elbírálási határideje lejárt (${date}). Ezek a kérelmek még nincsenek elbírálva:</p>`,
+            after: '<p>A rendszer semmit sem utasított el. Meghosszabbíthatja a határidőt (Félévek), engedheti segíteni egy további bírálót (Bírálók), vagy adminisztrátorként dönthet (Kérelmek). A félév akkor zárható le, ha minden kérelem el van bírálva.</p>',
+            counts: { pending: 'elbírálásra vár', needsInfo: 'a hallgató válaszára vár' },
+        },
     },
     en: {
         greeting: (name) => `Dear ${name},`,
@@ -564,6 +574,13 @@ const adminTemplates = {
         noMainReviewer: {
             subject: 'A programme has no main reviewer',
             body: ({ programme, extras }) => `<p><strong>${programme}</strong> no longer has a main reviewer. Its extra reviewers: ${extras}.</p><p>Extra reviewers who are allowed to assist keep working on the applications. Choose a new main reviewer under Reviewers: make an extra reviewer the main one, or invite someone. If nobody is allowed to assist, the programme's applications wait for you.</p>`,
+        },
+        // The review deadline passed with undecided applications (round 2 Group 1): nothing is rejected
+        reviewDeadlinePassed: {
+            subject: 'The review deadline has passed: applications are still undecided',
+            intro: ({ semester, date }) => `<p>The review deadline of <strong>${semester}</strong> has passed (${date}). These applications are still undecided:</p>`,
+            after: '<p>Nothing has been rejected. You can extend the review deadline (Semesters), let an extra reviewer assist (Reviewers), or decide as admin (Applications). The semester can be closed once everything is decided.</p>',
+            counts: { pending: 'waiting for a decision', needsInfo: "waiting for the student's reply" },
         },
     },
     de: {
@@ -574,24 +591,38 @@ const adminTemplates = {
             subject: 'Ein Studiengang hat keine/n Hauptgutachter/in',
             body: ({ programme, extras }) => `<p><strong>${programme}</strong> hat keine/n Hauptgutachter/in mehr. Zusätzliche Gutachter/innen: ${extras}.</p><p>Zusätzliche Gutachter/innen, die mithelfen dürfen, arbeiten weiter an den Anträgen. Wählen Sie unter Gutachter/innen eine neue Hauptperson: Machen Sie eine zusätzliche Person dazu oder laden Sie jemanden ein. Darf niemand mithelfen, warten die Anträge des Studiengangs auf Sie.</p>`,
         },
+        // The review deadline passed with undecided applications (round 2 Group 1): nothing is rejected
+        reviewDeadlinePassed: {
+            subject: 'Die Prüfungsfrist ist abgelaufen: Anträge sind noch offen',
+            intro: ({ semester, date }) => `<p>Die Prüfungsfrist von <strong>${semester}</strong> ist abgelaufen (${date}). Diese Anträge sind noch nicht entschieden:</p>`,
+            after: '<p>Es wurde nichts abgelehnt. Sie können die Frist verlängern (Semester), eine zusätzliche Person mithelfen lassen (Gutachter/innen) oder als Administration entscheiden (Anträge). Das Semester kann abgeschlossen werden, sobald alles entschieden ist.</p>',
+            counts: { pending: 'warten auf eine Entscheidung', needsInfo: 'warten auf die Antwort der Studierenden' },
+        },
     },
 };
 
 /**
  * An email to one admin, in their language. Every value is escaped here.
- * @param {'noMainReviewer'} type
- * @param {{ name: string, programme: string, extras: string }} data
+ * @param {'noMainReviewer'|'reviewDeadlinePassed'} type
+ * @param {{ name: string, programme?: string, extras?: string, semester?: string, deadline?: Date|string,
+ *   programmes?: Array<{ name: string, pending: number, needsInfo: number }> }} data
  */
-const buildAdminEmail = (type, lang, { name, programme = '', extras = '' }) => {
+const buildAdminEmail = (type, lang, { name, programme = '', extras = '', semester = '', deadline = null, programmes = [] }) => {
     const language = normalizeLanguage(lang);
     const words = adminTemplates[language];
     const template = words[type];
     if (!template) return null;
+    // reviewDeadlinePassed: the undecided counts per programme, as a list (no plural forms needed)
+    const body = type === 'reviewDeadlinePassed'
+        ? `${template.intro({ semester: escapeHtml(semester), date: deadline ? escapeHtml(formatDeadline(deadline, language)) : '' })}
+           <ul>${programmes.map((p) => `<li><strong>${escapeHtml(p.name)}</strong>: ${Number(p.pending) || 0} ${template.counts.pending}, ${Number(p.needsInfo) || 0} ${template.counts.needsInfo}</li>`).join('')}</ul>
+           ${template.after}`
+        : template.body({ programme: escapeHtml(programme), extras: escapeHtml(extras) });
     const html = `
         <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
             <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
             <p>${escapeHtml(words.greeting(name || ''))}</p>
-            ${template.body({ programme: escapeHtml(programme), extras: escapeHtml(extras) })}
+            ${body}
             <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
             <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
         </div>`;

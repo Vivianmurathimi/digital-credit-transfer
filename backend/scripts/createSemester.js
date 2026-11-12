@@ -1,11 +1,14 @@
 /**
  * Creates a semester and its application period (Group 3; admin screens come later).
  *
- *   npm run semester:create -- --name "2026/27 Autumn" --apply-from 2026-09-01 --apply-until 2026-10-15 --ends 2027-01-31
+ *   npm run semester:create -- --name "2026/27 Autumn" --apply-from 2026-09-01 --apply-until 2026-10-15 --ends 2027-01-31 [--review-until 2026-10-29]
  *
  * Days are calendar days in Budapest: students can submit from 00:00 on --apply-from until
- * 23:59:59 on --apply-until; after --ends, unreviewed applications are rejected automatically.
- * Refuses invalid days, days out of order and overlaps with another semester.
+ * 23:59 on --apply-until; the review deadline is 23:59 on --review-until (default: 14 days after
+ * --apply-until, utils/semesters.js REVIEW_DAYS_DEFAULT). --ends is the semester's last day, a
+ * label only (round 2 Group 1): nothing is rejected automatically. The semester starts in setup;
+ * the admin puts it in progress. Refuses invalid days, days out of order and an application period
+ * overlapping another semester's.
  * Courses that belong to no semester yet are added to the new one, and so are applications
  * without a semester that were submitted during it.
  */
@@ -30,9 +33,9 @@ const main = async () => {
     if (pending.length > 0) throw new Error(`pending migrations (${pending.join(', ')}). Run "npm run migrate" first.`);
     const args = readArgs(process.argv.slice(2));
     const { id, adoptedCourses, adoptedApplications } = await createSemester(pool, {
-        name: args.name, applyFrom: args['apply-from'], applyUntil: args['apply-until'], ends: args.ends,
+        name: args.name, applyFrom: args['apply-from'], applyUntil: args['apply-until'], ends: args.ends, reviewUntil: args['review-until'] || null,
     });
-    console.log(`Semester "${args.name.trim()}" created (id ${id}): applications ${args['apply-from']} to ${args['apply-until']}, ends ${args.ends} (Budapest time).`);
+    console.log(`Semester "${args.name.trim()}" created (id ${id}): applications ${args['apply-from']} to ${args['apply-until']}, review deadline ${args['review-until'] || 'applications close + 14 days'}, last day ${args.ends} (Budapest time).`);
     console.log(`Courses without a semester added to it: ${adoptedCourses}. Applications without a semester submitted during it: ${adoptedApplications}.`);
 };
 

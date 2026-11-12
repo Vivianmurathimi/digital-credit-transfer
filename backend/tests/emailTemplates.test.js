@@ -8,7 +8,7 @@ require('dotenv').config();
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildEmail, buildReviewerEmail, gradeLabel } = require('../utils/emailTemplates');
+const { buildEmail, buildReviewerEmail, buildAdminEmail, gradeLabel } = require('../utils/emailTemplates');
 
 const LANGUAGES = ['hu', 'en', 'de'];
 
@@ -57,17 +57,31 @@ test('reviewer emails: new application and student reply, in every language, esc
     assert.equal(buildReviewerEmail('nothing', 'en', { name: 'x' }), null);
 });
 
-test('reviewer semester-end reminders: both numbers, the last day as a date, in every language, escaped', () => {
+test('reviewer review-deadline reminders: both numbers, the deadline in Budapest time, in every language, escaped', () => {
+    const deadline = new Date('2027-01-31T22:59:00Z'); // 23:59 in Budapest
     for (const lang of LANGUAGES) {
-        for (const type of ['semesterEndsSoon', 'semesterEndsToday']) {
-            const email = buildReviewerEmail(type, lang, { name: 'Dr. Nagy', programme: 'Civil <Engineering>', endsOn: '2027-01-31', pending: 4, needsInfo: 1 });
+        for (const type of ['reviewDeadlineSoon', 'reviewDeadlineTomorrow']) {
+            const email = buildReviewerEmail(type, lang, { name: 'Dr. Nagy', programme: 'Civil <Engineering>', deadline, pending: 4, needsInfo: 1 });
             assert.ok(email && email.subject, `${lang} ${type}: subject`);
             assert.ok(email.html.includes('Civil &lt;Engineering&gt;'), `${lang} ${type}: programme escaped`);
             assert.ok(email.html.includes('<strong>4</strong>') && email.html.includes('<strong>1</strong>'), `${lang} ${type}: both numbers`);
-            assert.ok(/31/.test(email.html) && /2027/.test(email.html), `${lang} ${type}: the date`);
+            assert.ok(/31/.test(email.html) && /2027/.test(email.html) && /23[:.]59/.test(email.html), `${lang} ${type}: the deadline in Budapest time`);
         }
     }
-    assert.ok(buildReviewerEmail('semesterEndsSoon', 'en', { name: 'x', programme: 'P', endsOn: '2027-01-31', pending: 0, needsInfo: 0 }).html.includes('31 January 2027'));
-    assert.notEqual(buildReviewerEmail('semesterEndsSoon', 'en', { name: 'x' }).subject, buildReviewerEmail('semesterEndsToday', 'en', { name: 'x' }).subject);
+    assert.notEqual(buildReviewerEmail('reviewDeadlineSoon', 'en', { name: 'x' }).subject, buildReviewerEmail('reviewDeadlineTomorrow', 'en', { name: 'x' }).subject);
     assert.equal(buildReviewerEmail('counts', 'en', { name: 'x' }), null, 'a word list is not an email');
+});
+
+test("admins' review deadline email: every programme with both numbers, escaped, in every language", () => {
+    for (const lang of LANGUAGES) {
+        const email = buildAdminEmail('reviewDeadlinePassed', lang, {
+            name: 'Admin', semester: 'Autumn <2027>', deadline: new Date('2027-01-31T22:59:00Z'),
+            programmes: [{ name: 'CS – Computer <Science>', pending: 3, needsInfo: 2 }, { name: 'CE – Civil', pending: 0, needsInfo: 1 }],
+        });
+        assert.ok(email && email.subject, `${lang}: subject`);
+        assert.ok(email.html.includes('Autumn &lt;2027&gt;') && email.html.includes('Computer &lt;Science&gt;'), `${lang}: escaped`);
+        assert.ok(email.html.includes(' 3 ') && email.html.includes(' 2 ') && email.html.includes('CE – Civil'), `${lang}: every programme and number`);
+    }
+    assert.ok(buildAdminEmail('noMainReviewer', 'en', { name: 'A', programme: 'CS', extras: 'B' }).html.includes('CS'));
+    assert.equal(buildAdminEmail('nothing', 'en', { name: 'x' }), null);
 });

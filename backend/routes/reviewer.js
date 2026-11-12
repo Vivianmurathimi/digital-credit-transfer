@@ -13,15 +13,17 @@ const { loadApplicationDetails } = require('../utils/applicationDetails');
 // Every query is limited to the programmes that reviewer can see now (utils/reviewers.js: the main
 // reviewer, or an extra reviewer while allowed to assist).
 
-// The semester running now (from its first application day to its last day), like the student side
-// The current semester is the active one (admin round Group 4)
-const CURRENT_SEMESTER = "SELECT id, name FROM semester_bounds WHERE status = 'active' LIMIT 1";
+// The semesters in progress (round 2 Group 1: several at once; the next one's application period
+// may open while the previous one is still being reviewed), with their review deadlines
+const IN_PROGRESS_SEMESTERS = `
+    SELECT id, name, opens_at, closes_at, review_ends_at FROM semester_bounds WHERE status = 'active' ORDER BY opens_at`;
 
 /**
  * What the dashboard lists, in one query:
- * - pending and needs_info: from any semester not closed yet (the admin's close rejects the open
- *   applications of a semester, utils/semesterClose.js; until then they can still be decided)
- * - approved and rejected (also by the system): only in the current semester
+ * - pending and needs_info: from any semester not closed yet (a semester closes only when nothing
+ *   is undecided, utils/semesterClose.js)
+ * - approved and rejected (also by the system): only in the semesters in progress
+ * - $2: one semester in progress only (the semester filter), or null for all of them
  * - withdrawn: never
  * last_action_at: the submission or the student's latest reply. waiting_days: Budapest calendar days since then.
  * other_count: the student's other listed applications in the same semester (so only what this reviewer sees).
@@ -31,12 +33,13 @@ const CURRENT_SEMESTER = "SELECT id, name FROM semester_bounds WHERE status = 'a
 // The current view: open applications of any semester, decided ones of the current semester
 const CURRENT_VIEW = `a.programme_id = ANY($1::int[])
           AND (a.status IN ('pending', 'needs_info')
-               OR (a.status IN ('approved', 'rejected') AND a.semester_id = (SELECT id FROM cur)))`;
+               OR (a.status IN ('approved', 'rejected') AND a.semester_id IN (SELECT id FROM cur)))
+          AND ($2::int IS NULL OR a.semester_id = $2)`;
 // A past semester (reviewer group L3, read-only): every application of it except withdrawn ones
 const PAST_VIEW = "a.programme_id = ANY($1::int[]) AND a.semester_id = $2 AND a.status <> 'withdrawn'";
 
 const listQuery = (view) => `
-    WITH cur AS (${CURRENT_SEMESTER}),
+    WITH cur AS (SELECT id FROM semesters WHERE status = 'active'),
     visible AS (
         SELECT a.* FROM applications a
         WHERE ${view}
@@ -85,14 +88,15 @@ const readSemesterId = (value) => {
     return Number.isSafeInteger(id) && id > 0 ? id : 0;
 };
 
-// GET /api/reviewer/semesters: the past semesters the reviewer can look at (reviewer group L3)
+// GET /api/reviewer/semesters: the semesters in progress (with review deadlines) and the past
+// ones the reviewer can look at (reviewer group L3). current: the first in progress (kept for older screens)
 router.get('/reviewer/semesters', verifyToken, requireRole('reviewer'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const view = await resolveReviewerView(pool, req);
-        const current = (await pool.query(CURRENT_SEMESTER)).rows[0] || null;
+        const inProgress = (await pool.query(IN_PROGRESS_SEMESTERS)).rows;
         const { rows } = await pool.query(PAST_SEMESTERS_QUERY, [view.reviewer.programmeIds]);
-        res.json({ success: true, current, past: rows });
+        res.json({ success: true, current: inProgress[0] || null, inProgress, past: rows });
     } catch (err) {
         console.error('❌ Reviewer semesters error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
@@ -100,8 +104,9 @@ router.get('/reviewer/semesters', verifyToken, requireRole('reviewer'), async (r
 });
 
 // GET /api/reviewer/applications[?semester=<id>]: the header and the list.
-// With semester: that past semester's applications of the reviewer's programmes, read-only
-// (read_only: true). A semester that doesn't exist or hasn't ended: 404 SEMESTER_NOT_FOUND.
+// With a closed semester: its applications of the reviewer's programmes, read-only (read_only: true).
+// With a semester in progress: the current view of that semester only. Any other id (unknown, in
+// setup): 404 SEMESTER_NOT_FOUND. semesters: the semesters in progress, with their review deadlines.
 router.get('/reviewer/applications', verifyToken, requireRole('reviewer'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
@@ -113,19 +118,24 @@ router.get('/reviewer/applications', verifyToken, requireRole('reviewer'), async
         const header = { id: reviewer.id, name: reviewer.name, programmes };
         const semesterId = readSemesterId(req.query.semester);
         if (semesterId !== null) {
-            const past = (await pool.query("SELECT id, name FROM semester_bounds WHERE id = $1 AND status = 'closed'", [semesterId])).rows[0];
-            if (!past) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No past semester with this id');
-            const { rows } = await pool.query(PAST_LIST_QUERY, [reviewer.programmeIds, past.id]);
-            return res.json({ success: true, reviewer: header, semester: past, read_only: true, applications: rows });
+            const chosen = (await pool.query("SELECT id, name, status FROM semester_bounds WHERE id = $1 AND status IN ('closed', 'active')", [semesterId])).rows[0];
+            if (!chosen) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No such semester');
+            if (chosen.status === 'closed') {
+                const { rows } = await pool.query(PAST_LIST_QUERY, [reviewer.programmeIds, chosen.id]);
+                return res.json({ success: true, reviewer: header, semester: { id: chosen.id, name: chosen.name }, read_only: true, applications: rows });
+            }
         }
 
-        const semester = (await pool.query(CURRENT_SEMESTER)).rows[0] || null;
-        const { rows } = await pool.query(LIST_QUERY, [reviewer.programmeIds]);
+        const inProgress = (await pool.query(IN_PROGRESS_SEMESTERS)).rows;
+        const only = semesterId !== null ? semesterId : null;
+        const { rows } = await pool.query(LIST_QUERY, [reviewer.programmeIds, only]);
 
         res.json({
             success: true,
             reviewer: header,
-            semester,
+            // the one semester shown (filter), or the first in progress; semesters: all in progress
+            semester: (only ? inProgress.find((x) => x.id === only) : inProgress[0]) || null,
+            semesters: inProgress,
             read_only: false,
             applications: rows,
         });

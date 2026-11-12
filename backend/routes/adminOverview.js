@@ -15,9 +15,11 @@ const sendError = require('../utils/sendError');
 router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
+        // The semester in progress whose review deadline comes first (several can be in progress,
+        // round 2 Group 1); its review deadline is the date the banner names
         const semester = (await pool.query(
-            `SELECT name, to_char(ends_on, 'YYYY-MM-DD') AS ends_on
-             FROM semester_bounds WHERE status = 'active' LIMIT 1`
+            `SELECT name, review_ends_at FROM semester_bounds WHERE status = 'active'
+             ORDER BY (review_ends_at <= now()), review_ends_at LIMIT 1`
         )).rows[0] || null;
         const { rows } = await pool.query(
             `SELECT p.code, p.name_en, p.name_hu, p.name_de,
@@ -35,7 +37,7 @@ router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), a
         );
         res.json({
             success: true,
-            semester: semester && { name: semester.name, endsOn: semester.ends_on },
+            semester: semester && { name: semester.name, reviewEndsAt: semester.review_ends_at },
             programmes: rows.map((row) => ({
                 code: row.code,
                 name_en: row.name_en,
