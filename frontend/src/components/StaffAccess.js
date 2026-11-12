@@ -18,8 +18,13 @@ import Chip from './reviewer/Chip';
 
 const STATUS_CUES = { sent: 'pending', accepted: 'approved', expired: 'needs-info', cancelled: 'neutral' };
 const LANGUAGES = ['hu', 'en', 'de'];
-const LINK_ROLES = ['main', 'extra'];
-const newProgrammeRow = () => ({ code: '', role: 'main', replace: false });
+// The link roles each section gives (round 2 Group 2: committee). An invite: reviewers main or
+// extra, committee members committee. An existing reviewer can also join a committee (a link).
+const INVITE_LINK_ROLES = { reviewer: ['main', 'extra'], committee: ['committee'] };
+const ADD_LINK_ROLES = { reviewer: ['main', 'extra', 'committee'], committee: ['committee'] };
+const newProgrammeRow = (role = 'reviewer') => ({ code: '', role: INVITE_LINK_ROLES[role]?.[0] || 'main', replace: false });
+const LINK_CUES = { main: 'approved', committee: 'resubmitted' };
+const sideOf = (linkRole) => (linkRole === 'committee' ? 'committee' : 'reviewer');
 
 // The admin section card (admin round Group 8: same as components/admin/adminStyles.js)
 const card = { backgroundColor: 'var(--section-bg)', padding: '20px', borderRadius: '10px', border: '1px solid var(--section-border)', boxShadow: '0 1px 2px var(--shadow-sm)', marginBottom: '30px' };
@@ -47,7 +52,8 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
     const [statusFilter, setStatusFilter] = useState('');
     const [loadError, setLoadError] = useState('');
 
-    const [form, setForm] = useState({ email: '', role, programmes: [newProgrammeRow()], language: 'hu' });
+    const [form, setForm] = useState({ email: '', role, programmes: [newProgrammeRow(role)], language: 'hu' });
+    const withProgrammes = role === 'reviewer' || role === 'committee';
     const [linkForms, setLinkForms] = useState({}); // per reviewer id: { code, role } of "Add a programme"
     const [formError, setFormError] = useState('');
     const [sending, setSending] = useState(false);
@@ -83,14 +89,14 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
         e.preventDefault();
         setFormError('');
         setCreated(null);
-        if (form.role === 'reviewer' && form.programmes.some((row) => !row.code)) { setFormError(t('errors.INVALID_PROGRAMME')); return; }
+        if (withProgrammes && form.programmes.some((row) => !row.code)) { setFormError(t('errors.INVALID_PROGRAMME')); return; }
         setSending(true);
         try {
             const json = { email: form.email.trim(), role: form.role, language: form.language };
-            if (form.role === 'reviewer') json.programmes = form.programmes.map(({ code, role: linkRole, replace }) => ({ code, role: linkRole, replace: linkRole === 'main' && replace }));
+            if (withProgrammes) json.programmes = form.programmes.map(({ code, role: linkRole, replace }) => ({ code, role: linkRole, replace: linkRole === 'main' && replace }));
             const data = await http.post('users/invites', { json }).json();
             setCreated({ email: data.invite.email, link: data.link });
-            setForm((prev) => ({ ...prev, email: '', programmes: [newProgrammeRow()] }));
+            setForm((prev) => ({ ...prev, email: '', programmes: [newProgrammeRow(role)] }));
             loadInvites();
             onChange();
         } catch (err) {
@@ -115,7 +121,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
         onChange();
     };
 
-    const roleName = (r) => t(r === 'superadmin' ? 'staff_role_admin' : 'staff_role_reviewer');
+    const roleName = (r) => t({ superadmin: 'staff_role_admin', committee: 'staff_role_committee' }[r] || 'staff_role_reviewer');
     // "Civil Engineering (extra reviewer, standby)"
     const linkRoleText = (link, withAssist = true) => (link.role === 'extra' && withAssist
         ? `${t('staff_link_role_extra')}, ${t(link.can_assist ? 'staff_link_assisting' : 'staff_link_standby')}`
@@ -123,7 +129,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
     const linkText = (link, withAssist) => t('staff_link_summary', { programme: programmeName(link, i18n), role: linkRoleText(link, withAssist) });
     // Each programme's current main reviewer (from the staff list), for "make main reviewer"
     const mainOf = (code) => staff.find((person) => !person.deactivated_at && (person.programmes || []).some((l) => l.code === code && l.role === 'main'));
-    const linkForm = (id) => linkForms[id] || { code: '', role: 'extra' };
+    const linkForm = (id) => linkForms[id] || { code: '', role: role === 'committee' ? 'committee' : 'extra' };
     const setLinkForm = (id, changes) => setLinkForms((prev) => ({ ...prev, [id]: { ...linkForm(id), ...changes } }));
     const addLink = (person) => {
         const { code, role: linkRole } = linkForm(person.id);
@@ -139,7 +145,18 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
             : t('staff_confirm_make_main', { name: person.name, programme });
         act(text, () => http.post(`users/${person.id}/programmes`, { json: { programme_code: link.code, role: 'main', replace: Boolean(current) } }).json());
     };
-    const reviewers = staff.filter((person) => person.role === 'reviewer');
+    // Reviewers section: reviewers (with all their links). Committee section: committee members, and
+    // reviewers who sit on a committee (showing their committee links only)
+    const reviewers = role === 'committee'
+        ? staff.filter((person) => person.role === 'committee' || (person.role === 'reviewer' && (person.programmes || []).some((l) => l.role === 'committee')))
+            .map((person) => (person.role === 'reviewer'
+                ? { ...person, programmes: person.programmes.filter((l) => l.role === 'committee'), past_programmes: (person.past_programmes || []).filter((l) => l.role === 'committee'), alsoReviewer: true }
+                : person))
+        : staff.filter((person) => person.role === 'reviewer');
+    // Ending one link: on its side (DELETE ?side=committee for a committee link)
+    const linkUrl = (person, link) => `users/${person.id}/programmes/${encodeURIComponent(link.code)}${sideOf(link.role) === 'committee' ? '?side=committee' : ''}`;
+    // How many current links the person has in all (from the full staff list): the last one can't be removed
+    const allLinks = (person) => (staff.find((x) => x.id === person.id)?.programmes || []).length;
     const admins = staff.filter((person) => person.role === 'superadmin');
     const activeAdmins = admins.filter((person) => !person.deactivated_at).length;
     const statusChip = (person) => (person.deactivated_at
@@ -148,8 +165,8 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
 
     return (
         <section aria-labelledby="staff-access-title" style={card}>
-            <h2 id="staff-access-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t(role === 'superadmin' ? 'staff_admins_title' : 'staff_reviewers_title')}</h2>
-            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t(role === 'superadmin' ? 'staff_intro_admins' : 'staff_intro')}</p>
+            <h2 id="staff-access-title" style={{ marginTop: 0, color: 'var(--heading)' }}>{t({ superadmin: 'staff_admins_title', committee: 'staff_committee_title' }[role] || 'staff_reviewers_title')}</h2>
+            <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t({ superadmin: 'staff_intro_admins', committee: 'staff_intro_committee' }[role] || 'staff_intro')}</p>
             {loadError && <p role="alert" style={{ color: 'var(--error-text)' }}>{loadError}</p>}
 
             {/* Invite */}
@@ -165,7 +182,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                         {LANGUAGES.map((code) => <option key={code} value={code}>{t(`staff_language_${code}`)}</option>)}
                     </select>
                 </div>
-                {form.role === 'reviewer' && (
+                {withProgrammes && (
                     <fieldset style={{ gridColumn: '1 / -1', border: '1px solid var(--section-border)', borderRadius: '6px', padding: '10px 12px', margin: 0 }}>
                         <legend style={{ fontWeight: 'bold', padding: '0 4px' }}>{t('staff_programmes_label')}</legend>
                         {form.programmes.map((row, index) => (
@@ -178,13 +195,15 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                                             .map((p) => <option key={p.code} value={p.code}>{programmeName(p, i18n)}</option>)}
                                     </select>
                                 </div>
-                                <div>
-                                    <label htmlFor={`staff-link-role-${index}`} style={label}>{t('staff_link_role_label')}</label>
-                                    <select id={`staff-link-role-${index}`} value={row.role} onChange={(e) => setProgrammeRow(index, { role: e.target.value })} style={input}>
-                                        {LINK_ROLES.map((r) => <option key={r} value={r}>{t(`staff_link_role_${r}`)}</option>)}
-                                    </select>
-                                </div>
-                                {row.role === 'main' ? (
+                                {role === 'reviewer' && (
+                                    <div>
+                                        <label htmlFor={`staff-link-role-${index}`} style={label}>{t('staff_link_role_label')}</label>
+                                        <select id={`staff-link-role-${index}`} value={row.role} onChange={(e) => setProgrammeRow(index, { role: e.target.value })} style={input}>
+                                            {INVITE_LINK_ROLES.reviewer.map((r) => <option key={r} value={r}>{t(`staff_link_role_${r}`)}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+                                {role === 'committee' ? <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{t('staff_committee_hint')}</span> : row.role === 'main' ? (
                                     <label style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                         <input type="checkbox" checked={row.replace} onChange={(e) => setProgrammeRow(index, { replace: e.target.checked })} />
                                         {t('staff_replace_label')}
@@ -196,7 +215,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                             </div>
                         ))}
                         {form.programmes.length < programmes.length && (
-                            <button type="button" style={smallButton()} onClick={() => setField('programmes', [...form.programmes, { ...newProgrammeRow(), role: 'extra' }])}>{t('staff_add_programme_row')}</button>
+                            <button type="button" style={smallButton()} onClick={() => setField('programmes', [...form.programmes, { ...newProgrammeRow(role), role: role === 'committee' ? 'committee' : 'extra' }])}>{t('staff_add_programme_row')}</button>
                         )}
                     </fieldset>
                 )}
@@ -267,9 +286,9 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                 </table>
             </div>
 
-            {/* Reviewers */}
-            {role === 'reviewer' && (<>
-            <h3 style={{ marginTop: '24px' }}>{t('staff_reviewers_list_title')}</h3>
+            {/* Reviewers, or the committee (the same table: people with programme links) */}
+            {withProgrammes && (<>
+            <h3 style={{ marginTop: '24px' }}>{t(role === 'committee' ? 'staff_committee_list_title' : 'staff_reviewers_list_title')}</h3>
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -283,22 +302,22 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                     </thead>
                     <tbody>
                         {reviewers.length === 0 ? (
-                            <tr><td colSpan="5" style={{ ...td, textAlign: 'center', color: 'var(--text-muted)' }}>{t('staff_no_reviewers')}</td></tr>
+                            <tr><td colSpan="5" style={{ ...td, textAlign: 'center', color: 'var(--text-muted)' }}>{t(role === 'committee' ? 'staff_no_committee' : 'staff_no_reviewers')}</td></tr>
                         ) : reviewers.map((person) => (
                             <tr key={person.id}>
-                                <td style={td}>{person.name}</td>
+                                <td style={td}>{person.name}{person.alsoReviewer && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('staff_also_reviewer')}</div>}</td>
                                 <td style={td}>
                                     {(person.programmes || []).map((link) => (
-                                        <div key={link.code} style={{ marginBottom: '6px' }}>
-                                            <Chip cue={link.role === 'main' ? 'approved' : link.can_assist ? 'pending' : 'neutral'}>{linkText(link, true)}</Chip>
+                                        <div key={`${link.code}-${link.role}`} style={{ marginBottom: '6px' }}>
+                                            <Chip cue={LINK_CUES[link.role] || (link.can_assist ? 'pending' : 'neutral')}>{linkText(link, true)}</Chip>
                                             {!person.deactivated_at && (
                                                 <div style={{ marginTop: '4px' }}>
                                                     {link.role === 'extra' && (
                                                         <button type="button" style={smallButton()} onClick={() => makeMain(person, link)}>{t('staff_make_main', { programme: link.code })}</button>
                                                     )}
-                                                    {person.programmes.length > 1 && (
-                                                        <button type="button" style={smallButton(true)} onClick={() => act(t('staff_confirm_link_remove', { name: person.name, programme: programmeName(link, i18n) }), () => http.delete(`users/${person.id}/programmes/${encodeURIComponent(link.code)}`).json())}>
-                                                            {t('staff_link_remove', { programme: link.code })}
+                                                    {allLinks(person) > 1 && (
+                                                        <button type="button" style={smallButton(true)} onClick={() => act(t(link.role === 'committee' ? 'staff_confirm_committee_link_remove' : 'staff_confirm_link_remove', { name: person.name, programme: programmeName(link, i18n) }), () => http.delete(linkUrl(person, link)).json())}>
+                                                            {t(link.role === 'committee' ? 'staff_committee_link_remove' : 'staff_link_remove', { programme: link.code })}
                                                         </button>
                                                     )}
                                                 </div>
@@ -315,12 +334,15 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                                             <label htmlFor={`link-add-${person.id}`} style={{ fontSize: '13px' }}>{t('staff_link_add_label')}</label>
                                             <select id={`link-add-${person.id}`} value={linkForm(person.id).code} onChange={(e) => setLinkForm(person.id, { code: e.target.value })} style={{ padding: '4px' }}>
                                                 <option value="">{t('staff_programme_choose')}</option>
-                                                {programmes.filter((p) => !(person.programmes || []).some((l) => l.code === p.code))
+                                                {programmes.filter((p) => !(staff.find((x) => x.id === person.id)?.programmes || [])
+                                                    .some((l) => l.code === p.code && sideOf(l.role) === sideOf(linkForm(person.id).role)))
                                                     .map((p) => <option key={p.code} value={p.code}>{programmeName(p, i18n)}</option>)}
                                             </select>
-                                            <select aria-label={t('staff_link_role_label')} value={linkForm(person.id).role} onChange={(e) => setLinkForm(person.id, { role: e.target.value })} style={{ padding: '4px' }}>
-                                                {LINK_ROLES.map((r) => <option key={r} value={r}>{t(`staff_link_role_${r}`)}</option>)}
-                                            </select>
+                                            {ADD_LINK_ROLES[role].length > 1 && (
+                                                <select aria-label={t('staff_link_role_label')} value={linkForm(person.id).role} onChange={(e) => setLinkForm(person.id, { role: e.target.value })} style={{ padding: '4px' }}>
+                                                    {ADD_LINK_ROLES[role].map((r) => <option key={r} value={r}>{t(`staff_link_role_${r}`)}</option>)}
+                                                </select>
+                                            )}
                                             <button type="button" style={smallButton()} onClick={() => addLink(person)}>{t('staff_link_add_button')}</button>
                                         </div>
                                     )}
@@ -328,8 +350,9 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                                 <td style={td}>{person.email}</td>
                                 <td style={td}>{statusChip(person)}</td>
                                 <td style={td}>
-                                    {!person.deactivated_at && (
-                                        <button type="button" style={smallButton(true)} onClick={() => act(t('staff_confirm_remove_reviewer', { name: person.name }), () => http.put(`users/${person.id}/remove-reviewer`).json())}>
+                                    {/* A reviewer who also sits on a committee is removed in the Reviewers section */}
+                                    {!person.deactivated_at && !person.alsoReviewer && (
+                                        <button type="button" style={smallButton(true)} onClick={() => act(t(role === 'committee' ? 'staff_confirm_remove_committee' : 'staff_confirm_remove_reviewer', { name: person.name }), () => http.put(`users/${person.id}/remove-reviewer`).json())}>
                                             {t('staff_remove_reviewer')}
                                         </button>
                                     )}

@@ -166,7 +166,7 @@ const removeTestStudents = async () => {
 // ---------- section 4r: temporary extra reviewers (deleted at the end, also after a crash) ----------
 const STAFF_TEST_PREFIX = 'staff-link-';
 const removeTestStaff = async () => {
-    const { rows } = await pool.query("SELECT id FROM users WHERE role = 'reviewer' AND email LIKE $1", [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
+    const { rows } = await pool.query("SELECT id FROM users WHERE role IN ('reviewer', 'committee') AND email LIKE $1", [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
     await pool.query('DELETE FROM staff_invites WHERE email LIKE $1', [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
     if (rows.length === 0) return 0;
     const ids = rows.map((r) => r.id);
@@ -2904,6 +2904,81 @@ const run = async () => {
         } finally {
             await removeTempApplications();
             await removeTestStaff();
+        }
+    }
+
+    section('4u. The committee role (round 2 Group 2 Part A): invites, links on their own side, access from current links');
+    {
+        const stamp = Date.now().toString(36);
+        const programmeOfB = d.studentB.programme_id;
+        const codeOfB = (await pool.query('SELECT code FROM programmes WHERE id = $1', [programmeOfB])).rows[0].code;
+        const email = (n) => `${STAFF_TEST_PREFIX}cm-${n}-${stamp}${TEST_DOMAIN}`;
+        const invite = (json) => call('POST', 'users/invites', { token: S, json: { role: 'committee', ...json } });
+        const tokenOf = (link) => String(link || '').split('/invite/')[1] || '';
+        try {
+            // Invites
+            await expect('Committee invite with a main reviewer link', invite({ email: email('x'), programmes: [{ code: codeOfB, role: 'main' }] }), 400, 'INVALID_STAFF_ROLE');
+            await expect('Committee invite without a programme', invite({ email: email('x'), programmes: [] }), 400, 'INVALID_PROGRAMME');
+            await expect('Committee invite that replaces someone', invite({ email: email('x'), programme_code: codeOfB, replace: true }), 400, 'REPLACE_ONLY_MAIN');
+            await expect('Reviewer: invite a committee member', call('POST', 'users/invites', { token: R, json: { role: 'committee', email: email('x'), programme_code: codeOfB } }), 403, 'FORBIDDEN_ROLE');
+            const created = await invite({ email: email('member'), programme_code: codeOfB, language: 'en' });
+            report(created.status === 201 && created.body.invite.role === 'committee' && created.body.invite.programmes?.[0]?.role === 'committee',
+                'Committee invite (short form): created, the programme as a committee link', `${created.status} ${created.code || ''}`);
+            const page = await call('GET', `invites/${tokenOf(created.body?.link)}`);
+            report(page.status === 200 && page.body.invite.role === 'committee' && page.body.invite.programmes?.[0]?.role === 'committee', 'The accept page shows a committee invite');
+            await expect('Accept the committee invite', call('POST', `invites/${tokenOf(created.body?.link)}/accept`, { json: { name: 'Security Check Member', password: 'LongEnough1' } }), 200);
+            const member = (await pool.query('SELECT id, role, programme_id FROM users WHERE email = $1', [email('member')])).rows[0];
+            const links = (await pool.query('SELECT role FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [member.id])).rows.map((r) => r.role);
+            report(member.role === 'committee' && member.programme_id === null && JSON.stringify(links) === '["committee"]',
+                'The account: role committee, no users.programme_id, one committee link', JSON.stringify({ role: member.role, links }));
+            const M = tokenFor(member);
+
+            // Access from the current links
+            const me = await call('GET', 'committee/me', { token: M });
+            report(me.status === 200 && me.body.programmes.length === 1 && me.body.programmes[0].code === codeOfB && !JSON.stringify(me.body).includes('@'),
+                'The member sees their committee programme (no email addresses)', `${me.status}`);
+            await expect('Committee page without a token', call('GET', 'committee/me'), 401, 'NO_TOKEN');
+            await expect('Committee page as a student', call('GET', 'committee/me', { token: A }), 403, 'FORBIDDEN_ROLE');
+            await expect('Committee page as a reviewer without committee links', call('GET', 'committee/me', { token: R }), 403, 'FORBIDDEN_ROLE');
+            await expect('Committee page as the admin', call('GET', 'committee/me', { token: S }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on the reviewer dashboard', call('GET', 'reviewer/applications', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on the applications list', call('GET', 'applications', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on an admin route', call('GET', 'admin/summary', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member: a reviewer link', call('POST', `users/${member.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'main' } }), 400, 'COMMITTEE_ONLY');
+            const staff = (await call('GET', 'users/staff', { token: S })).body?.staff || [];
+            report(staff.some((p) => p.id === member.id && p.role === 'committee' && p.programmes.some((l) => l.role === 'committee')), 'The staff list shows the member with the committee link');
+
+            // A reviewer joins the committee of their own programme: a second link, on its own side
+            const joined = await call('POST', `users/${d.reviewer.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'committee' } });
+            report(joined.status === 201, "A reviewer joins their own programme's committee (no new account)", `${joined.status} ${joined.code || ''}`);
+            await expect('The same committee link again', call('POST', `users/${d.reviewer.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'committee' } }), 409, 'ALREADY_LINKED');
+            const both = await call('GET', 'committee/me', { token: R });
+            report(both.status === 200 && both.body.alsoReviewer === true, 'The reviewer now reaches the committee page too (the switch)', `${both.status}`);
+            await expect('…and the reviewer dashboard as before', call('GET', 'reviewer/applications', { token: R }), 200);
+            let refused = false;
+            try { await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, 'committee')", [d.reviewer.id, programmeOfB]); } catch (err) { refused = err.constraint === 'staff_programmes_one_current_link'; }
+            report(refused, 'The database allows one current committee link per person and programme');
+            await expect('End only the committee link', call('DELETE', `users/${d.reviewer.id}/programmes/${codeOfB}?side=committee`, { token: S }), 200);
+            await expect('The committee page is closed again', call('GET', 'committee/me', { token: R }), 403, 'FORBIDDEN_ROLE');
+            await expect('The reviewer link is untouched', call('GET', 'reviewer/applications', { token: R }), 200);
+            await pool.query("DELETE FROM staff_programmes WHERE user_id = $1 AND role = 'committee'", [d.reviewer.id]); // leave no history row behind
+
+            // The admin acts as the member; then the member is removed
+            const acting = await call('POST', 'acting/start', { token: S, json: { userId: member.id } });
+            report(acting.status === 200 && acting.body.role === 'committee', 'The admin acts as a committee member', `${acting.status} ${acting.code || ''}`);
+            if (acting.body?.token) {
+                await expect('Acting: the committee page', call('GET', 'committee/me', { token: acting.body.token }), 200);
+                await call('POST', 'acting/exit', { token: acting.body.token });
+            }
+            await expect('Remove the committee member', call('PUT', `users/${member.id}/remove-reviewer`, { token: S }), 200);
+            await expect('A removed member: the committee page', call('GET', 'committee/me', { token: M }), 401, 'ACCOUNT_DEACTIVATED');
+            await expect('A removed member: login', call('POST', 'login', { json: { email: email('member'), password: 'LongEnough1' } }), 403, 'ACCOUNT_DEACTIVATED');
+            const ended = (await pool.query('SELECT count(*) FILTER (WHERE ended_at IS NULL)::int AS current FROM staff_programmes WHERE user_id = $1', [member.id])).rows[0].current;
+            report(ended === 0, 'Every committee link ended (kept for history)');
+        } finally {
+            await pool.query("DELETE FROM staff_programmes WHERE user_id = $1 AND role = 'committee'", [d.reviewer.id]);
+            const removed = await removeTestStaff();
+            console.log(`(removed ${removed} temporary committee member(s) and their invites)`);
         }
     }
 

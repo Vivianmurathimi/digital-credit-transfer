@@ -37,12 +37,12 @@ const ActAs = ({ role, onActingStarted }) => {
 
     return (
         <section aria-labelledby={`act-as-${role}`} style={{ ...card, backgroundColor: 'var(--surface-2)', border: '3px dashed var(--link)' }}>
-            <h2 id={`act-as-${role}`} style={{ marginTop: 0, color: 'var(--link)' }}>{t(isStudent ? 'superadmin_act_as_student' : 'superadmin_act_as_reviewer')}</h2>
+            <h2 id={`act-as-${role}`} style={{ marginTop: 0, color: 'var(--link)' }}>{t(isStudent ? 'superadmin_act_as_student' : role === 'committee' ? 'superadmin_act_as_committee' : 'superadmin_act_as_reviewer')}</h2>
             <p style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{t('superadmin_act_as_description')}</p>
             {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
             <div style={{ position: 'relative', maxWidth: '320px' }}>
                 <input
-                    type="text" aria-label={t(isStudent ? 'superadmin_act_as_student' : 'superadmin_act_as_reviewer')}
+                    type="text" aria-label={t(isStudent ? 'superadmin_act_as_student' : role === 'committee' ? 'superadmin_act_as_committee' : 'superadmin_act_as_reviewer')}
                     placeholder={t('superadmin_search_placeholder')} value={search}
                     onChange={(e) => setSearch(e.target.value)} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 200)}
                     style={{ width: '100%', padding: '10px', border: '1px solid var(--link)', borderRadius: '5px', boxSizing: 'border-box', fontSize: '14px' }}

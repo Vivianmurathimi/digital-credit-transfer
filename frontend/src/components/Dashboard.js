@@ -7,7 +7,8 @@ import { getErrorMessage } from '../errorMessage';
 
 import ProfileHeader from './ProfileHeader';
 import StudentDashboard from './StudentDashboard';
-import ReviewerDashboard from './ReviewerDashboard';
+import CommitteeDashboard from './committee/CommitteeDashboard';
+import ReviewerWorkspace from './committee/ReviewerWorkspace';
 import AdminLayout from './admin/AdminLayout';
 
 // Where Exit returns the admin: the menu section they started acting from (this tab only)
@@ -85,7 +86,9 @@ const Dashboard = () => {
 
             {/* keyed by person, so nothing from the previous session's screen is kept */}
             {role === 'superadmin' && <AdminLayout key={`superadmin-${userId}`} onActingStarted={handleActingStarted} />}
-            {role === 'reviewer' && <ReviewerDashboard key={`reviewer-${userId}`} />}
+            {/* A reviewer who also sits on a committee gets a Reviewer / Committee switch (round 2 Group 2) */}
+            {role === 'reviewer' && <ReviewerWorkspace key={`reviewer-${userId}`} />}
+            {role === 'committee' && <CommitteeDashboard key={`committee-${userId}`} />}
             {role === 'student' && <StudentDashboard key={`student-${userId}`} userId={userId} />}
         </div>
     );
