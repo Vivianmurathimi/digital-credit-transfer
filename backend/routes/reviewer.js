@@ -7,6 +7,7 @@ const sendError = require('../utils/sendError');
 const { resolveReviewerView } = require('../utils/reviewers');
 const { semesterEndedSql } = require('../utils/semesters');
 const { loadApplicationDetails } = require('../utils/applicationDetails');
+const { sendPdf, reviewerBook, applicationPdf } = require('../utils/pdfDownloads');
 
 // The reviewer dashboard (reviewer Groups 3 and 4). Always the logged-in reviewer's view; the
 // superadmin sees it by acting as the reviewer (admin round Group 1).
@@ -170,6 +171,54 @@ router.get('/reviewer/applications/:id', verifyToken, requireRole('reviewer'), a
     } catch (err) {
         console.error('❌ Reviewer application details error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// ---------------------------------------------------------------------------------------------
+// PDFs (round 2 Group 1): the same layout as the admin's book, only what this reviewer can see
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * GET /api/reviewer/book.pdf?semester=<id>: the PDF book of the reviewer's programmes (the ones
+ * they can see now: main reviewer, or extra reviewer while allowed to assist) for a semester in
+ * progress (made now, marked "interim, not final") or a closed one. Withdrawn applications are
+ * left out, as on the screen. A semester in setup or unknown: 404. Nothing to see: 404 NO_PROGRAMME.
+ */
+router.get('/reviewer/book.pdf', verifyToken, requireRole('reviewer'), async (req, res) => {
+    try {
+        const view = await resolveReviewerView(pool, req);
+        const programmes = view.reviewer.programmes.filter((p) => p.sees);
+        if (programmes.length === 0) return sendError(res, 404, 'NO_PROGRAMME', 'You cannot see any programme right now');
+        const semesterId = readSemesterId(req.query.semester);
+        const semester = semesterId
+            ? (await pool.query("SELECT id, name FROM semesters WHERE id = $1 AND status IN ('active', 'closed')", [semesterId])).rows[0]
+            : null;
+        if (!semester) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'No such semester');
+        const { buffer, fileName } = await reviewerBook(semester, programmes);
+        return sendPdf(res, fileName, buffer);
+    } catch (err) {
+        console.error('❌ Reviewer book error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not make the PDF');
+    }
+});
+
+// GET /api/reviewer/applications/:id/pdf: one application as a PDF, only from the programmes the
+// reviewer can see now; withdrawn ones are not shown to reviewers (404, like one that doesn't exist)
+router.get('/reviewer/applications/:id/pdf', verifyToken, requireRole('reviewer'), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+    try {
+        const view = await resolveReviewerView(pool, req);
+        const allowed = (await pool.query(
+            "SELECT 1 FROM applications WHERE id = $1 AND programme_id = ANY($2::int[]) AND status <> 'withdrawn'", [id, view.reviewer.programmeIds]
+        )).rows.length > 0;
+        if (!allowed) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        const pdf = await applicationPdf(id);
+        if (!pdf) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        return sendPdf(res, pdf.fileName, pdf.buffer);
+    } catch (err) {
+        console.error('❌ Reviewer application PDF error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not make the PDF');
     }
 });
 

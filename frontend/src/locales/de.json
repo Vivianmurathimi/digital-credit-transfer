@@ -864,7 +864,8 @@
     "UNDECIDED_APPLICATIONS": "Einige Anträge sind noch in Prüfung oder warten auf Informationen: Entscheiden Sie diese zuerst.",
     "AFTER_REVIEW_DEADLINE": "Das liegt nach der Prüfungsfrist: Verschieben Sie auch die Prüfungsfrist.",
     "REVIEW_BEFORE_CLOSE": "Die Prüfungsfrist kann nicht vor dem Bewerbungsschluss liegen.",
-    "PERIODS_OVERLAP": "Das würde den Bewerbungszeitraum des nächsten Semesters überschneiden."
+    "PERIODS_OVERLAP": "Das würde den Bewerbungszeitraum des nächsten Semesters überschneiden.",
+    "NO_PROGRAMME": "Sie sehen derzeit keinen Studiengang."
   },
   "email_link_checking": "Link wird überprüft...",
   "email_link_expired_title": "Link abgelaufen",
@@ -1024,5 +1025,12 @@
   "admin_warning_review_passed_programme": "{{programme}} {{pending}} in Prüfung, {{needsInfo}} Informationen benötigt",
   "reviewer_header_semesters": "Laufend: {{list}}",
   "reviewer_header_semester_review": "{{name}} (Prüfungsfrist {{date}})",
-  "reviewer_semester_in_progress_option": "{{name}} (Prüfungsfrist {{date}})"
+  "reviewer_semester_in_progress_option": "{{name}} (Prüfungsfrist {{date}})",
+  "pdf_download_application": "Als PDF herunterladen",
+  "pdf_download_application_of": "Antrag #{{id}} als PDF herunterladen",
+  "pdf_download_book": "PDF-Buch meiner Studiengänge herunterladen",
+  "pdf_download_book_interim": "PDF-Buch meiner Studiengänge herunterladen (vorläufig, nicht endgültig)",
+  "pdf_choose_semester": "Wählen Sie oben ein Semester, um sein PDF-Buch herunterzuladen.",
+  "pdf_working": "PDF wird erstellt…",
+  "pdf_download_failed": "Das PDF konnte nicht erstellt werden."
 }

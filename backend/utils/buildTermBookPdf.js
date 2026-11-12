@@ -99,6 +99,16 @@ const drawCover = (doc, data) => {
 
     doc.font('Bold').fontSize(14).fillColor(COLORS.text).text(`Semester: ${data.label ? `${data.label} (${data.from} – ${data.to})` : `${data.from} – ${data.to}`}`, { align: 'center' });
     doc.moveDown(0.4);
+    // A reviewer's book (round 2 Group 1): their programmes only; interim while the semester is in progress
+    if (data.programmes) {
+        doc.font('Body').fontSize(12).fillColor(COLORS.text).text(`Programmes: ${data.programmes.join(', ')}`, { align: 'center' });
+        doc.moveDown(0.4);
+    }
+    if (data.interim) {
+        doc.font('Bold').fontSize(16).fillColor(COLORS.status.rejected).text('INTERIM – NOT FINAL', { align: 'center' });
+        doc.font('Body').fontSize(10).fillColor(COLORS.muted).text('Generated while the semester is in progress: applications and decisions may still change.', { align: 'center' });
+        doc.moveDown(0.4);
+    }
     doc.font('Body').fontSize(11).fillColor(COLORS.muted).text(`Generated: ${formatDateTime(data.generatedAt)}`, { align: 'center' });
     doc.moveDown(3);
 
@@ -252,7 +262,8 @@ const drawHeadersAndFooters = (doc, data, pageApps = {}) => {
     for (let i = range.start; i < range.start + range.count; i += 1) {
         doc.switchToPage(i);
         doc.font('Body').fontSize(8).fillColor(COLORS.muted);
-        writeInMargin(doc, `PTE Credit Transfer Archive · Semester ${data.label || `${data.from} – ${data.to}`}`, HEADER_Y, { align: 'right' });
+        const where = data.label || (data.from ? `${data.from} – ${data.to}` : 'no semester');
+        writeInMargin(doc, `${data.interim ? 'INTERIM – not final · ' : ''}PTE Credit Transfer Archive · Semester ${where}`, HEADER_Y, { align: 'right' });
         const app = pageApps[i];
         if (app) {
             doc.font('Bold').fontSize(7.5).fillColor(statusColor(app.status));
@@ -265,9 +276,11 @@ const drawHeadersAndFooters = (doc, data, pageApps = {}) => {
 
 /**
  * Draws the term book: cover, index, then each application followed by its evidence images.
- * Evidence is loaded one file at a time.
+ * Evidence is loaded one file at a time. data.single (round 2 Group 1, one application's PDF):
+ * no cover and no index, the same application pages; data.interim marks a semester still in
+ * progress on the cover and in every header.
  *
- * @param {object} data  result of getTermData(from, to)
+ * @param {object} data  result of getTermData(from, to), getSemesterTermData or getApplicationTermData
  * @returns {Promise<{ buffer: Buffer, pages: number, embeddedImages: number }>}
  */
 const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
@@ -276,7 +289,7 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
         margin: MARGIN,
         bufferPages: true, // needed to go back and fill in the index, headers and footers
         info: {
-            Title: `Credit Transfer Archive ${data.label || `${data.from} – ${data.to}`}`,
+            Title: data.single && data.applications[0] ? `Credit transfer application #${data.applications[0].id}` : `Credit Transfer Archive ${data.label || `${data.from} – ${data.to}`}`,
             Author: 'PTE Credit Transfer System',
             CreationDate: data.generatedAt,
         },
@@ -295,16 +308,20 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
     doc.registerFont('Bold', path.join(FONT_DIR, 'NotoSans-Bold.ttf'));
 
     const run = async () => {
-        drawCover(doc, data);
-
-        // Reserve the index pages; they are filled in once page numbers are known
-        const firstIndexPage = currentPageIndex(doc) + 1;
-        for (let i = 0; i < indexPageCount(data); i += 1) doc.addPage();
+        let firstIndexPage = null;
+        if (!data.single) {
+            drawCover(doc, data);
+            // Reserve the index pages; they are filled in once page numbers are known
+            firstIndexPage = currentPageIndex(doc) + 1;
+            for (let i = 0; i < indexPageCount(data); i += 1) doc.addPage();
+        }
 
         const startPages = {};
         const pageApps = {};
+        let firstPageFree = !!data.single; // one application: it starts on the document's first page
         for (const app of data.applications) {
-            doc.addPage();
+            if (firstPageFree) firstPageFree = false;
+            else doc.addPage();
             startPages[app.id] = currentPageIndex(doc);
 
             const evidenceResults = [];
@@ -321,7 +338,7 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
             for (let p = startPages[app.id]; p <= currentPageIndex(doc); p += 1) pageApps[p] = app;
         }
 
-        drawIndex(doc, data, firstIndexPage, startPages);
+        if (!data.single) drawIndex(doc, data, firstIndexPage, startPages);
         drawHeadersAndFooters(doc, data, pageApps);
         pages = doc.bufferedPageRange().count;
         decisionLinePages = Object.keys(pageApps).length;

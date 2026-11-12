@@ -11,6 +11,7 @@ const { normalizeLanguage, statusLabels, reasons } = require('../utils/emailTemp
 const { closePreview, closeSemester, generateSemesterBook } = require('../utils/semesterClose');
 const { loadApplicationDetails } = require('../utils/applicationDetails');
 const { budapest, sendCsv } = require('../utils/csv');
+const { sendPdf, applicationPdf } = require('../utils/pdfDownloads');
 
 // Closing a semester and the Past semesters section (admin round Group 6), superadmin only.
 
@@ -191,6 +192,19 @@ router.post('/admin/past-semesters/:id/book', ...adminOnly, requireIdParam('id')
     } catch (err) {
         console.error('❌ Generate semester book error:', err.message);
         return sendError(res, 500, 'SERVER_ERROR', 'Could not generate the PDF book');
+    }
+});
+
+// GET /api/admin/applications/:id/pdf (round 2 Group 1): any application as a PDF (also a withdrawn
+// one, as in the admin's book), the same pages as in the book; marked interim until its semester closes
+router.get('/admin/applications/:id/pdf', ...adminOnly, requireIdParam('id'), async (req, res) => {
+    try {
+        const pdf = await applicationPdf(req.ids.id);
+        if (!pdf) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        return sendPdf(res, pdf.fileName, pdf.buffer);
+    } catch (err) {
+        console.error('❌ Admin application PDF error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not make the PDF');
     }
 });
 

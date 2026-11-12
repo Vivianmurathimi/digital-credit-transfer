@@ -2816,6 +2816,97 @@ const run = async () => {
         }
     }
 
+    section('4t. PDFs for reviewers and admins (round 2 Group 1): own programmes only, checked on the server');
+    {
+        const stamp = Date.now().toString(36);
+        const pdf = async (path, token) => {
+            const res = await fetch(`${API}/${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+            const bytes = Buffer.from(await res.arrayBuffer());
+            const isPdf = bytes.subarray(0, 4).toString() === '%PDF';
+            let code = null;
+            if (!isPdf) { try { code = JSON.parse(bytes.toString('utf8')).code; } catch { code = null; } }
+            return { status: res.status, isPdf, code, type: res.headers.get('content-type') || '' };
+        };
+        const programmeOfB = d.studentB.programme_id;
+        const inProgress = (await pool.query("SELECT id FROM semesters WHERE status = 'active' ORDER BY applications_open_at LIMIT 1")).rows[0]?.id;
+        // One pending application of our own in the reviewer's programme (removed at the end of this section)
+        const ownCode = `SECPDO${stamp}`.toUpperCase().slice(0, 20);
+        const ownApp = (await pool.query(
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
+             VALUES ($1, $2, '[]', $3, $4, 'pending') RETURNING id`,
+            [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: ownCode, course_name: 'PDF check' }]), ownCode]
+        )).rows[0].id;
+        tempApplicationIds.push(ownApp);
+        const otherApp = (await pool.query("SELECT id FROM applications WHERE programme_id <> $1 ORDER BY id LIMIT 1", [programmeOfB])).rows[0]?.id;
+
+        for (const path of ['reviewer/book.pdf?semester=1', 'reviewer/applications/1/pdf', 'admin/applications/1/pdf']) {
+            const noToken = await pdf(path);
+            report(noToken.status === 401 && noToken.code === 'NO_TOKEN', `No token: GET /api/${path} -> 401`, `${noToken.status}`);
+            const student = await pdf(path, A);
+            report(student.status === 403 && student.code === 'FORBIDDEN_ROLE', `Student: GET /api/${path} -> 403`, `${student.status}`);
+        }
+        const reviewerOnAdmin = await pdf('admin/applications/1/pdf', R);
+        report(reviewerOnAdmin.status === 403, 'Reviewer: the admin\'s application PDF -> 403', `${reviewerOnAdmin.status}`);
+
+        if (inProgress) {
+            const book = await pdf(`reviewer/book.pdf?semester=${inProgress}`, R);
+            report(book.status === 200 && book.isPdf && book.type.includes('application/pdf'), 'Reviewer: the book of their programmes for the semester in progress (interim)', `${book.status}`);
+        } else skip('Reviewer: the interim book', 'no semester in progress');
+        const noSemester = await pdf('reviewer/book.pdf', R);
+        report(noSemester.status === 404 && noSemester.code === 'SEMESTER_NOT_FOUND', 'Reviewer book without a semester -> 404', `${noSemester.status}`);
+        const setup = (await pool.query("SELECT id FROM semesters WHERE status = 'setup' LIMIT 1")).rows[0]?.id;
+        if (setup) {
+            const res = await pdf(`reviewer/book.pdf?semester=${setup}`, R);
+            report(res.status === 404 && res.code === 'SEMESTER_NOT_FOUND', 'Reviewer book of a semester in setup -> 404', `${res.status}`);
+        }
+        if (ownApp) {
+            const own = await pdf(`reviewer/applications/${ownApp}/pdf`, R);
+            report(own.status === 200 && own.isPdf, 'Reviewer: one application of their programme as a PDF', `${own.status}`);
+            const admin = await pdf(`admin/applications/${ownApp}/pdf`, S);
+            report(admin.status === 200 && admin.isPdf, 'Admin: the same application as a PDF', `${admin.status}`);
+        } else skip('Single application PDFs', 'no application in student B\'s programme');
+        if (otherApp) {
+            const other = await pdf(`reviewer/applications/${otherApp}/pdf`, R);
+            report(other.status === 404 && other.code === 'APPLICATION_NOT_FOUND', "Reviewer: another programme's application PDF -> 404 (like one that doesn't exist)", `${other.status}`);
+        } else skip("Reviewer: another programme's application PDF", 'no application in another programme');
+        const unknown = await pdf('admin/applications/999999999/pdf', S);
+        report(unknown.status === 404 && unknown.code === 'APPLICATION_NOT_FOUND', 'Admin: an application that does not exist -> 404', `${unknown.status}`);
+
+        // A withdrawn application of the reviewer's programme is not shown to reviewers
+        const code = `SECPDF${stamp}`.toUpperCase().slice(0, 20);
+        const withdrawn = (await pool.query(
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
+             VALUES ($1, $2, '[]', $3, $4, 'withdrawn') RETURNING id`,
+            [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'PDF check' }]), code]
+        )).rows[0].id;
+        tempApplicationIds.push(withdrawn);
+        const w = await pdf(`reviewer/applications/${withdrawn}/pdf`, R);
+        report(w.status === 404, 'Reviewer: a withdrawn application PDF -> 404', `${w.status}`);
+        const wAdmin = await pdf(`admin/applications/${withdrawn}/pdf`, S);
+        report(wAdmin.status === 200 && wAdmin.isPdf, 'Admin: a withdrawn application PDF (as in the admin\'s book)', `${wAdmin.status}`);
+
+        // A standby extra reviewer of the programme gets nothing
+        try {
+            const standby = (await pool.query(
+                "INSERT INTO users (name, email, password, role, is_verified) VALUES ('PDF Standby', $1, 'not-a-password-hash', 'reviewer', true) RETURNING id, role",
+                [`${STAFF_TEST_PREFIX}pdf-${stamp}${TEST_DOMAIN}`]
+            )).rows[0];
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, 'extra', false)", [standby.id, programmeOfB]);
+            const T = tokenFor(standby);
+            if (inProgress) {
+                const book = await pdf(`reviewer/book.pdf?semester=${inProgress}`, T);
+                report(book.status === 404 && book.code === 'NO_PROGRAMME', 'Standby extra reviewer: no book -> 404 NO_PROGRAMME', `${book.status} ${book.code}`);
+            }
+            if (ownApp) {
+                const one = await pdf(`reviewer/applications/${ownApp}/pdf`, T);
+                report(one.status === 404, 'Standby extra reviewer: no application PDF -> 404', `${one.status}`);
+            }
+        } finally {
+            await removeTempApplications();
+            await removeTestStaff();
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

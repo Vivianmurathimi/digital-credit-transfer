@@ -34,17 +34,42 @@ const getTermData = async (from, to) => loadTermData({
     params: [from, to], from, to,
 });
 
+const SEMESTER_LABEL_SQL = `SELECT name, status, to_char(applications_open_at AT TIME ZONE '${APP_TIMEZONE}', 'YYYY-MM-DD') AS from_day,
+    to_char(end_date, 'YYYY-MM-DD') AS to_day FROM semesters WHERE id = $1`;
+
 /**
  * The term book of one semester (admin round Group 6): every application of that semester,
  * whatever its submission date. from / to: its opening day and last day (Budapest).
+ * Round 2 Group 1, a reviewer's book: programmeIds limits it to those programmes (the reviewer's
+ * visible ones) and withdrawn applications are left out, as on the reviewer's screen; a semester
+ * still in progress is marked interim (not final). The admin's book: no options, as before.
+ * @param {{ programmeIds?: number[]|null, programmes?: string[] }} options  programmes: their codes, for the cover
  */
-const getSemesterTermData = async (semesterId) => {
-    const semester = (await pool.query(
-        `SELECT name, to_char(applications_open_at AT TIME ZONE '${APP_TIMEZONE}', 'YYYY-MM-DD') AS from_day, to_char(end_date, 'YYYY-MM-DD') AS to_day
-         FROM semesters WHERE id = $1`, [semesterId]
-    )).rows[0];
+const getSemesterTermData = async (semesterId, { programmeIds = null, programmes = [] } = {}) => {
+    const semester = (await pool.query(SEMESTER_LABEL_SQL, [semesterId])).rows[0];
     if (!semester) throw new Error(`Semester ${semesterId} not found`);
-    return loadTermData({ where: 'a.semester_id = $1', params: [semesterId], from: semester.from_day, to: semester.to_day, label: semester.name });
+    const forReviewer = programmeIds !== null;
+    const data = await loadTermData({
+        where: forReviewer ? "a.semester_id = $1 AND a.programme_id = ANY($2::int[]) AND a.status <> 'withdrawn'" : 'a.semester_id = $1',
+        params: forReviewer ? [semesterId, programmeIds] : [semesterId],
+        from: semester.from_day, to: semester.to_day, label: semester.name,
+    });
+    return { ...data, programmes: forReviewer ? programmes : null, interim: forReviewer && semester.status !== 'closed' };
+};
+
+/**
+ * One application, for its own PDF (round 2 Group 1): the same pages as in the book, without the
+ * cover and the index. null when it doesn't exist. interim: its semester isn't closed yet.
+ */
+const getApplicationTermData = async (applicationId) => {
+    const found = (await pool.query('SELECT semester_id FROM applications WHERE id = $1', [applicationId])).rows[0];
+    if (!found) return null;
+    const semester = found.semester_id ? (await pool.query(SEMESTER_LABEL_SQL, [found.semester_id])).rows[0] : null;
+    const data = await loadTermData({
+        where: 'a.id = $1', params: [applicationId],
+        from: semester ? semester.from_day : '', to: semester ? semester.to_day : '', label: semester ? semester.name : null,
+    });
+    return { ...data, single: true, interim: !semester || semester.status !== 'closed' };
 };
 
 const loadTermData = async ({ where, params, from, to, label = null }) => {
@@ -123,3 +148,4 @@ const loadTermData = async ({ where, params, from, to, label = null }) => {
 
 module.exports = getTermData;
 module.exports.getSemesterTermData = getSemesterTermData;
+module.exports.getApplicationTermData = getApplicationTermData;

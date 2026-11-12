@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import http from '../../http';
-import { getErrorMessage } from '../../errorMessage';
+import { getErrorMessage, unpackBlobError } from '../../errorMessage';
+import downloadPdf from '../../downloadPdf';
 import { programmeName } from '../../programmeName';
 import FileLink from './FileLink';
 import CreditComparison from './CreditComparison';
@@ -30,11 +31,21 @@ const decisionButton = (cue) => ({
 // readOnly (reviewer group L3): a past semester's application; the server says so too (read_only).
 // url: where the details come from. The admin's Past semesters (admin round Group 6) shows the same
 // details from its own route, read-only.
-const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null }) => {
+// pdfUrl (round 2 Group 1): "Download as PDF" for this application, the same pages as in the book
+// (the reviewer's own route by default; the admin's views pass theirs).
+const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdfUrl = null }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
     const [error, setError] = useState('');
+    const [pdfState, setPdfState] = useState(''); // '' | 'working' | an error text
+    const savePdf = async () => {
+        setPdfState('working');
+        try {
+            await downloadPdf(pdfUrl || `reviewer/applications/${appId}/pdf`, `application_${appId}.pdf`);
+            setPdfState('');
+        } catch (err) { setPdfState(getErrorMessage(await unpackBlobError(err), t, 'pdf_download_failed')); }
+    };
 
     useEffect(() => {
         let current = true;
@@ -63,6 +74,13 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null }) =
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '12px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={savePdf} disabled={pdfState === 'working'}
+                    style={{ padding: '6px 10px', borderRadius: '5px', border: '1px solid var(--border-strong)', backgroundColor: 'var(--surface)', color: 'var(--link)', fontWeight: 'bold', cursor: 'pointer', font: 'inherit' }}>
+                    {pdfState === 'working' ? t('pdf_working') : t('pdf_download_application')}
+                </button>
+                {pdfState && pdfState !== 'working' && <span role="alert" style={{ color: 'var(--error-text)' }}>{pdfState}</span>}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
                 <section style={box}>
                     <h4 style={sectionTitle}>{t('reviewer_details_student')}</h4>

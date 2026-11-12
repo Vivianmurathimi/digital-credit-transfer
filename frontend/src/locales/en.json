@@ -864,7 +864,8 @@
     "UNDECIDED_APPLICATIONS": "Some applications are still pending or in needs info: decide them first.",
     "AFTER_REVIEW_DEADLINE": "This is after the review deadline: move the review deadline too.",
     "REVIEW_BEFORE_CLOSE": "The review deadline cannot be before applications close.",
-    "PERIODS_OVERLAP": "This would overlap the next semester's application period."
+    "PERIODS_OVERLAP": "This would overlap the next semester's application period.",
+    "NO_PROGRAMME": "You cannot see any programme right now."
   },
   "email_link_checking": "Checking your link...",
   "email_link_expired_title": "Link expired",
@@ -1024,5 +1025,12 @@
   "admin_warning_review_passed_programme": "{{programme}} {{pending}} pending, {{needsInfo}} needs info",
   "reviewer_header_semesters": "In progress: {{list}}",
   "reviewer_header_semester_review": "{{name}} (review deadline {{date}})",
-  "reviewer_semester_in_progress_option": "{{name}} (review deadline {{date}})"
+  "reviewer_semester_in_progress_option": "{{name}} (review deadline {{date}})",
+  "pdf_download_application": "Download as PDF",
+  "pdf_download_application_of": "Download application #{{id}} as PDF",
+  "pdf_download_book": "Download the PDF book of my programmes",
+  "pdf_download_book_interim": "Download the PDF book of my programmes (interim, not final)",
+  "pdf_choose_semester": "Choose a semester above to download its PDF book.",
+  "pdf_working": "Making the PDF…",
+  "pdf_download_failed": "The PDF could not be made."
 }

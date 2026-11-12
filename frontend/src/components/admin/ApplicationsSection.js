@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import api from '../../api';
-import { getErrorMessage } from '../../errorMessage';
+import { getErrorMessage, unpackBlobError } from '../../errorMessage';
+import downloadPdf from '../../downloadPdf';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import Chip from '../reviewer/Chip';
@@ -31,6 +32,13 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
     const [notice, setNotice] = useState('');
     const [semesters, setSemesters] = useState([]); // the semesters in progress, for the filter
     const [semesterId, setSemesterId] = useState(''); // '' = all in progress
+    const [pdfError, setPdfError] = useState('');
+    // One application as a PDF (round 2 Group 1), the same pages as in the book
+    const savePdf = async (app) => {
+        setPdfError('');
+        try { await downloadPdf(`admin/applications/${app.id}/pdf`, `application_${app.id}.pdf`); }
+        catch (err) { setPdfError(getErrorMessage(await unpackBlobError(err), t, 'pdf_download_failed')); }
+    };
 
     const fetchApplications = useCallback(async () => {
         try {
@@ -79,6 +87,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                     </p>
                 )}
                 {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
+                {pdfError && <p role="alert" style={{ color: 'var(--error-text)' }}>{pdfError}</p>}
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', border: '2px solid var(--border)' }}>
                         <thead>
@@ -110,7 +119,15 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                             <StatusChip status={app.status}>{t(`status_${app.status}`)}</StatusChip>
                                         </td>
-                                        <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>{decidedBy(app)}</td>
+                                        <td style={{ padding: '12px', verticalAlign: 'top', fontSize: '13px' }}>
+                                            {decidedBy(app)}
+                                            <div style={{ marginTop: '6px' }}>
+                                                <button type="button" onClick={() => savePdf(app)} aria-label={t('pdf_download_application_of', { id: app.id })}
+                                                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-strong)', backgroundColor: 'var(--surface)', color: 'var(--link)', cursor: 'pointer', font: 'inherit', fontSize: '12px' }}>
+                                                    {t('pdf_download_application')}
+                                                </button>
+                                            </div>
+                                        </td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                             {/* No active reviewer for this programme: the admin decides (recorded as Admin) */}
                                             {app.status === 'pending' && !app.programme_has_reviewer && (

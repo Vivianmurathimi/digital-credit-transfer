@@ -864,7 +864,8 @@
     "UNDECIDED_APPLICATIONS": "Néhány kérelem még elbírálásra vagy kiegészítésre vár: előbb bírálják el őket.",
     "AFTER_REVIEW_DEADLINE": "Ez az elbírálási határidő utáni időpont: tolja ki a határidőt is.",
     "REVIEW_BEFORE_CLOSE": "Az elbírálási határidő nem lehet a jelentkezés zárása előtt.",
-    "PERIODS_OVERLAP": "Ez átfedne a következő félév jelentkezési időszakával."
+    "PERIODS_OVERLAP": "Ez átfedne a következő félév jelentkezési időszakával.",
+    "NO_PROGRAMME": "Jelenleg egy szakot sem lát."
   },
   "email_link_checking": "A link ellenőrzése...",
   "email_link_expired_title": "A link lejárt",
@@ -1024,5 +1025,12 @@
   "admin_warning_review_passed_programme": "{{programme}} {{pending}} elbírálásra vár, {{needsInfo}} kiegészítésre vár",
   "reviewer_header_semesters": "Folyamatban: {{list}}",
   "reviewer_header_semester_review": "{{name}} (elbírálási határidő {{date}})",
-  "reviewer_semester_in_progress_option": "{{name}} (elbírálási határidő {{date}})"
+  "reviewer_semester_in_progress_option": "{{name}} (elbírálási határidő {{date}})",
+  "pdf_download_application": "Letöltés PDF-ként",
+  "pdf_download_application_of": "A(z) #{{id}} kérelem letöltése PDF-ként",
+  "pdf_download_book": "Szakjaim PDF-kötetének letöltése",
+  "pdf_download_book_interim": "Szakjaim PDF-kötetének letöltése (ideiglenes, nem végleges)",
+  "pdf_choose_semester": "Válasszon fent félévet a PDF-kötet letöltéséhez.",
+  "pdf_working": "A PDF készül…",
+  "pdf_download_failed": "A PDF-et nem sikerült elkészíteni."
 }
