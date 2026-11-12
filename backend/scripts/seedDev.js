@@ -135,11 +135,25 @@ const seed = async () => {
              VALUES ($1, $2, $3, $4, true, $5, $6, 'en')
              ON CONFLICT DO NOTHING
              RETURNING id`,
-            [account.name, account.email, passwordHash, account.role, account.neptun || null, programmeIds[account.programme] || null]
+            // users.programme_id is for students only; a reviewer is linked below (staff_programmes)
+            [account.name, account.email, passwordHash, account.role, account.neptun || null, account.role === 'student' ? programmeIds[account.programme] || null : null]
         );
-        // Already there, or it would clash with existing data (the same email or Neptun code, or the
-        // programme already has an active reviewer): existing accounts are kept as they are
+        // Already there, or it would clash with existing data (the same email or Neptun code):
+        // existing accounts are kept as they are
         if (result.rows.length === 0) continue;
+        // A new test reviewer becomes the main reviewer of their programme, only if it has none
+        // (an existing database keeps the reviewers it has)
+        if (account.role === 'reviewer') {
+            const linked = await pool.query(
+                `INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, 'main')
+                 ON CONFLICT DO NOTHING RETURNING id`,
+                [result.rows[0].id, programmeIds[account.programme]]
+            );
+            if (linked.rows.length === 0) {
+                await pool.query('DELETE FROM users WHERE id = $1', [result.rows[0].id]);
+                continue;
+            }
+        }
         created.push(account.email);
 
         // A pending application with one evidence file, only for a newly created student

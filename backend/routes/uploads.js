@@ -158,7 +158,7 @@ router.get('/:filename', verifyToken, async (req, res) => {
 
         const isOwner = ownerId === req.user.id;
         if (!isOwner && req.user.role === 'reviewer') {
-            if (!(await isFileInProgramme(pool, req.params.filename, req.user.programmeId))) {
+            if (!(await isFileInProgramme(pool, req.params.filename, req.user.programmeIds))) {
                 return sendError(res, 404, 'FILE_NOT_FOUND', 'File not found');
             }
         } else if (!isOwner && req.user.role !== 'superadmin') {

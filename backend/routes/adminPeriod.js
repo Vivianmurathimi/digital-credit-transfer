@@ -13,6 +13,7 @@ const { normalizeEmail } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
 const { isValidInviteEmail } = require('../utils/staffInvites');
 const { SEMESTER_END_WARNING_DAYS } = require('../utils/semesters');
+const { programmeHasReviewerSql } = require('../utils/reviewers');
 
 // The application period's controls (admin round Group 5), superadmin only:
 //   Close now / Reopen until on the active semester (they change its closing time; the period
@@ -225,7 +226,7 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                              FROM semesters WHERE status = 'active' LIMIT 1),
                   programmes_needing AS (
                       SELECT p.id,
-                             NOT EXISTS (SELECT 1 FROM users r WHERE r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id) AS no_reviewer,
+                             NOT ${programmeHasReviewerSql('p.id')} AS no_reviewer,
                              NOT EXISTS (SELECT 1 FROM courses c, active WHERE c.programme_id = p.id AND c.semester_id = active.id AND c.status = 'active') AS no_courses
                       FROM programmes p WHERE p.status = 'active')
              SELECT (SELECT row_to_json(active) FROM active) AS active_semester,

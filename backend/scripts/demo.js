@@ -13,7 +13,8 @@
  * demo:start first) and the demo buckets are emptied. Sends no emails.
  *
  * The demo data (every account's password: Demo1234!):
- *   - two programmes (Computer Science Engineering, Civil Engineering), one active reviewer each
+ *   - two programmes (Computer Science Engineering, Civil Engineering), each with a main reviewer and an
+ *     extra reviewer: assisting in CS (sees CS), on standby in Civil (sees nothing)
  *   - a previous semester (ended) and the current one, with the PTE courses of both programmes
  *   - 7 students and applications in every state: pending (also waiting 9 and 16 days), resubmitted (pending after the student's
  *     reply), needs info with the deadline tomorrow, approved with a grade, rejected by the reviewer,
@@ -125,8 +126,12 @@ const uploadFile = async (student, originalName, title, lines) => {
 
 const STAFF = [
     { key: 'admin', role: 'superadmin', name: 'Demo Admin', email: 'demo.admin@staff.example', language: 'en' },
-    { key: 'reviewerCS', role: 'reviewer', name: 'Dr. Katalin Szabó', email: 'demo.reviewer.cs@staff.example', programme: 'CS', language: 'en' },
-    { key: 'reviewerCIVIL', role: 'reviewer', name: 'Dr. Péter Horváth', email: 'demo.reviewer.civil@staff.example', programme: 'CIVIL', language: 'hu' },
+    // Each programme's main reviewer, and one extra reviewer each (round 2 Group 1): the CS one is
+    // allowed to assist (sees CS), the Civil one is on standby (sees nothing until the admin turns assisting on)
+    { key: 'reviewerCS', role: 'reviewer', name: 'Dr. Katalin Szabó', email: 'demo.reviewer.cs@staff.example', programme: 'CS', staffRole: 'main', language: 'en' },
+    { key: 'reviewerCIVIL', role: 'reviewer', name: 'Dr. Péter Horváth', email: 'demo.reviewer.civil@staff.example', programme: 'CIVIL', staffRole: 'main', language: 'hu' },
+    { key: 'extraCS', role: 'reviewer', name: 'Dr. Gergely Balogh', email: 'demo.extra.cs@staff.example', programme: 'CS', staffRole: 'extra', canAssist: true, language: 'en' },
+    { key: 'extraCIVIL', role: 'reviewer', name: 'Dr. Réka Fehér', email: 'demo.extra.civil@staff.example', programme: 'CIVIL', staffRole: 'extra', canAssist: false, language: 'en' },
 ];
 const STUDENTS = [
     { key: 'anna', name: 'Anna Kovács', email: 'demo.anna@students.example', programme: 'CS', neptun: 'DMCS01', language: 'en' },
@@ -176,11 +181,19 @@ const seed = async (pool) => {
     const hash = await bcrypt.hash(DEMO_PASSWORD, 10);
     const users = {};
     for (const account of [...STAFF, ...STUDENTS.map((s) => ({ ...s, role: 'student' }))]) {
+        // users.programme_id is for students only; staff are linked in staff_programmes
+        const isStudent = account.role === 'student';
         const { rows } = await pool.query(
             `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id, preferred_language)
              VALUES ($1, $2, $3, $4, true, $5, $6, $7) RETURNING id`,
-            [account.name, account.email, hash, account.role, account.neptun || null, programmes[account.programme] || null, account.language]
+            [account.name, account.email, hash, account.role, account.neptun || null, isStudent ? programmes[account.programme] : null, account.language]
         );
+        if (account.staffRole) {
+            await pool.query(
+                'INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)',
+                [rows[0].id, programmes[account.programme], account.staffRole, account.canAssist === true]
+            );
+        }
         users[account.key] = { id: rows[0].id, name: account.name, programme: account.programme };
     }
     const reviewerOf = (programme) => users[`reviewer${programme}`];
@@ -229,7 +242,9 @@ const seed = async (pool) => {
                 student.id, programmes[student.programme],
                 JSON.stringify([{ name: institution.name, country: institution.countryCode, grading_file: gradingFile }]),
                 JSON.stringify([row]), JSON.stringify([target]), normalizeCourseCode(target.course_code), `${target.course_code} (${target.course_name})`,
-                syllabusNote(reasons), reasons, spec.note || null, final.status, semesters[spec.semester], reviewerOf(student.programme).id, utc(spec.submittedAt),
+                syllabusNote(reasons), reasons, spec.note || null, final.status, semesters[spec.semester],
+                // open applications are shared (round 2 Group 1); decided ones name the programme's reviewer
+                ['pending', 'needs_info'].includes(final.status) ? null : reviewerOf(student.programme).id, utc(spec.submittedAt),
                 final.reviewerNote ?? null, final.replyNote ?? null, replyFiles.length ? replyFiles.join(',') : null,
                 final.reviewedBy ?? null, final.reviewedAt ? utc(final.reviewedAt) : null,
                 final.infoRequestedAt ?? null, final.grade ?? null, final.decidedBy ?? null, final.decidedByRole ?? null, final.decidedAt ?? null, final.rationale ?? null,
@@ -409,7 +424,9 @@ const main = async () => {
         console.log('\nApplications:');
         made.forEach(([label, student, id]) => console.log(`  ${`#${id}`.padEnd(4)} ${student.padEnd(14)} ${label}`));
         console.log(`\nLogins (password for all: ${DEMO_PASSWORD}):`);
-        [...STAFF, ...STUDENTS].forEach((a) => console.log(`  ${a.email.padEnd(36)} ${a.role || 'student'}${a.programme ? ` (${a.programme})` : ''}  ${users[a.key].name}`));
+        const what = (a) => (a.staffRole ? `${a.staffRole === 'main' ? 'main reviewer' : `extra reviewer, ${a.canAssist ? 'assisting' : 'standby'}`} (${a.programme})`
+            : `${a.role || 'student'}${a.programme ? ` (${a.programme})` : ''}`);
+        [...STAFF, ...STUDENTS].forEach((a) => console.log(`  ${a.email.padEnd(36)} ${what(a).padEnd(34)} ${users[a.key].name}`));
         console.log('\nStart the demo backend with: npm run demo:start');
         // A fake "now" changes the demo database for good (npm run demo:seed starts it over)
         const run = (day) => `DB_NAME=${DEMO_ENV.DB_NAME} npm run jobs:run -- --now=${day}T08:00:00Z --yes`;

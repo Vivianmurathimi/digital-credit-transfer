@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { verifySessionToken, isSessionTooOld, MAX_ACTING_SECONDS } = require('../config/jwt');
 const sendError = require('../utils/sendError');
+const { visibleProgrammeIds } = require('../utils/reviewers');
 
 /**
  * An acting token is accepted only while its acting_sessions row is open (Exit closes it), younger
@@ -57,7 +58,7 @@ async function verifyToken(req, res, next) {
     // 4. Re-check the user in the database, so a deleted user is refused and a
     //    role change by the admin takes effect immediately (not when the token expires)
     try {
-        const result = await pool.query('SELECT id, role, programme_id, deactivated_at FROM users WHERE id = $1', [decoded.id]);
+        const result = await pool.query('SELECT id, role, deactivated_at FROM users WHERE id = $1', [decoded.id]);
         if (result.rows.length === 0) {
             return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
         }
@@ -72,9 +73,11 @@ async function verifyToken(req, res, next) {
                 : sendError(res, 401, 'ACCOUNT_DEACTIVATED', 'This account has been deactivated');
         }
 
-        // 5. Only id, the CURRENT role and programme are passed on to the routes.
-        //    programmeId limits what a reviewer can see (utils/reviewers.js).
-        req.user = { id: user.id, role: user.role, programmeId: user.programme_id };
+        // 5. Only id, the CURRENT role and, for a reviewer, the programmes they may see NOW are
+        //    passed on to the routes (staff_programmes, read on every request: round 2 Group 1).
+        //    programmeIds limits what a reviewer can see (utils/reviewers.js).
+        req.user = { id: user.id, role: user.role };
+        if (user.role === 'reviewer') req.user.programmeIds = await visibleProgrammeIds(pool, user.id);
         req.sessionStart = decoded.sessionStart ?? decoded.iat; // used by the refresh route
 
         // 6. Who really acts. Normally the user themselves. While the superadmin acts as a student

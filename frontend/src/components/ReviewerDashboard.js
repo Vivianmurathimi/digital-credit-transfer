@@ -106,6 +106,7 @@ const ReviewerDashboard = () => {
                     {rows.map((app) => (
                         <ApplicationRow
                             key={app.id} app={app} open={openId === app.id} readOnly={readOnly}
+                            showProgramme={(data?.reviewer?.programmes || []).filter((p) => p.sees).length > 1}
                             onToggle={() => setOpenId(openId === app.id ? null : app.id)}
                             onShowStudent={() => showStudent(app)}
                             onDecide={(type) => { setNotice(''); setDecision({ app, type }); }}

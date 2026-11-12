@@ -6,7 +6,7 @@ const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
 
 // The superadmin's overview of the reviewer side (reviewer Group 7), shown as a banner on the admin
-// dashboard: per programme its active reviewer (name only), how many applications wait for a
+// dashboard: per programme its main reviewer and extra reviewers (names only), how many applications wait for a
 // decision (pending) and how many wait for the student's reply (needs_info), and the running
 // semester's last day (after it, undecided applications are rejected automatically).
 // Counts are all open applications of the programme, like the reviewer's own list.
@@ -20,13 +20,17 @@ router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), a
              FROM semester_bounds WHERE status = 'active' LIMIT 1`
         )).rows[0] || null;
         const { rows } = await pool.query(
-            `SELECT p.code, p.name_en, p.name_hu, p.name_de, r.name AS reviewer_name,
+            `SELECT p.code, p.name_en, p.name_hu, p.name_de,
+                    (SELECT u.name FROM staff_programmes sp JOIN users u ON u.id = sp.user_id AND u.deactivated_at IS NULL
+                     WHERE sp.programme_id = p.id AND sp.role = 'main' AND sp.ended_at IS NULL) AS reviewer_name,
+                    COALESCE((SELECT json_agg(json_build_object('name', u.name, 'can_assist', sp.can_assist) ORDER BY u.name)
+                              FROM staff_programmes sp JOIN users u ON u.id = sp.user_id AND u.deactivated_at IS NULL
+                              WHERE sp.programme_id = p.id AND sp.role = 'extra' AND sp.ended_at IS NULL), '[]') AS extras,
                     count(a.id) FILTER (WHERE a.status = 'pending')::int AS pending,
                     count(a.id) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
              FROM programmes p
-             LEFT JOIN users r ON r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = p.id
              LEFT JOIN applications a ON a.programme_id = p.id AND a.status IN ('pending', 'needs_info')
-             GROUP BY p.id, r.name
+             GROUP BY p.id
              ORDER BY p.code`
         );
         res.json({
@@ -37,7 +41,8 @@ router.get('/admin/reviewer-overview', verifyToken, requireRole('superadmin'), a
                 name_en: row.name_en,
                 name_hu: row.name_hu,
                 name_de: row.name_de,
-                reviewer: row.reviewer_name ? { name: row.reviewer_name } : null,
+                reviewer: row.reviewer_name ? { name: row.reviewer_name } : null, // the main reviewer
+                extras: row.extras, // extra reviewers: [{ name, can_assist }]
                 pending: row.pending,
                 needs_info: row.needs_info,
             })),

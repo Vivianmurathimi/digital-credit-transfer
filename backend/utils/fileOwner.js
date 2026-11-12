@@ -37,8 +37,8 @@ const findFilesNotOwnedBy = async (fileNames, userId) => {
 };
 
 /**
- * Whether an application of this programme refers to the file (reviewer Group 2: a reviewer may
- * open only their own programme's files). Every place an application can name a file:
+ * Whether an application of these programmes refers to the file (a reviewer may open only the files of
+ * the programmes they can see now, utils/reviewers.js). Every place an application can name a file:
  *   1. fulfilled_courses_json[*].file           the transcript of each fulfilled course
  *   2. fulfilled_courses_json[*].syllabus_file  its syllabus
  *   3. institutions[*].grading_file             each institution's grading system
@@ -47,7 +47,7 @@ const findFilesNotOwnedBy = async (fileNames, userId) => {
  * @param {{ query: Function }} db
  * @returns {Promise<boolean>}
  */
-const isFileInProgramme = async (db, fileName, programmeId) => findApplicationWithFile(db, fileName, programmeId);
+const isFileInProgramme = async (db, fileName, programmeIds) => findApplicationWithFile(db, fileName, programmeIds || []);
 
 /**
  * Whether any submitted application (any status, any semester, any programme) uses the file
@@ -56,11 +56,11 @@ const isFileInProgramme = async (db, fileName, programmeId) => findApplicationWi
  */
 const isFileInUse = (db, fileName) => findApplicationWithFile(db, fileName, null);
 
-// programmeId null: every programme
-const findApplicationWithFile = async (db, fileName, programmeId) => {
+// programmeIds null: every programme; [] none
+const findApplicationWithFile = async (db, fileName, programmeIds) => {
     const { rows } = await db.query(
         `SELECT 1 FROM applications a
-         WHERE ($2::int IS NULL OR a.programme_id = $2) AND (
+         WHERE ($2::int[] IS NULL OR a.programme_id = ANY($2::int[])) AND (
                EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]'::jsonb END) c
                        WHERE c->>'file' = $1 OR c->>'syllabus_file' = $1)
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.institutions) = 'array' THEN a.institutions ELSE '[]'::jsonb END) i
@@ -69,7 +69,7 @@ const findApplicationWithFile = async (db, fileName, programmeId) => {
             OR EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND $1 = ANY (e.files))
          )
          LIMIT 1`,
-        [fileName, programmeId]
+        [fileName, programmeIds]
     );
     return rows.length > 0;
 };

@@ -10,7 +10,7 @@ const inTransaction = require('../utils/transaction');
 const { normalizeLanguage } = require('../utils/emailTemplates');
 const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLimit');
 const { checkPassword } = require('../utils/passwordRules');
-const { OPEN_STATUSES, lockProgramme, activeReviewerOf } = require('../utils/reviewers');
+const { STAFF_ROLES, lockProgrammes, mainReviewerOf, endLink } = require('../utils/reviewers');
 const {
     INVITE_DAYS, INVITE_ROLES, INVITE_STATUSES, INVITE_STATUS_SQL, OPEN_INVITE,
     newToken, hashToken, inviteLink, isValidInviteEmail, sendInviteEmail, checkInviteAddress, createInvite,
@@ -20,42 +20,111 @@ const { sendValidationErrors } = sendError;
 // Staff access (reviewer Group 2, admin round Group 2). Reviewers and admins never register:
 // the superadmin invites them. Registration only ever creates students (routes/auth.js).
 //
-// Accepting a reviewer invite is where a programme's reviewer changes (one transaction):
-//   1. the programme's current reviewer is deactivated (only with replace; otherwise refused),
+// Reviewers are linked to programmes in staff_programmes (round 2 Group 1, utils/reviewers.js):
+// per programme one MAIN reviewer at most, and any number of EXTRA reviewers. A reviewer invite
+// names one or more programmes and the role in each.
+// Accepting it is where a programme's main reviewer changes (one transaction, programmes locked):
+//   1. a main role for a programme that has a main reviewer: refused, unless the invite swaps
+//      them (replace). Then the old main reviewer's link ends, and their open applications assigned
+//      to them go to the new person; an old reviewer left with no programme is deactivated.
+//      An extra role never replaces anyone.
 //   2. the new reviewer is created, or a deactivated reviewer with this email is reactivated,
-//   3. the programme's open (pending, needs_info) applications move to the new reviewer.
-// Until then the current reviewer keeps full access. Decided applications never move.
+//   3. the new links are made (an extra reviewer starts on standby: can_assist off).
+// Until then the current reviewers keep full access. Decided applications never move.
 // An admin invite creates (or reactivates) an admin; it has no programme.
+// An active reviewer gets another programme (or another role in one) without an invite:
+// POST /users/:id/programmes; DELETE /users/:id/programmes/:code ends one link.
 
 const MAX_NAME_LENGTH = 100; // users.name
 
+const MAX_PROGRAMMES = 50; // per invite: more than any faculty has
+
+// An invite's programmes, as [{ code, name_en, name_hu, name_de, role, replace }] (alias i = staff_invites)
+const INVITE_PROGRAMMES_SQL = `COALESCE((
+    SELECT json_agg(json_build_object('code', p.code, 'name_en', p.name_en, 'name_hu', p.name_hu, 'name_de', p.name_de,
+                                      'role', ip.role, 'replace', ip.replace_main) ORDER BY p.code)
+    FROM staff_invite_programmes ip JOIN programmes p ON p.id = ip.programme_id
+    WHERE ip.invite_id = i.id), '[]')`;
+
 // What the superadmin sees of an invite (never the token or its hash)
 const INVITE_COLUMNS = `
-    i.id, i.email, i.role, i.language, i.replace_reviewer AS replace, i.created_at, i.expires_at,
+    i.id, i.email, i.role, i.language, i.created_at, i.expires_at,
     i.accepted_at, i.cancelled_at, ${INVITE_STATUS_SQL} AS status,
-    p.code AS programme_code, p.name_en, p.name_hu, p.name_de, inviter.name AS invited_by_name`;
+    ${INVITE_PROGRAMMES_SQL} AS programmes, inviter.name AS invited_by_name`;
 const INVITE_FROM = `
     FROM staff_invites i
-    LEFT JOIN programmes p ON p.id = i.programme_id
     LEFT JOIN users inviter ON inviter.id = i.invited_by`;
 
-const inviteForAdmin = ({ programme_code: code, name_en, name_hu, name_de, ...invite }) => (
-    { ...invite, programme: code ? { code, name_en, name_hu, name_de } : null }
-);
-const readInvite = async (id) => inviteForAdmin((await pool.query(`SELECT ${INVITE_COLUMNS} ${INVITE_FROM} WHERE i.id = $1`, [id])).rows[0]);
+const readInvite = async (id) => (await pool.query(`SELECT ${INVITE_COLUMNS} ${INVITE_FROM} WHERE i.id = $1`, [id])).rows[0];
+
+/**
+ * The programmes of a reviewer invite from the request: programmes: [{ code, role, replace? }],
+ * or the short form programme_code (+ replace) for one programme as its main reviewer.
+ * @returns {{ list: Array<{ code, role, replace }> } | { error: [status, code, message, field] }}
+ */
+const readProgrammeChoices = ({ programmes, programme_code: programmeCode, replace }) => {
+    if (replace !== undefined && typeof replace !== 'boolean') return { error: [400, 'INVALID_FIELD', 'replace must be true or false', 'replace'] };
+    let list;
+    if (programmes !== undefined) {
+        if (programmeCode !== undefined || replace !== undefined) {
+            return { error: [400, 'INVALID_FIELD', 'Send either programmes or programme_code, not both', 'programmes'] };
+        }
+        if (!Array.isArray(programmes) || programmes.length > MAX_PROGRAMMES) return { error: [400, 'INVALID_PROGRAMME', 'programmes must be a list', 'programmes'] };
+        list = programmes;
+    } else {
+        list = programmeCode === undefined || programmeCode === null || programmeCode === '' ? [] : [{ code: programmeCode, role: 'main', replace }];
+    }
+    const seen = new Set();
+    for (const item of list) {
+        if (!item || typeof item.code !== 'string' || !item.code.trim()) return { error: [400, 'INVALID_PROGRAMME', 'Unknown study programme', 'programmes'] };
+        if (!STAFF_ROLES.includes(item.role)) return { error: [400, 'INVALID_STAFF_ROLE', 'role must be main or extra', 'programmes'] };
+        if (item.replace !== undefined && typeof item.replace !== 'boolean') return { error: [400, 'INVALID_FIELD', 'replace must be true or false', 'programmes'] };
+        if (item.replace === true && item.role !== 'main') return { error: [400, 'REPLACE_ONLY_MAIN', 'Only a main reviewer replaces anyone', 'programmes'] };
+        if (seen.has(item.code)) return { error: [400, 'DUPLICATE_PROGRAMME', 'A programme can be chosen once', 'programmes'] };
+        seen.add(item.code);
+    }
+    return { list: list.map((item) => ({ code: item.code, role: item.role, replace: item.replace === true })) };
+};
+
+/**
+ * A person's link to a programme ends (inside a transaction, programme locked). Someone left with
+ * no current programme is no longer a reviewer: deactivated, like a removed reviewer, and admins
+ * acting as them stop. handOverTo: their open assigned applications there go to this person (a
+ * swap); otherwise they become shared. Returns { moved, deactivated }.
+ */
+const endLinkAndRetire = async (client, { linkId, userId, programmeId, handOverTo = null }) => {
+    const moved = await endLink(client, { linkId, userId, programmeId, handOverTo });
+    const left = (await client.query('SELECT 1 FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL LIMIT 1', [userId])).rows.length;
+    if (left) return { moved, deactivated: false };
+    await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1 AND deactivated_at IS NULL', [userId]);
+    await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [userId]);
+    return { moved, deactivated: true };
+};
+
+// The programme rows behind a list of codes, or null when one is unknown
+const programmesByCode = async (db, codes) => {
+    if (codes.length === 0) return [];
+    const { rows } = await db.query('SELECT id, code, name_en, name_hu, name_de FROM programmes WHERE code = ANY($1)', [codes]);
+    return rows.length === codes.length ? codes.map((code) => rows.find((r) => r.code === code)) : null;
+};
+
+// A database refusal that means "this programme already has a main reviewer" (two changes at once)
+const isSecondMain = (err) => err.code === '23505' && err.constraint === 'staff_programmes_one_main';
 
 // ---------------------------------------------------------------------------------------------
 // Superadmin: invite, list, resend, cancel
 // ---------------------------------------------------------------------------------------------
 
 /**
- * POST /api/users/invites { email, role, programme_code?, replace?, language? }
- * role: reviewer (needs programme_code) or superadmin (no programme, no replace).
+ * POST /api/users/invites { email, role, programmes?: [{ code, role: main|extra, replace? }], language? }
+ *   (or the short form programme_code + replace?: one programme as its main reviewer)
+ * role: reviewer (needs at least one programme) or superadmin (no programme, no replace).
  * language: of the email (hu, en, de; default hu). The link is also returned, for the superadmin
  * only, while emails go to Mailtrap.
  */
 router.post('/users/invites', verifyToken, requireRole('superadmin'), async (req, res) => {
-    const { email, role, programme_code: programmeCode, replace, language } = req.body || {};
+    const body = req.body || {};
+    const { email, role, programme_code: programmeCode, programmes: programmeList, replace, language } = body;
     const lowerEmail = typeof email === 'string' ? normalizeEmail(email) : '';
     if (!isValidInviteEmail(lowerEmail)) {
         return sendError(res, 400, 'INVALID_EMAIL', 'This is not a valid email address', { field: 'email' });
@@ -63,11 +132,17 @@ router.post('/users/invites', verifyToken, requireRole('superadmin'), async (req
     if (!INVITE_ROLES.includes(role)) {
         return sendError(res, 400, 'INVALID_ROLE', 'role must be reviewer or superadmin', { field: 'role' });
     }
-    if (replace !== undefined && typeof replace !== 'boolean') {
-        return sendError(res, 400, 'INVALID_FIELD', 'replace must be true or false', { field: 'replace' });
-    }
-    if (role === 'superadmin' && ((programmeCode !== undefined && programmeCode !== null && programmeCode !== '') || replace === true)) {
+    if (role === 'superadmin' && ((programmeCode !== undefined && programmeCode !== null && programmeCode !== '') || replace === true
+        || (Array.isArray(programmeList) && programmeList.length > 0))) {
         return sendError(res, 400, 'PROGRAMME_ONLY_FOR_REVIEWERS', 'An admin invite has no programme', { field: 'programme_code' });
+    }
+    const choices = role === 'reviewer' ? readProgrammeChoices(body) : { list: [] };
+    if (choices.error) {
+        const [status, code, message, field] = choices.error;
+        return sendError(res, status, code, message, { field });
+    }
+    if (role === 'reviewer' && choices.list.length === 0) {
+        return sendError(res, 400, 'INVALID_PROGRAMME', 'Choose at least one study programme', { field: 'programme_code' });
     }
     if (language !== undefined && !['hu', 'en', 'de'].includes(language)) {
         return sendError(res, 400, 'UNSUPPORTED_LANGUAGE', 'Unsupported language', { field: 'language' });
@@ -75,26 +150,23 @@ router.post('/users/invites', verifyToken, requireRole('superadmin'), async (req
 
     try {
         const result = await inTransaction(async (client) => {
-            let programme = null;
-            if (role === 'reviewer') {
-                programme = typeof programmeCode === 'string'
-                    ? (await client.query('SELECT id, code, name_en, name_hu, name_de FROM programmes WHERE code = $1', [programmeCode])).rows[0]
-                    : null;
-                if (!programme) return { error: [400, 'INVALID_PROGRAMME', 'Unknown study programme', 'programme_code'] };
-            }
+            const found = await programmesByCode(client, choices.list.map((c) => c.code));
+            if (!found) return { error: [400, 'INVALID_PROGRAMME', 'Unknown study programme', 'programme_code'] };
+            const programmes = choices.list.map((c, i) => ({ ...found[i], role: c.role, replace: c.replace }));
 
             const address = await checkInviteAddress(client, lowerEmail, role);
             if (address.error) return { error: [...address.error, 'email'] };
 
-            // A second reviewer for a programme only as a swap (replace: true)
-            if (programme && !replace && await activeReviewerOf(client, programme.id)) {
-                return { error: [409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a reviewer (choose "replace" to swap them when the invite is accepted)', 'programme_code'] };
+            // A main reviewer for a programme that has one only as a swap (replace: true).
+            // An extra reviewer never replaces anyone.
+            for (const programme of programmes) {
+                if (programme.role === 'main' && !programme.replace && await mainReviewerOf(client, programme.id)) {
+                    return { error: [409, 'PROGRAMME_HAS_REVIEWER', `${programme.code} already has a main reviewer (choose "replace" to swap them when the invite is accepted)`, 'programme_code'] };
+                }
             }
 
-            const created = await createInvite(client, {
-                email: lowerEmail, role, programmeId: programme ? programme.id : null, replace, language, invitedBy: req.actor.id,
-            });
-            return { ...created, programme };
+            const created = await createInvite(client, { email: lowerEmail, role, programmes, language, invitedBy: req.actor.id });
+            return { ...created, programmes };
         });
         if (result.error) {
             const [status, code, message, field] = result.error;
@@ -102,7 +174,7 @@ router.post('/users/invites', verifyToken, requireRole('superadmin'), async (req
         }
 
         res.status(201).json({ success: true, invite: await readInvite(result.id), link: inviteLink(result.token) });
-        sendInviteEmail({ email: lowerEmail, language, role, programme: result.programme, token: result.token });
+        sendInviteEmail({ email: lowerEmail, language, role, programmes: result.programmes, token: result.token });
     } catch (err) {
         // Two invites for the same address at the same moment: the database lets only one stay open
         if (err.code === '23505' && err.constraint === 'staff_invites_one_open_per_email') {
@@ -126,7 +198,7 @@ router.get('/users/invites', verifyToken, requireRole('superadmin'), async (req,
              ORDER BY i.created_at DESC, i.id DESC`,
             [status ?? null]
         );
-        res.json({ success: true, invites: rows.map(inviteForAdmin) });
+        res.json({ success: true, invites: rows });
     } catch (err) {
         console.error('❌ List invites error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not list the invites');
@@ -149,7 +221,7 @@ router.post('/users/invites/:id/resend', verifyToken, requireRole('superadmin'),
         const invite = await readInvite(id);
         res.json({ success: true, invite, link: inviteLink(token) });
         const { email, role, language } = rows[0];
-        sendInviteEmail({ email, language, role, programme: invite.programme, token });
+        sendInviteEmail({ email, language, role, programmes: invite.programmes, token });
     } catch (err) {
         console.error('❌ Resend invite error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not resend the invite');
@@ -173,19 +245,31 @@ router.delete('/users/invites/:id', verifyToken, requireRole('superadmin'), requ
 // Superadmin: the staff list, removing a reviewer, deactivating an admin
 // ---------------------------------------------------------------------------------------------
 
-// GET /api/users/staff: every reviewer (with programme) and admin, active or deactivated.
-// is_self marks the logged-in admin (who can't deactivate themselves).
+// A person's programme links as JSON (alias u = users): current ones, or (ended = true) the ones
+// that ended, newest first, one per programme
+const linksSql = (ended) => `COALESCE((
+    SELECT json_agg(json_build_object('code', x.code, 'name_en', x.name_en, 'name_hu', x.name_hu, 'name_de', x.name_de,
+                                      'role', x.role, 'can_assist', x.can_assist) ORDER BY x.code)
+    FROM (SELECT DISTINCT ON (sp.programme_id) p.code, p.name_en, p.name_hu, p.name_de, sp.role, sp.can_assist
+          FROM staff_programmes sp JOIN programmes p ON p.id = sp.programme_id
+          WHERE sp.user_id = u.id AND sp.ended_at IS ${ended ? 'NOT NULL' : 'NULL'}
+          ORDER BY sp.programme_id, sp.ended_at DESC NULLS FIRST, sp.id DESC) x), '[]')`;
+
+// GET /api/users/staff: every reviewer and admin, active or deactivated. A reviewer's programmes:
+// programmes (current links: role main or extra, and can_assist), and for a deactivated reviewer
+// past_programmes (the links that ended). is_self marks the logged-in admin (who can't deactivate themselves).
 router.get('/users/staff', verifyToken, requireRole('superadmin'), async (req, res) => {
     try {
         const { rows } = await pool.query(
             `SELECT u.id, u.name, u.email, u.role, u.deactivated_at, u.id = $1 AS is_self,
-                    p.code AS programme_code, p.name_en, p.name_hu, p.name_de
-             FROM users u LEFT JOIN programmes p ON p.id = u.programme_id AND u.role = 'reviewer'
+                    ${linksSql(false)} AS programmes,
+                    CASE WHEN u.deactivated_at IS NOT NULL THEN ${linksSql(true)} ELSE '[]' END AS past_programmes
+             FROM users u
              WHERE u.role IN ('reviewer', 'superadmin')
-             ORDER BY u.role DESC, p.code NULLS FIRST, (u.deactivated_at IS NOT NULL), u.name`,
+             ORDER BY u.role DESC, (u.deactivated_at IS NOT NULL), u.name`,
             [req.actor.id]
         );
-        res.json({ success: true, staff: rows.map(inviteForAdmin) });
+        res.json({ success: true, staff: rows });
     } catch (err) {
         console.error('❌ Staff list error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not list the staff');
@@ -194,29 +278,28 @@ router.get('/users/staff', verifyToken, requireRole('superadmin'), async (req, r
 
 /**
  * PUT /api/users/:id/remove-reviewer: ends a reviewer's access. The account stays (role
- * reviewer, same programme), so their name stays on their decisions; deactivated_at is set and
- * verifyToken refuses them from the next request on. Their open applications have no reviewer
- * until a new one accepts an invite. Removing an already removed reviewer changes nothing.
- * A reviewer can't reach this route (superadmin only), so nobody removes themselves.
+ * reviewer), so their name stays on their decisions; deactivated_at is set and verifyToken
+ * refuses them from the next request on. Every programme link ends (kept for history), and their
+ * open applications assigned to them become shared again. Removing an already removed reviewer
+ * changes nothing. A reviewer can't reach this route (superadmin only), so nobody removes themselves.
  */
 router.put('/users/:id/remove-reviewer', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
     const { id } = req.ids;
     try {
         const result = await inTransaction(async (client) => {
-            const user = (await client.query('SELECT id, role, programme_id, deactivated_at FROM users WHERE id = $1', [id])).rows[0];
+            const user = (await client.query('SELECT id, role, deactivated_at FROM users WHERE id = $1', [id])).rows[0];
             if (!user) return { error: [404, 'USER_NOT_FOUND', 'User not found'] };
             if (user.role !== 'reviewer') return { error: [400, 'NOT_A_REVIEWER', 'This user is not a reviewer'] };
             if (user.deactivated_at) return { alreadyRemoved: true, unassigned: 0 };
 
-            await lockProgramme(client, user.programme_id);
+            const links = (await client.query('SELECT id, programme_id FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
+            await lockProgrammes(client, links.map((l) => l.programme_id));
             await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1 AND deactivated_at IS NULL', [id]);
-            const { rowCount } = await client.query(
-                'UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = $1 AND status = ANY($2)',
-                [id, OPEN_STATUSES]
-            );
+            let unassigned = 0;
+            for (const link of links) unassigned += await endLink(client, { linkId: link.id, userId: id, programmeId: link.programme_id });
             // Admins acting as this reviewer: their sessions end too
             await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [id]);
-            return { alreadyRemoved: false, unassigned: rowCount };
+            return { alreadyRemoved: false, unassigned };
         });
         if (result.error) {
             const [status, code, message] = result.error;
@@ -268,6 +351,110 @@ router.put('/users/:id/deactivate-admin', verifyToken, requireRole('superadmin')
 });
 
 // ---------------------------------------------------------------------------------------------
+// Superadmin: an active reviewer's programmes (no invite needed: the account exists)
+// ---------------------------------------------------------------------------------------------
+
+// An active reviewer, or an error
+const activeReviewer = async (client, id) => {
+    const user = (await client.query('SELECT id, role, deactivated_at FROM users WHERE id = $1 FOR UPDATE', [id])).rows[0];
+    if (!user) return { error: [404, 'USER_NOT_FOUND', 'User not found'] };
+    if (user.role !== 'reviewer') return { error: [400, 'NOT_A_REVIEWER', 'This user is not a reviewer'] };
+    if (user.deactivated_at) return { error: [409, 'REVIEWER_DEACTIVATED', 'This reviewer is deactivated: invite them again'] };
+    return { user };
+};
+
+/**
+ * POST /api/users/:id/programmes { programme_code, role: main|extra, replace? }: links an active
+ * reviewer to a programme, or gives them another role in one (the old link ends, a new one
+ * starts; their assigned applications there stay theirs). Main for a programme that has a main
+ * reviewer: refused (PROGRAMME_HAS_REVIEWER) unless replace, which swaps that person out now (as
+ * accepting an invite does). An extra reviewer starts on standby (can_assist off); becoming the
+ * main reviewer turns assisting off, since a main reviewer sees everything anyway.
+ */
+router.post('/users/:id/programmes', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
+    const { programme_code: code, role, replace } = req.body || {};
+    const choices = readProgrammeChoices({ programmes: [{ code, role, replace }] });
+    if (choices.error) {
+        const [status, errorCode, message, field] = choices.error;
+        return sendError(res, status, errorCode, message, { field: field === 'programmes' ? 'programme_code' : field });
+    }
+    const [choice] = choices.list;
+    try {
+        const result = await inTransaction(async (client) => {
+            const [programme] = (await programmesByCode(client, [choice.code])) || [];
+            if (!programme) return { error: [400, 'INVALID_PROGRAMME', 'Unknown study programme', 'programme_code'] };
+            await lockProgrammes(client, [programme.id]);
+            const found = await activeReviewer(client, id);
+            if (found.error) return found;
+
+            const current = (await client.query(
+                'SELECT id, role FROM staff_programmes WHERE user_id = $1 AND programme_id = $2 AND ended_at IS NULL', [id, programme.id]
+            )).rows[0];
+            if (current && current.role === choice.role) return { error: [409, 'ALREADY_LINKED', 'This reviewer already has this role in this programme', 'programme_code'] };
+
+            let swapped = null;
+            let moved = 0;
+            if (choice.role === 'main') {
+                const main = await mainReviewerOf(client, programme.id, { lock: true });
+                if (main && main.id !== id) {
+                    if (!choice.replace) return { error: [409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a main reviewer (choose "replace" to swap them)', 'programme_code'] };
+                    moved = (await endLinkAndRetire(client, { linkId: main.link_id, userId: main.id, programmeId: programme.id, handOverTo: id })).moved;
+                    swapped = main.id;
+                }
+            }
+            // A role change: the old link ends, the person keeps their assigned applications there
+            if (current) await endLink(client, { linkId: current.id, userId: id, programmeId: programme.id, handOverTo: id });
+            await client.query(
+                'INSERT INTO staff_programmes (user_id, programme_id, role, created_by) VALUES ($1, $2, $3, $4)',
+                [id, programme.id, choice.role, req.actor.id]
+            );
+            return { changed: Boolean(current), swapped, moved };
+        });
+        if (result.error) {
+            const [status, code2, message, field] = result.error;
+            return sendError(res, status, code2, message, { field });
+        }
+        res.status(result.changed ? 200 : 201).json({ success: true, ...result });
+    } catch (err) {
+        if (isSecondMain(err)) return sendError(res, 409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a main reviewer');
+        console.error('❌ Add programme error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Could not change the reviewer\'s programmes');
+    }
+});
+
+/**
+ * DELETE /api/users/:id/programmes/:code: ends an active reviewer's link to one programme. Their
+ * open applications assigned to them there become shared again. Their last programme can't be
+ * removed this way (LAST_PROGRAMME): remove the reviewer instead.
+ */
+router.delete('/users/:id/programmes/:code', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    const { id } = req.ids;
+    try {
+        const result = await inTransaction(async (client) => {
+            const [programme] = (await programmesByCode(client, [String(req.params.code)])) || [];
+            if (!programme) return { error: [404, 'LINK_NOT_FOUND', 'This reviewer is not linked to this programme'] };
+            await lockProgrammes(client, [programme.id]);
+            const found = await activeReviewer(client, id);
+            if (found.error) return found;
+            const links = (await client.query('SELECT id, programme_id FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [id])).rows;
+            const link = links.find((l) => l.programme_id === programme.id);
+            if (!link) return { error: [404, 'LINK_NOT_FOUND', 'This reviewer is not linked to this programme'] };
+            if (links.length === 1) return { error: [409, 'LAST_PROGRAMME', 'This is the reviewer\'s only programme: remove the reviewer instead'] };
+            return { unassigned: await endLink(client, { linkId: link.id, userId: id, programmeId: programme.id }) };
+        });
+        if (result.error) {
+            const [status, code, message] = result.error;
+            return sendError(res, status, code, message);
+        }
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('❌ Remove programme error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Could not change the reviewer\'s programmes');
+    }
+});
+
+// ---------------------------------------------------------------------------------------------
 // Public: the accept page (frontend /invite/:token)
 // ---------------------------------------------------------------------------------------------
 
@@ -275,12 +462,19 @@ router.put('/users/:id/deactivate-admin', verifyToken, requireRole('superadmin')
 // links all get the same answer.
 const findInvite = async (db, token, { lock = false } = {}) => {
     const invite = (await db.query(
-        `SELECT i.id, i.email, i.role, i.programme_id, i.replace_reviewer, i.language, i.accepted_at, i.cancelled_at, i.expires_at <= now() AS expired,
-                p.code AS programme_code, p.name_en, p.name_hu, p.name_de
-         FROM staff_invites i LEFT JOIN programmes p ON p.id = i.programme_id
+        `SELECT i.id, i.email, i.role, i.language, i.invited_by, i.accepted_at, i.cancelled_at, i.expires_at <= now() AS expired
+         FROM staff_invites i
          WHERE i.token_hash = $1${lock ? ' FOR UPDATE OF i' : ''}`,
         [hashToken(token)]
     )).rows[0];
+    if (invite) {
+        invite.programmes = (await db.query(
+            `SELECT ip.programme_id, ip.role, ip.replace_main, p.code, p.name_en, p.name_hu, p.name_de
+             FROM staff_invite_programmes ip JOIN programmes p ON p.id = ip.programme_id
+             WHERE ip.invite_id = $1 ORDER BY ip.programme_id`,
+            [invite.id]
+        )).rows;
+    }
     if (!invite || invite.accepted_at || invite.cancelled_at) return { error: [410, 'INVITE_INVALID', 'This invitation link is not valid'] };
     if (invite.expired) return { error: [410, 'INVITE_EXPIRED', 'This invitation has expired. Please ask the administrator for a new one.'] };
     return { invite };
@@ -294,7 +488,7 @@ const accountFor = async (db, email, { lock = false } = {}) => (await db.query(
 // Only a deactivated account of the invite's role can be reactivated by it
 const canReactivate = (account, invite) => !!account.deactivated_at && account.role === invite.role;
 
-// GET /api/invites/:token: what the accept page shows (email, role, programme, and the existing
+// GET /api/invites/:token: what the accept page shows (email, role, programmes with the role in each, and the existing
 // name when it reactivates a deactivated account: that name can't be changed)
 router.get('/invites/:token', async (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -309,9 +503,7 @@ router.get('/invites/:token', async (req, res) => {
             invite: {
                 email: invite.email,
                 role: invite.role,
-                programme: invite.programme_code
-                    ? { code: invite.programme_code, name_en: invite.name_en, name_hu: invite.name_hu, name_de: invite.name_de }
-                    : null,
+                programmes: invite.programmes.map(({ code, name_en, name_hu, name_de, role }) => ({ code, name_en, name_hu, name_de, role })),
                 existingName: account ? account.name : null,
             },
         });
@@ -322,7 +514,7 @@ router.get('/invites/:token', async (req, res) => {
 });
 
 // POST /api/invites/:token/accept { name, password }: creates (or reactivates) the account,
-// verified, with the invite's role (and programme). name is ignored when reactivating.
+// verified, with the invite's role (and programme links). name is ignored when reactivating.
 router.post('/invites/:token/accept', async (req, res) => {
     // Same per-IP limit as registration: this creates accounts too
     try {
@@ -346,71 +538,76 @@ router.post('/invites/:token/accept', async (req, res) => {
             if (error) return { error };
             const isReviewer = invite.role === 'reviewer';
 
-            // Nobody else changes this programme's reviewer while this runs (utils/reviewers.js)
-            if (isReviewer) await lockProgramme(client, invite.programme_id);
+            // Nobody else changes these programmes' reviewers while this runs (id order: utils/reviewers.js)
+            if (isReviewer) await lockProgrammes(client, invite.programmes.map((p) => p.programme_id));
             const account = await accountFor(client, invite.email, { lock: true });
             if (account && !canReactivate(account, invite)) return { error: [409, 'EMAIL_TAKEN', 'This email already belongs to an active account'] };
             if (!account && (!cleanName || cleanName.length > MAX_NAME_LENGTH)) {
                 return { error: [400, 'MISSING_FIELDS', 'Please enter your name', 'name'] };
             }
 
-            // 1. Reviewers: the programme's current reviewer steps down first (one active reviewer per programme)
-            let replaced = null;
+            // 1. Main roles: a programme with a main reviewer is refused, unless the invite swaps them
+            const swaps = [];
             if (isReviewer) {
-                const current = await activeReviewerOf(client, invite.programme_id, { lock: true });
-                if (current) {
-                    if (!invite.replace_reviewer) {
+                for (const programme of invite.programmes.filter((p) => p.role === 'main')) {
+                    const current = await mainReviewerOf(client, programme.programme_id, { lock: true });
+                    if (!current || (account && current.id === account.id)) continue;
+                    if (!programme.replace_main) {
                         return { error: [409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a reviewer. Please ask the administrator.'] };
                     }
-                    await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1', [current.id]);
-                    await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [current.id]);
-                    replaced = current.id;
+                    swaps.push({ programmeId: programme.programme_id, current });
                 }
             }
 
             // 2. The account: a new verified one, or the deactivated one back again (same id and
-            //    name, new password; a reviewer gets the programme of the new invite)
+            //    name, new password). Staff never have users.programme_id (students only).
             let userId;
             if (account) {
                 await client.query(
-                    `UPDATE users SET password = $2, programme_id = CASE WHEN $3::int IS NULL THEN programme_id ELSE $3::int END,
-                        deactivated_at = NULL, is_verified = true,
+                    `UPDATE users SET password = $2, deactivated_at = NULL, is_verified = true,
                         verification_token = NULL, reset_password_token = NULL, reset_password_expires = NULL
                      WHERE id = $1`,
-                    [account.id, hashedPassword, invite.programme_id]
+                    [account.id, hashedPassword]
                 );
                 userId = account.id;
             } else {
                 const { rows } = await client.query(
-                    `INSERT INTO users (name, email, password, role, is_verified, programme_id, preferred_language)
-                     VALUES ($1, $2, $3, $4, true, $5, $6) RETURNING id`,
-                    [cleanName, invite.email, hashedPassword, invite.role, invite.programme_id, normalizeLanguage(invite.language)]
+                    `INSERT INTO users (name, email, password, role, is_verified, preferred_language)
+                     VALUES ($1, $2, $3, $4, true, $5) RETURNING id`,
+                    [cleanName, invite.email, hashedPassword, invite.role, normalizeLanguage(invite.language)]
                 );
                 userId = rows[0].id;
             }
 
-            // 3. Reviewers: the programme's open applications move to the new reviewer. Only the
-            //    assignment changes: reply deadlines and everything about the student's reply stay.
+            // 3. Swaps: the old main reviewer's link ends and their open applications assigned to
+            //    them move to the new person (reply deadlines and the student's replies stay).
+            //    Someone left with no programme is deactivated. Then the new links.
             let moved = 0;
-            if (isReviewer) {
-                moved = (await client.query(
-                    'UPDATE applications SET assigned_reviewer_id = $1 WHERE programme_id = $2 AND status = ANY($3)',
-                    [userId, invite.programme_id, OPEN_STATUSES]
-                )).rowCount;
+            const replaced = [];
+            for (const swap of swaps) {
+                const result = await endLinkAndRetire(client, { linkId: swap.current.link_id, userId: swap.current.id, programmeId: swap.programmeId, handOverTo: userId });
+                moved += result.moved;
+                replaced.push(swap.current.id);
+            }
+            for (const programme of isReviewer ? invite.programmes : []) {
+                await client.query(
+                    'INSERT INTO staff_programmes (user_id, programme_id, role, created_by) VALUES ($1, $2, $3, $4)',
+                    [userId, programme.programme_id, programme.role, invite.invited_by]
+                );
             }
 
             await client.query('UPDATE staff_invites SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1', [invite.id, userId]);
-            return { reactivated: !!account, replaced, moved, role: invite.role };
+            return { reactivated: !!account, replaced, moved, role: invite.role, links: invite.programmes.length };
         });
         if (result.error) {
             const [status, code, message, field] = result.error;
             return sendError(res, status, code, message, { field });
         }
         res.json({ success: true, reactivated: result.reactivated, role: result.role });
-        console.log(`👤 ${result.role} invite accepted${result.role === 'reviewer' ? `: ${result.moved} open application(s) assigned` : ''}${result.replaced ? `, reviewer #${result.replaced} deactivated` : ''}`);
+        console.log(`👤 ${result.role} invite accepted${result.role === 'reviewer' ? `: ${result.links} programme(s), ${result.moved} open application(s) handed over` : ''}${result.replaced.length ? `, main reviewer(s) #${result.replaced.join(', #')} swapped out` : ''}`);
     } catch (err) {
-        // Two acceptances racing for one programme: the database keeps one active reviewer
-        if (err.code === '23505' && err.constraint === 'users_one_active_reviewer_per_programme') {
+        // Two acceptances racing for one programme: the database keeps one main reviewer
+        if (isSecondMain(err)) {
             return sendError(res, 409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a reviewer. Please ask the administrator.');
         }
         if (err.code === '23505' && err.constraint === 'users_email_key') {

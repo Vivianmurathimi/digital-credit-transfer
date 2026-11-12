@@ -58,7 +58,8 @@ before(async () => {
     student = (await pool.query(
         `SELECT s.id, s.programme_id, r.id AS reviewer_id
          FROM users s
-         JOIN users r ON r.role = 'reviewer' AND r.deactivated_at IS NULL AND r.programme_id = s.programme_id
+         JOIN staff_programmes sp ON sp.programme_id = s.programme_id AND sp.role = 'main' AND sp.ended_at IS NULL
+         JOIN users r ON r.id = sp.user_id AND r.deactivated_at IS NULL
          WHERE s.role = 'student' ORDER BY s.id LIMIT 1`
     )).rows[0];
     assert.ok(student, 'needs a student whose programme has an active reviewer (npm run seed:dev)');

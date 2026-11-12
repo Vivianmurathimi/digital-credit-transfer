@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const sendEmail = require('./sendEmail');
-const { buildAccountEmail, normalizeLanguage } = require('./emailTemplates');
+const { buildAccountEmail, normalizeLanguage, staffRoleLabels } = require('./emailTemplates');
 const { FRONTEND_URL } = require('../config/urls');
 
 // Invites for reviewers and admins (reviewer Group 2, admin round Group 2), shared by the invite
@@ -30,15 +30,20 @@ const isValidInviteEmail = (email) => !!email && email.length <= MAX_EMAIL_LENGT
 
 const programmeNameIn = (programme, language) => (programme ? programme[`name_${language}`] || programme.name_en : '');
 
+// "Computer Science Engineering (main reviewer), Civil Engineering (extra reviewer)" in the language
+const programmeListIn = (programmes, language) => programmes
+    .map((p) => `${programmeNameIn(p, language)} (${staffRoleLabels[language][p.role] || p.role})`).join(', ');
+
 /**
  * Sends the invite email in the invite's language. Never throws: call it without await, after the reply.
- * @param {{ email: string, language: string, role: 'reviewer'|'superadmin', programme?: object|null, token: string }} invite
+ * @param {{ email: string, language: string, role: 'reviewer'|'superadmin', programmes?: object[], token: string }} invite
+ *   programmes: a reviewer invite's programmes, each { name_en, name_hu, name_de, role: 'main'|'extra' }
  */
-const sendInviteEmail = async ({ email, language, role, programme = null, token }) => {
+const sendInviteEmail = async ({ email, language, role, programmes = [], token }) => {
     try {
         const lang = normalizeLanguage(language);
         const type = role === 'superadmin' ? 'adminInvite' : 'reviewerInvite';
-        const { subject, html } = buildAccountEmail(type, lang, { url: inviteLink(token), programme: programmeNameIn(programme, lang) });
+        const { subject, html } = buildAccountEmail(type, lang, { url: inviteLink(token), programme: programmeListIn(programmes, lang) });
         await sendEmail({ email, subject, html });
     } catch (err) {
         console.error(`❌ Invite email to ${email} failed:`, err.message);
@@ -66,19 +71,26 @@ const checkInviteAddress = async (db, email, role) => {
 /**
  * Saves a new invite (inside the caller's transaction). An open invite for the same address is
  * cancelled first: its link stops working.
+ * @param {{ programmes?: Array<{ id: number, role: 'main'|'extra', replace?: boolean }> }} invite  a reviewer invite's programmes
  * @returns {Promise<{ id: number, token: string }>}
  */
-const createInvite = async (client, { email, role, programmeId = null, replace = false, language, invitedBy = null }) => {
+const createInvite = async (client, { email, role, programmes = [], language, invitedBy = null }) => {
     const token = newToken();
     await client.query(
         'UPDATE staff_invites SET cancelled_at = now() WHERE email = $1 AND accepted_at IS NULL AND cancelled_at IS NULL',
         [email]
     );
     const { rows } = await client.query(
-        `INSERT INTO staff_invites (email, role, programme_id, replace_reviewer, language, token_hash, invited_by, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(days => $8)) RETURNING id`,
-        [email, role, programmeId, replace === true, normalizeLanguage(language), hashToken(token), invitedBy, INVITE_DAYS]
+        `INSERT INTO staff_invites (email, role, language, token_hash, invited_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(days => $6)) RETURNING id`,
+        [email, role, normalizeLanguage(language), hashToken(token), invitedBy, INVITE_DAYS]
     );
+    for (const programme of programmes) {
+        await client.query(
+            'INSERT INTO staff_invite_programmes (invite_id, programme_id, role, replace_main) VALUES ($1, $2, $3, $4)',
+            [rows[0].id, programme.id, programme.role, programme.role === 'main' && programme.replace === true]
+        );
+    }
     return { id: rows[0].id, token };
 };
 
