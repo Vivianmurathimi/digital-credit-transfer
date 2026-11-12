@@ -8,7 +8,8 @@ export const TABS = ['pending', 'needs_info', 'completed'];
 // The tab an application belongs to (null: not listed, e.g. withdrawn)
 export const tabOf = (app) => {
     if (app.status === 'pending' || app.status === 'needs_info') return app.status;
-    if (app.status === 'approved' || app.status === 'rejected') return 'completed';
+    // Decided by the reviewer and waiting for the committee (round 2 Group 2) belongs with the decided ones
+    if (app.status === 'approved' || app.status === 'rejected' || app.status === 'awaiting_committee') return 'completed';
     return null;
 };
 

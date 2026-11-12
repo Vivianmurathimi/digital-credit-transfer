@@ -66,6 +66,7 @@ const AdminLayout = ({ onActingStarted }) => {
         analytics: <Analytics />,
         // The staff list and the sharing panel reload each other (staffVersion) after a change
         reviewers: <><StaffAccess role="reviewer" version={staffVersion} onChange={staffChanged} /><ReviewerSharing version={staffVersion} onChange={staffChanged} /><ActAs role="reviewer" onActingStarted={startActing} /></>,
+        committee: <><StaffAccess role="committee" version={staffVersion} onChange={staffChanged} /><ActAs role="committee" onActingStarted={startActing} /></>,
         students: <><StudentProgrammes /><ActAs role="student" onActingStarted={startActing} /></>,
         admins: <StaffAccess role="superadmin" onChange={refresh} />,
         domains: <AllowedDomains onChange={refresh} />,

@@ -220,13 +220,15 @@ const missingSyllabi = (rows) => rows.flatMap((row, r) => (row.syllabus_file ? [
 }]));
 
 // Every status an application can have. "withdrawn" is set only by the student (Group 8).
-const ALL_STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+// awaiting_committee (round 2 Group 2): a reviewer or admin decided, the committee confirms
+const ALL_STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 
 // --- One active application per PTE course (Group 6) ---
 // While an application has one of these statuses, the student can't apply for the same PTE course
 // again. Every other status (rejected, and a future "withdrawn") allows a new application.
 // The database enforces the same rule (migration 005, applications_one_active_per_course).
-const BLOCKING_STATUSES = ['pending', 'needs_info', 'approved'];
+// The same statuses as the database rule (migration 023): awaiting the committee blocks a new one too
+const BLOCKING_STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved'];
 
 // Course codes are compared ignoring case and spaces ("cs 202" = "CS202"), like the database index
 const normalizeCourseCode = (code) => String(code || '').replace(/\s/g, '').toUpperCase();

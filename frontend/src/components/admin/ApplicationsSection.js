@@ -6,6 +6,7 @@ import { getErrorMessage, unpackBlobError } from '../../errorMessage';
 import downloadPdf from '../../downloadPdf';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
+import CommitteeDecisionModal from '../committee/CommitteeDecisionModal';
 import Chip from '../reviewer/Chip';
 import StatusChip from '../StatusChip';
 import { card } from './adminStyles';
@@ -29,6 +30,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const [applications, setApplications] = useState([]);
     const [decision, setDecision] = useState(null); // { app, type } while the decision panel is open
+    const [committeeStep, setCommitteeStep] = useState(null); // { app, action }: the admin takes the committee step (round 2 Group 2)
     const [notice, setNotice] = useState('');
     const [semesters, setSemesters] = useState([]); // the semesters in progress, for the filter
     const [semesterId, setSemesterId] = useState(''); // '' = all in progress
@@ -140,6 +142,19 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                                     ))}
                                                 </div>
                                             )}
+                                            {/* Awaiting the committee: the admin can take the committee step directly, recorded as "Admin, as committee" */}
+                                            {app.status === 'awaiting_committee' && (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', marginBottom: '8px' }}>
+                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'keep' }); }}
+                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-approve)', color: 'var(--cue-btn-approve-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
+                                                        {t('committee_keep_button')}
+                                                    </button>
+                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'change' }); }}
+                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
+                                                        {t('committee_change_button')}
+                                                    </button>
+                                                </div>
+                                            )}
                                             {/* Reset and force approve break the decision rules (approvals need a grade, decided
                                                 applications are final): disabled until they are rebuilt as admin overrides. The
                                                 tooltip sits on a wrapper, because disabled buttons don't show one in every browser. */}
@@ -158,6 +173,18 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                 </div>
             </section>
 
+            {committeeStep && (
+                <CommitteeDecisionModal
+                    app={committeeStep.app} action={committeeStep.action} url={`admin/applications/${committeeStep.app.id}/committee`}
+                    onClose={() => setCommitteeStep(null)}
+                    onDone={(saved) => {
+                        setCommitteeStep(null);
+                        setNotice(saved ? t('committee_decision_saved') : '');
+                        fetchApplications();
+                        onChange();
+                    }}
+                />
+            )}
             {decision && (
                 <DecisionModal
                     app={decision.app} type={decision.type}

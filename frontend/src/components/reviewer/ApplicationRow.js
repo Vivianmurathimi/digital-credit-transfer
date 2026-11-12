@@ -68,9 +68,11 @@ const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, me
                             : app.assigned_reviewer_id === me ? t('reviewer_assigned_you') : t('reviewer_assigned_to', { name: app.assigned_name || '—' })}
                     </div>
                 )}
-                {(app.status === 'approved' || app.status === 'rejected') && (
+                {['approved', 'rejected', 'awaiting_committee'].includes(app.status) && (
                     <div style={{ marginTop: '4px', fontSize: '13px' }}>
-                        {app.status === 'approved' && <>{t('reviewer_grade_line', { grade: gradeText(app.final_grade, t, language) })}{' · '}</>}
+                        {/* Awaiting the committee (round 2 Group 2): the reviewer's own decision and grade */}
+                        {app.status === 'awaiting_committee' && <>{t('reviewer_your_decision', { decision: t(`status_${app.reviewer_decision}`) })}{' · '}</>}
+                        {(app.reviewer_decision || app.status) === 'approved' && <>{t('reviewer_grade_line', { grade: gradeText(app.reviewer_grade ?? app.final_grade, t, language) })}{' · '}</>}
                         {t('reviewer_decided_line', { date: app.decided_at ? formatDate(app.decided_at, language) : '—', who: decidedBy })}
                     </div>
                 )}

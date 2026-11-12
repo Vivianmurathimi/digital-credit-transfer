@@ -41,10 +41,24 @@ const addEvent = (db, { applicationId, kind, actorRole, actorId = null, status, 
 // given with an approval or rejection (never a reviewer's name).
 // semester_name / current_semester (Group 3): the application's semester, and whether that is the
 // semester running now; My Status lists the others under "Previous semesters".
+//
+// The committee (round 2 Group 2), enforced HERE, not only on the screen. While an application
+// awaits the committee the student gets "awaiting_committee" and nothing of the reviewer's
+// decision: no outcome, grade, reason or note (reviewer_note holds the decision note too), and
+// their "decided" step is left out of the history. After the committee: the FINAL status and grade,
+// "decided by: committee" and its date; the reason is, on Keep, the reviewer's reason plus the
+// committee's note, on Change only the committee's note (decision_rationale / committee_note).
+// Decisions from before the committee existed, and System decisions, are shown as before.
+const COMMITTEE_FLOW = "a.committee_state IN ('awaiting', 'kept', 'changed')";
+// The history steps a student may see (alias e; a = the application)
+const STUDENT_VISIBLE_EVENT = `NOT (e.kind = 'decided' AND ${COMMITTEE_FLOW})`;
 const STUDENT_APPLICATION_QUERY = `
     SELECT a.id, a.status, a.target_courses, a.target_course_code, a.pte_course_names, a.fulfilled_courses_json,
-           a.reviewer_note, a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
-           a.final_grade, CASE WHEN a.status IN ('approved', 'rejected') THEN a.decision_rationale END AS decision_rationale,
+           CASE WHEN ${COMMITTEE_FLOW} THEN NULL ELSE a.reviewer_note END AS reviewer_note,
+           a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
+           CASE WHEN a.status = 'approved' THEN a.final_grade END AS final_grade,
+           CASE WHEN a.status IN ('approved', 'rejected') AND a.committee_state IS DISTINCT FROM 'changed' THEN a.decision_rationale END AS decision_rationale,
+           CASE WHEN a.committee_state IN ('kept', 'changed') THEN a.committee_note END AS committee_note,
            r.resubmit_count, r.last_resubmitted_at,
            d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
            sb.name AS semester_name, COALESCE(sb.status = 'active', false) AS current_semester,
@@ -57,9 +71,11 @@ const STUDENT_APPLICATION_QUERY = `
         FROM application_events e WHERE e.application_id = a.id AND e.kind = 'replied'
     ) r ON true
     LEFT JOIN LATERAL (
-        SELECT e.actor_role, e.created_at, e.reason_code
+        SELECT CASE WHEN e.kind IN ('committee_kept', 'committee_changed') THEN 'committee' ELSE e.actor_role END AS actor_role,
+               e.created_at, e.reason_code
         FROM application_events e
-        WHERE e.application_id = a.id AND e.kind IN ('info_requested', 'decided', 'withdrawn', 'auto_rejected')
+        WHERE e.application_id = a.id AND e.kind IN ('info_requested', 'decided', 'withdrawn', 'auto_rejected', 'committee_kept', 'committee_changed')
+          AND ${STUDENT_VISIBLE_EVENT}
         ORDER BY e.created_at DESC, e.id DESC LIMIT 1
     ) d ON true`;
 
@@ -88,10 +104,14 @@ const getStudentApplication = async (db, studentId, applicationId, programmeIds 
     const extra = (await db.query(
         'SELECT institutions, syllabus_reasons FROM applications WHERE id = $1', [id]
     )).rows[0];
-    // The conversation in order. actor_id stays on the server.
+    // The conversation in order. actor_id stays on the server. The reviewer's "decided" step of an
+    // application in the committee flow is never sent; the committee's step shows as "committee".
     const events = (await db.query(
-        `SELECT kind, actor_role, status, note, reason_code, files, backfilled, created_at
-         FROM application_events WHERE application_id = $1 ORDER BY created_at, id`, [id]
+        `SELECT e.kind, CASE WHEN e.kind IN ('committee_kept', 'committee_changed') THEN 'committee' ELSE e.actor_role END AS actor_role,
+                e.status, e.note, e.reason_code, e.files, e.backfilled, e.created_at
+         FROM application_events e JOIN applications a ON a.id = e.application_id
+         WHERE e.application_id = $1 AND ${STUDENT_VISIBLE_EVENT}
+         ORDER BY e.created_at, e.id`, [id]
     )).rows;
 
     // The names the student gave their files, read from the files themselves

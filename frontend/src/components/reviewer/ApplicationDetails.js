@@ -33,7 +33,8 @@ const decisionButton = (cue) => ({
 // details from its own route, read-only.
 // pdfUrl (round 2 Group 1): "Download as PDF" for this application, the same pages as in the book
 // (the reviewer's own route by default; the admin's views pass theirs).
-const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdfUrl = null }) => {
+// readOnlyNote: the note shown when read-only (the committee shows its own, round 2 Group 2)
+const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdfUrl = null, readOnlyNote = 'reviewer_read_only_details' }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -159,15 +160,21 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                 </div>
             </section>
 
-            {(details.status === 'approved' || details.status === 'rejected') && (
+            {['approved', 'rejected', 'awaiting_committee'].includes(details.status) && (
                 <section style={box}>
                     <h4 style={sectionTitle}>{t('reviewer_decision_heading')}</h4>
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
                         {(() => {
-                            const cue = statusCue(details.status, details.decision.decided_by_role);
+                            // The reviewer's (or admin's) own decision, kept for good (round 2 Group 2); before the
+                            // committee existed, and for System, the status itself
+                            const decided = details.decision.reviewer_decision || details.status;
+                            const cue = statusCue(decided, details.decision.decided_by_role);
                             return <Chip cue={cue.cue} icon={STATUS_ICONS[cue.cue]} size="large">{t(cue.labelKey)}</Chip>;
                         })()}
-                        {details.status === 'approved' && <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.final_grade, t, language) })}</span>}
+                        {(details.decision.reviewer_decision || details.status) === 'approved' && (
+                            <span>{t('reviewer_grade_line', { grade: gradeText(details.decision.reviewer_grade ?? details.decision.final_grade, t, language) })}</span>
+                        )}
+                        {details.status === 'awaiting_committee' && <Chip cue="awaiting">{t('status_awaiting_committee')}</Chip>}
                     </div>
                     <div style={muted}>
                         {t('reviewer_decided_line', {
@@ -204,7 +211,7 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                 past-semester rule on the server) */}
             {(readOnly || details.read_only) && (
                 <p role="note" style={{ margin: 0, color: 'var(--cue-system-text)', fontSize: '14px' }}>
-                    <span aria-hidden="true">🔒 </span>{t('reviewer_read_only_details')}
+                    <span aria-hidden="true">🔒 </span>{t(readOnlyNote)}
                 </p>
             )}
             {details.status === 'pending' && !(readOnly || details.read_only) && (

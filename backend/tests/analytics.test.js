@@ -37,9 +37,9 @@ const add = async ({ status, programme, course, decidedAfter = null, by = null }
     students.push(student.id);
     const { rows } = await pool.query(
         `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-             created_at, final_grade, decided_by_role, decided_at)
+             created_at, final_grade, decided_by_role, decided_at, committee_state)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC',
-                 CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9) RETURNING id`,
+                 CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
         [student.id, programme.id, JSON.stringify([{ course_code: course, course_name: `Course ${course}`, credits: 3 }]), course, status, semesterId,
             T0, decided ? by : null, decided ? at(decidedAfter) : null]
     );
@@ -84,7 +84,7 @@ after(async () => {
 
 test('applications by status, overall and per programme', async () => {
     const { status } = await semesterAnalytics(pool, semesterId);
-    assert.deepEqual(status.overall, { pending: 1, needs_info: 1, approved: 3, rejected: 2, withdrawn: 1, total: 8 });
+    assert.deepEqual(status.overall, { pending: 1, needs_info: 1, awaiting_committee: 0, approved: 3, rejected: 2, withdrawn: 1, total: 8 });
     const [p1, p2] = status.byProgramme;
     assert.equal(p1.programme.code, programmes[0].code);
     assert.deepEqual([p1.pending, p1.needs_info, p1.approved, p1.rejected, p1.withdrawn, p1.total], [1, 1, 2, 2, 1, 7]);

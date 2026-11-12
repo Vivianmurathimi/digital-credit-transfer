@@ -33,7 +33,7 @@ const ratio = (a, b) => {
 
 // [text token, background token, where]
 const PAIRS = [
-    ...['pending', 'needs-info', 'approved', 'rejected', 'withdrawn', 'system', 'resubmitted', 'neutral']
+    ...['pending', 'needs-info', 'approved', 'rejected', 'withdrawn', 'awaiting', 'system', 'resubmitted', 'neutral']
         .map((cue) => [`--cue-${cue}-text`, `--cue-${cue}-bg`, `${cue} chip`]),
     // Admin screens (admin round Group 8)
     ['--text', '--section-bg', 'text on an admin section'],
@@ -64,7 +64,7 @@ const PAIRS = [
 ];
 
 // [shape colour, background, where]: at least 3:1
-const SHAPES = ['pending', 'needs-info', 'approved', 'rejected', 'withdrawn', 'neutral'].map((c) => [`--chart-${c}`, '--bg', `chart bar ${c}`]);
+const SHAPES = ['pending', 'needs-info', 'approved', 'rejected', 'withdrawn', 'awaiting', 'neutral'].map((c) => [`--chart-${c}`, '--bg', `chart bar ${c}`]);
 const GRAPHICS = 3;
 
 let failed = 0;

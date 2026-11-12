@@ -166,7 +166,7 @@ const removeTestStudents = async () => {
 // ---------- section 4r: temporary extra reviewers (deleted at the end, also after a crash) ----------
 const STAFF_TEST_PREFIX = 'staff-link-';
 const removeTestStaff = async () => {
-    const { rows } = await pool.query("SELECT id FROM users WHERE role = 'reviewer' AND email LIKE $1", [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
+    const { rows } = await pool.query("SELECT id FROM users WHERE role IN ('reviewer', 'committee') AND email LIKE $1", [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
     await pool.query('DELETE FROM staff_invites WHERE email LIKE $1', [`${STAFF_TEST_PREFIX}%${TEST_DOMAIN}`]);
     if (rows.length === 0) return 0;
     const ids = rows.map((r) => r.id);
@@ -882,7 +882,9 @@ const run = async () => {
             'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
             'semester_name', 'current_semester', 'course_no_longer_offered',
             // reviewer Group 6: the final grade and the reason given with a decision (never who decided)
-            'final_grade', 'decision_rationale'];
+            'final_grade', 'decision_rationale',
+            // round 2 Group 2: the committee's note (only after the committee's step)
+            'committee_note'];
         const listB = await call('GET', 'applications/mine', { token: B });
         const extraFields = [...new Set((listB.body?.applications || []).flatMap((app) => Object.keys(app)))].filter((k) => !STUDENT_FIELDS.includes(k));
         report(listB.status === 200 && extraFields.length === 0, 'My applications list has no internal fields (reviewed_by, student_id, ...)', extraFields.join(', ') || 'none extra');
@@ -917,8 +919,8 @@ const run = async () => {
         // Two temporary applications of student A, one rejected and one withdrawn (neither blocks
         // anything), deleted again at the end together with their history
         const closedApp = async (status) => (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note)
-             VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check') RETURNING id`,
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note, committee_state)
+             VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check', CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
             [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: 'SECCHECK', course_name: 'Security check', credits: 1 }]), 'SECCHECK', status]
         )).rows[0].id;
         const rejectedOfA = await closedApp('rejected');
@@ -1010,9 +1012,9 @@ const run = async () => {
         )).rows.filter((c) => !appliedCodes.has(c.course_code.replace(/\s/g, '').toUpperCase()));
         const pastApp = async (status, code) => {
             const id = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade)
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade, committee_state)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check',
-                         CASE WHEN $5::varchar = 'approved' THEN 4 END) RETURNING id`,
+                         CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]),
                     code.replace(/\s/g, '').toUpperCase(), status, pastId]
             )).rows[0].id;
@@ -1062,9 +1064,9 @@ const run = async () => {
             const code = `SECR${Date.now().toString(36)}${seq}`.toUpperCase();
             const { rows } = await pool.query(
                 `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
-                     student_note, supplemental_files, info_requested_at, info_deadline)
+                     student_note, supplemental_files, info_requested_at, info_deadline, committee_state)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, 'Temporary application of the security check', $8,
-                         CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                         CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($7::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
                  RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify(fields.institutions || []), JSON.stringify(fields.courses || []),
                     JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code, status, fields.supplemental || null]
@@ -1277,10 +1279,10 @@ const run = async () => {
                 const decided = status === 'approved' || status === 'rejected';
                 const { rows } = await pool.query(
                     `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         decided_by_role, decided_at, info_requested_at, info_deadline, final_grade)
+                         decided_by_role, decided_at, info_requested_at, info_deadline, final_grade, committee_state)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 'admin' END, CASE WHEN $7 THEN now() END,
                              CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END,
-                             CASE WHEN $5::varchar = 'approved' THEN 4 END)
+                             CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
                      RETURNING id`,
                     [d.studentA.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Security check list', credits: 1 }]), code, status, semesterId, decided]
                 );
@@ -1399,10 +1401,10 @@ const run = async () => {
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
                 `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
-                     final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                     final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'approved' THEN 4 END,
                          CASE WHEN $6 THEN 'reviewer' END, CASE WHEN $6 THEN now() END,
-                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
                  RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Decision check', credits: 3 }]), code, status, decided]
             );
@@ -1410,7 +1412,7 @@ const run = async () => {
         };
         const decide = (id, json, token = R) => call('PUT', `applications/${id}/status`, { token, json });
         const statusOf = async (id) => (await pool.query(
-            'SELECT status, final_grade, decided_by, decided_by_role, decided_at, decision_rationale, info_deadline, info_deadline = info_reply_deadline(info_requested_at) AS deadline_rule FROM applications WHERE id = $1', [id]
+            'SELECT status, final_grade, reviewer_decision, reviewer_grade, decided_by, decided_by_role, decided_at, decision_rationale, info_deadline, info_deadline = info_reply_deadline(info_requested_at) AS deadline_rule FROM applications WHERE id = $1', [id]
         )).rows[0];
 
         // Only pending -> approved / rejected / needs_info
@@ -1450,15 +1452,18 @@ const run = async () => {
         report(statuses.join(' | ') === '200 | 409 ALREADY_DECIDED', 'Two decisions at once: one saved, the other 409 ALREADY_DECIDED', statuses.join(' | '));
         const decidedEvents = (await pool.query("SELECT count(*)::int AS n FROM application_events WHERE application_id = $1 AND kind = 'decided'", [pendingOne])).rows[0].n;
         const approvedRow = await statusOf(pendingOne);
-        report(decidedEvents === 1 && approvedRow.status === 'approved' && [4, 5].includes(approvedRow.final_grade) && approvedRow.decided_at,
-            'One decision in the history, saved with its grade and date', `${decidedEvents} event(s), grade ${approvedRow.final_grade}`);
+        // Round 2 Group 2: the decision waits for the committee; the reviewer's grade is kept, no final grade yet
+        report(decidedEvents === 1 && approvedRow.status === 'awaiting_committee' && [4, 5].includes(approvedRow.reviewer_grade)
+            && approvedRow.final_grade === null && approvedRow.decided_at,
+        'One decision in the history, saved with its grade and date (awaiting the committee)', `${decidedEvents} event(s), reviewer grade ${approvedRow.reviewer_grade}`);
 
         // A reviewer's approval with a note; the admin's rejection
         const approved = await appIn('pending');
         await expect('Reviewer approves with grade 4 and a note', decide(approved, { status: 'approved', final_grade: 4, note: 'Well documented.' }), 200);
         const a = await statusOf(approved);
-        report(a.final_grade === 4 && a.decided_by === d.reviewer.id && a.decided_by_role === 'reviewer' && a.decision_rationale === 'Well documented.',
-            'Approval saved: grade, reviewer, date and note', `${a.decided_by_role} #${a.decided_by}, grade ${a.final_grade}`);
+        report(a.reviewer_decision === 'approved' && a.reviewer_grade === 4 && a.final_grade === null && a.decided_by === d.reviewer.id
+            && a.decided_by_role === 'reviewer' && a.decision_rationale === 'Well documented.',
+        "Approval saved: the reviewer's grade, reviewer, date and note; no final grade until the committee", `${a.decided_by_role} #${a.decided_by}, grade ${a.reviewer_grade}`);
         const rejected = await appIn('pending');
         await expect('Admin rejects with a reason', decide(rejected, { status: 'rejected', note: 'Different content.' }, S), 200);
         const r = await statusOf(rejected);
@@ -1479,13 +1484,15 @@ const run = async () => {
             report((await statusOf(elsewhere)).status === 'pending', "Another programme's application stays pending");
         } else skip("Reviewer decides another programme's application", 'students A and B are in the same programme');
 
-        // The student sees the grade and the reason (never who decided)
+        // Round 2 Group 2: while the committee hasn't decided, the student sees neither grade nor reason
+        // (the final result with its grade and reason: section 4w, after the committee's step)
         const mine = await call('GET', 'applications/mine', { token: T });
         const mineApproved = (mine.body?.applications || []).find((x) => x.id === approved);
         const mineRejected = (mine.body?.applications || []).find((x) => x.id === rejected);
-        report(mineApproved?.final_grade === 4 && mineApproved?.decision_rationale === 'Well documented.' && mineRejected?.decision_rationale === 'Different content.'
+        report(mineApproved?.status === 'awaiting_committee' && mineApproved?.final_grade === null && mineApproved?.decision_rationale === null
+            && mineRejected?.status === 'awaiting_committee' && mineRejected?.decision_rationale === null
             && !JSON.stringify(mine.body).includes(String(d.reviewer.name)),
-        "The student's list shows the grade and the reason, not the reviewer's name", `${mineApproved?.final_grade}`);
+        "The student's list: under committee review, no grade or reason yet, never the reviewer's name", `${mineApproved?.status}`);
 
         // The database itself refuses an approval without a grade (migration 011)
         const client = await pool.connect();
@@ -1555,9 +1562,9 @@ const run = async () => {
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
                 `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
-                     decided_by_role, decided_at, final_grade)
+                     decided_by_role, decided_at, final_grade, committee_state)
                  VALUES ($1, $2, '[]', $3, $4, $5, $6::varchar, $7, CASE WHEN $8 THEN 'admin' END, CASE WHEN $8 THEN now() END,
-                         CASE WHEN $6::varchar = 'approved' THEN 4 END)
+                         CASE WHEN $6::varchar = 'approved' THEN 4 END, CASE WHEN ($6::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
                  RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify(file ? [{ course_name: 'Past semester check', credits: 1, file }] : []),
                     JSON.stringify([{ course_code: code, course_name: 'Security check past', credits: 1 }]), code, status, semesterId, decided]
@@ -1693,8 +1700,8 @@ const run = async () => {
             seq += 1;
             const code = `SECK${Date.now().toString(36)}${seq}`.toUpperCase();
             return (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
-                 VALUES ($1, $2, '[]', $3, $4, 'pending') RETURNING id`,
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [student.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'Acting check', credits: 3 }]), code]
             )).rows[0].id;
         };
@@ -1968,9 +1975,9 @@ const run = async () => {
                 const decided = status === 'approved';
                 return (await pool.query(
                     `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 4 END, CASE WHEN $7 THEN 'reviewer' END, CASE WHEN $7 THEN now() END,
-                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END)
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
                      RETURNING id`,
                     [account.id, fromId, JSON.stringify([{ course_code: code, course_name: 'Programme check', credits: 3 }]), code, status, current, decided]
                 )).rows[0].id;
@@ -2094,8 +2101,8 @@ const run = async () => {
         const programmeId = (await pool.query('SELECT id FROM programmes WHERE code = $1', [code])).rows[0].id;
         const snapshot = [{ course_id: sc3, course_code: 'SC3', course_name: 'Third', credits: 4 }];
         const usingApp = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
-             VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4) RETURNING id`,
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
+             VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
             [d.studentA.id, programmeId, JSON.stringify(snapshot), semesterId]
         )).rows[0].id;
         const file2 = `${[header, row('SC1', 'First, renamed', 6)].join('\n')}\n`;
@@ -2209,8 +2216,8 @@ const run = async () => {
                 seq += 1;
                 const c = `SECO${stamp}${seq}`.toUpperCase();
                 const id = (await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline)
-                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline, committee_state)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                     [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: c, course_name: 'Period check', credits: 1 }]), c, status, sid]
                 )).rows[0].id;
                 tempApplicationIds.push(id);
@@ -2329,10 +2336,10 @@ const run = async () => {
                 const c = `SECP${stamp}${seq}`.toUpperCase();
                 return (await pool.query(
                     `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline)
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN $5::varchar = 'approved' THEN 'reviewer' END,
                              CASE WHEN $5::varchar = 'approved' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() END,
-                             CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                     [student.id, d.reviewer.programme_id, JSON.stringify([{ course_code: c, course_name: 'Close check', credits: 3 }]), c, status, tempId]
                 )).rows[0].id;
             };
@@ -2370,6 +2377,13 @@ const run = async () => {
             await expect('The reviewer approves one', call('PUT', `applications/${pendingId}/status`, { token: R, json: { status: 'approved', final_grade: 4, note: 'Close check' } }), 200);
             await expect('The reviewer rejects one', call('PUT', `applications/${secondPending}/status`, { token: R, json: { status: 'rejected', note: 'Close check' } }), 200);
             await expect('The student withdraws the needs-info one', call('PUT', `applications/${waitingId}/withdraw`, { token: T0 }), 200);
+            // Round 2 Group 2: the two decisions wait for the committee, which blocks the close
+            await expect('Close while decisions await the committee', call('POST', `admin/semesters/${tempId}/close`, { token: S, json: { confirm_name: tempName } }), 409, 'AWAITING_COMMITTEE');
+            // The committee keeps both (recorded directly here; the committee's own route: section 4w)
+            await pool.query(
+                `UPDATE applications SET status = reviewer_decision, final_grade = reviewer_grade, committee_state = 'kept',
+                     committee_by_role = 'committee', committee_at = now() WHERE semester_id = $1 AND status = 'awaiting_committee'`, [tempId]
+            );
             report((await call('GET', 'admin/summary', { token: S })).body?.summary?.readyToClose === true && tempOf((await call('GET', 'admin/summary', { token: S })).body?.summary)?.canClose === true,
                 'Now the admin summary says "Ready to close" (Semester badge)');
             const ready = (await call('GET', `admin/semesters/${tempId}/close-preview`, { token: S })).body?.preview;
@@ -2481,8 +2495,8 @@ const run = async () => {
             )).rows[0];
             const id = (await pool.query(
                 `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, created_at,
-                     final_grade, decided_by_role, decided_at)
-                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC', CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9) RETURNING id`,
+                     final_grade, decided_by_role, decided_at, committee_state)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC', CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [student.id, d.studentA.programme_id, JSON.stringify([{ course_code: course.toUpperCase(), course_name: 'Analytics check', credits: 3 }]), course.toUpperCase(), status, closedId, T0,
                     after === null ? null : by, after === null ? null : dayAt(after)]
             )).rows[0].id;
@@ -2494,7 +2508,7 @@ const run = async () => {
         await closedApp({ status: 'rejected', course: `SQB${stamp}`, after: 30, by: 'system' });
         await closedApp({ status: 'withdrawn', course: `SQB${stamp}` });
         const closed = (await call('GET', `admin/analytics?semester_id=${closedId}`, { token: S })).body?.analytics;
-        report(closed && JSON.stringify(closed.status.overall) === JSON.stringify({ pending: 0, needs_info: 0, approved: 2, rejected: 1, withdrawn: 1, total: 4 }),
+        report(closed && JSON.stringify(closed.status.overall) === JSON.stringify({ pending: 0, needs_info: 0, awaiting_committee: 0, approved: 2, rejected: 1, withdrawn: 1, total: 4 }),
             'Closed semester: applications by status match the hand count', JSON.stringify(closed?.status?.overall));
         const t = closed?.turnaround?.overall;
         report(t && t.decided === 2 && t.averageDays === 3 && t.medianDays === 3 && t.averageDaysWithoutWaiting === 2 && t.medianDaysWithoutWaiting === 2,
@@ -2537,8 +2551,8 @@ const run = async () => {
             semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, review_end_at, end_date, close_reason, last_days_warning_days FROM semesters WHERE id = $1', [sid])).rows[0];
             // One undecided application of our own, so the warning always has something to show
             const own = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
-                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5) RETURNING id`,
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: `SECRD${stamp}`, course_name: 'Review deadline check', credits: 1 }]), `SECRD${stamp}`.toUpperCase().slice(0, 20), sid]
             )).rows[0].id;
             tempApplicationIds.push(own);
@@ -2632,8 +2646,8 @@ const run = async () => {
             // An open application of the programme, naming one of student B's files
             const code = `SECX${stamp}`.toUpperCase().slice(0, 20);
             const temp = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note)
-                 VALUES ($1, $2, '[]', $3, $4, $5, 'pending', 'Temporary application of the security check') RETURNING id`,
+                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note, committee_state)
+                 VALUES ($1, $2, '[]', $3, $4, $5, 'pending', 'Temporary application of the security check', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [d.studentA.id, programmeOfB, JSON.stringify([{ course_name: 'Security check', file: d.fileOfB }]),
                     JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code]
             )).rows[0].id;
@@ -2722,9 +2736,9 @@ const run = async () => {
             )).rows[0];
             const app = async (n, status) => (await pool.query(
                 `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
-                     info_requested_at, info_deadline)
+                     info_requested_at, info_deadline, committee_state)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Temporary application of the security check',
-                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: `SHR${n}`, course_name: 'Security check', credits: 1 }]), `SHR${n}${stamp}`.slice(0, 20), status]
             )).rows[0].id;
             const [a1, a2, a3, a4] = [await app(1, 'pending'), await app(2, 'pending'), await app(3, 'pending'), await app(4, 'pending')];
@@ -2832,8 +2846,8 @@ const run = async () => {
         // One pending application of our own in the reviewer's programme (removed at the end of this section)
         const ownCode = `SECPDO${stamp}`.toUpperCase().slice(0, 20);
         const ownApp = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
-             VALUES ($1, $2, '[]', $3, $4, 'pending') RETURNING id`,
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
+             VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: ownCode, course_name: 'PDF check' }]), ownCode]
         )).rows[0].id;
         tempApplicationIds.push(ownApp);
@@ -2875,8 +2889,8 @@ const run = async () => {
         // A withdrawn application of the reviewer's programme is not shown to reviewers
         const code = `SECPDF${stamp}`.toUpperCase().slice(0, 20);
         const withdrawn = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
-             VALUES ($1, $2, '[]', $3, $4, 'withdrawn') RETURNING id`,
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
+             VALUES ($1, $2, '[]', $3, $4, 'withdrawn', CASE WHEN ('withdrawn')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'PDF check' }]), code]
         )).rows[0].id;
         tempApplicationIds.push(withdrawn);
@@ -2904,6 +2918,266 @@ const run = async () => {
         } finally {
             await removeTempApplications();
             await removeTestStaff();
+        }
+    }
+
+    section('4u. The committee role (round 2 Group 2 Part A): invites, links on their own side, access from current links');
+    {
+        const stamp = Date.now().toString(36);
+        const programmeOfB = d.studentB.programme_id;
+        const codeOfB = (await pool.query('SELECT code FROM programmes WHERE id = $1', [programmeOfB])).rows[0].code;
+        const email = (n) => `${STAFF_TEST_PREFIX}cm-${n}-${stamp}${TEST_DOMAIN}`;
+        const invite = (json) => call('POST', 'users/invites', { token: S, json: { role: 'committee', ...json } });
+        const tokenOf = (link) => String(link || '').split('/invite/')[1] || '';
+        try {
+            // Invites
+            await expect('Committee invite with a main reviewer link', invite({ email: email('x'), programmes: [{ code: codeOfB, role: 'main' }] }), 400, 'INVALID_STAFF_ROLE');
+            await expect('Committee invite without a programme', invite({ email: email('x'), programmes: [] }), 400, 'INVALID_PROGRAMME');
+            await expect('Committee invite that replaces someone', invite({ email: email('x'), programme_code: codeOfB, replace: true }), 400, 'REPLACE_ONLY_MAIN');
+            await expect('Reviewer: invite a committee member', call('POST', 'users/invites', { token: R, json: { role: 'committee', email: email('x'), programme_code: codeOfB } }), 403, 'FORBIDDEN_ROLE');
+            const created = await invite({ email: email('member'), programme_code: codeOfB, language: 'en' });
+            report(created.status === 201 && created.body.invite.role === 'committee' && created.body.invite.programmes?.[0]?.role === 'committee',
+                'Committee invite (short form): created, the programme as a committee link', `${created.status} ${created.code || ''}`);
+            const page = await call('GET', `invites/${tokenOf(created.body?.link)}`);
+            report(page.status === 200 && page.body.invite.role === 'committee' && page.body.invite.programmes?.[0]?.role === 'committee', 'The accept page shows a committee invite');
+            await expect('Accept the committee invite', call('POST', `invites/${tokenOf(created.body?.link)}/accept`, { json: { name: 'Security Check Member', password: 'LongEnough1' } }), 200);
+            const member = (await pool.query('SELECT id, role, programme_id FROM users WHERE email = $1', [email('member')])).rows[0];
+            const links = (await pool.query('SELECT role FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL', [member.id])).rows.map((r) => r.role);
+            report(member.role === 'committee' && member.programme_id === null && JSON.stringify(links) === '["committee"]',
+                'The account: role committee, no users.programme_id, one committee link', JSON.stringify({ role: member.role, links }));
+            const M = tokenFor(member);
+
+            // Access from the current links
+            const me = await call('GET', 'committee/me', { token: M });
+            report(me.status === 200 && me.body.programmes.length === 1 && me.body.programmes[0].code === codeOfB && !JSON.stringify(me.body).includes('@'),
+                'The member sees their committee programme (no email addresses)', `${me.status}`);
+            await expect('Committee page without a token', call('GET', 'committee/me'), 401, 'NO_TOKEN');
+            await expect('Committee page as a student', call('GET', 'committee/me', { token: A }), 403, 'FORBIDDEN_ROLE');
+            await expect('Committee page as a reviewer without committee links', call('GET', 'committee/me', { token: R }), 403, 'FORBIDDEN_ROLE');
+            await expect('Committee page as the admin', call('GET', 'committee/me', { token: S }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on the reviewer dashboard', call('GET', 'reviewer/applications', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on the applications list', call('GET', 'applications', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member on an admin route', call('GET', 'admin/summary', { token: M }), 403, 'FORBIDDEN_ROLE');
+            await expect('A committee member: a reviewer link', call('POST', `users/${member.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'main' } }), 400, 'COMMITTEE_ONLY');
+            const staff = (await call('GET', 'users/staff', { token: S })).body?.staff || [];
+            report(staff.some((p) => p.id === member.id && p.role === 'committee' && p.programmes.some((l) => l.role === 'committee')), 'The staff list shows the member with the committee link');
+
+            // A reviewer joins the committee of their own programme: a second link, on its own side
+            const joined = await call('POST', `users/${d.reviewer.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'committee' } });
+            report(joined.status === 201, "A reviewer joins their own programme's committee (no new account)", `${joined.status} ${joined.code || ''}`);
+            await expect('The same committee link again', call('POST', `users/${d.reviewer.id}/programmes`, { token: S, json: { programme_code: codeOfB, role: 'committee' } }), 409, 'ALREADY_LINKED');
+            const both = await call('GET', 'committee/me', { token: R });
+            report(both.status === 200 && both.body.alsoReviewer === true, 'The reviewer now reaches the committee page too (the switch)', `${both.status}`);
+            await expect('…and the reviewer dashboard as before', call('GET', 'reviewer/applications', { token: R }), 200);
+            let refused = false;
+            try { await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, 'committee')", [d.reviewer.id, programmeOfB]); } catch (err) { refused = err.constraint === 'staff_programmes_one_current_link'; }
+            report(refused, 'The database allows one current committee link per person and programme');
+            await expect('End only the committee link', call('DELETE', `users/${d.reviewer.id}/programmes/${codeOfB}?side=committee`, { token: S }), 200);
+            await expect('The committee page is closed again', call('GET', 'committee/me', { token: R }), 403, 'FORBIDDEN_ROLE');
+            await expect('The reviewer link is untouched', call('GET', 'reviewer/applications', { token: R }), 200);
+            await pool.query("DELETE FROM staff_programmes WHERE user_id = $1 AND role = 'committee'", [d.reviewer.id]); // leave no history row behind
+
+            // The admin acts as the member; then the member is removed
+            const acting = await call('POST', 'acting/start', { token: S, json: { userId: member.id } });
+            report(acting.status === 200 && acting.body.role === 'committee', 'The admin acts as a committee member', `${acting.status} ${acting.code || ''}`);
+            if (acting.body?.token) {
+                await expect('Acting: the committee page', call('GET', 'committee/me', { token: acting.body.token }), 200);
+                await call('POST', 'acting/exit', { token: acting.body.token });
+            }
+            await expect('Remove the committee member', call('PUT', `users/${member.id}/remove-reviewer`, { token: S }), 200);
+            await expect('A removed member: the committee page', call('GET', 'committee/me', { token: M }), 401, 'ACCOUNT_DEACTIVATED');
+            await expect('A removed member: login', call('POST', 'login', { json: { email: email('member'), password: 'LongEnough1' } }), 403, 'ACCOUNT_DEACTIVATED');
+            const ended = (await pool.query('SELECT count(*) FILTER (WHERE ended_at IS NULL)::int AS current FROM staff_programmes WHERE user_id = $1', [member.id])).rows[0].current;
+            report(ended === 0, 'Every committee link ended (kept for history)');
+        } finally {
+            await pool.query("DELETE FROM staff_programmes WHERE user_id = $1 AND role = 'committee'", [d.reviewer.id]);
+            const removed = await removeTestStaff();
+            console.log(`(removed ${removed} temporary committee member(s) and their invites)`);
+        }
+    }
+
+    section('4v. The committee step (round 2 Group 2 Part B): a decision waits, the student sees nothing of it, System decisions are final');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const programmeOfB = d.studentB.programme_id;
+        const student = (await pool.query(
+            `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+             VALUES ('Security Check Committee Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role`,
+            [`committee-${stamp.toLowerCase()}${TEST_DOMAIN}`, `V${stamp.slice(-5)}`.padEnd(6, 'V').slice(0, 6), programmeOfB]
+        )).rows[0];
+        const T = tokenFor(student);
+        const app = async (n, status, extra = '') => (await pool.query(
+            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+                 info_requested_at, info_deadline)
+             VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Committee check',
+                     CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '5 days' END, CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '1 hour' END) RETURNING id`,
+            [student.id, programmeOfB, JSON.stringify([{ course_code: `SCV${n}${extra}`, course_name: 'Committee check' }]), `SCV${n}${stamp}`.slice(0, 20), status]
+        )).rows[0].id;
+        try {
+            const approved = await app(1, 'pending');
+            await expect('The reviewer approves (grade 4, a note)', call('PUT', `applications/${approved}/status`, { token: R, json: { status: 'approved', final_grade: 4, note: 'Reviewer note SECRET' } }), 200);
+            const row = (await pool.query('SELECT status, final_grade, reviewer_decision, reviewer_grade, committee_state, decided_by FROM applications WHERE id = $1', [approved])).rows[0];
+            report(row.status === 'awaiting_committee' && row.final_grade === null && row.reviewer_decision === 'approved' && row.reviewer_grade === 4
+                && row.committee_state === 'awaiting' && row.decided_by === d.reviewer.id,
+            "The decision waits for the committee; the reviewer's decision and grade are kept in their own columns, no final grade yet", JSON.stringify(row));
+            await expect('Deciding it again', call('PUT', `applications/${approved}/status`, { token: R, json: { status: 'rejected', note: 'x' } }), 409, 'ALREADY_DECIDED');
+
+            // The student sees nothing of the reviewer's decision (server side)
+            const list = await call('GET', 'applications/mine', { token: T });
+            const mine = (list.body?.applications || []).find((a) => a.id === approved);
+            const one = await call('GET', `applications/mine/${approved}`, { token: T });
+            const text = JSON.stringify([mine, one.body]);
+            report(mine && mine.status === 'awaiting_committee' && mine.final_grade === null && mine.decision_rationale === null && mine.reviewer_note === null
+                && mine.decided_by !== 'reviewer', 'The student\'s list: "under committee review", no grade, reason or note', JSON.stringify(mine && { s: mine.status, g: mine.final_grade, by: mine.decided_by }));
+            report(one.status === 200 && !(one.body.application?.events || []).some((e) => e.kind === 'decided'), "The student's history leaves out the reviewer's decision");
+            report(!text.includes('SECRET') && !text.includes('reviewer_decision') && !text.includes('reviewer_grade') && !/"approved"/.test(text),
+                "Nothing of the reviewer's decision reaches the student's browser (no note, outcome or grade)");
+            await expect('The student withdraws it while it awaits the committee', call('PUT', `applications/${approved}/withdraw`, { token: T }), 409, 'AWAITING_COMMITTEE');
+
+            // A reviewer rejection waiting for the committee still blocks a second application for the course
+            const rejected = await app(2, 'pending');
+            await expect('The reviewer rejects another one', call('PUT', `applications/${rejected}/status`, { token: R, json: { status: 'rejected', note: 'Different content' } }), 200);
+            let blocked = false;
+            try {
+                await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
+                     SELECT student_id, programme_id, '[]', target_courses, target_course_code, 'pending' FROM applications WHERE id = $1`, [rejected]
+                );
+            } catch (err) { blocked = err.constraint === 'applications_one_active_per_course'; }
+            report(blocked, 'The duplicate rule counts an application awaiting the committee, even one the reviewer rejected');
+
+            // System decisions never reach the committee
+            const overdue = await app(3, 'needs_info');
+            const { rejectOverdueInfoRequests } = require('../jobs/applicationJobs');
+            await rejectOverdueInfoRequests({ now: new Date(), notify: async () => {}, only: [overdue] });
+            const sys = (await pool.query('SELECT status, committee_state, decided_by_role FROM applications WHERE id = $1', [overdue])).rows[0];
+            report(sys.status === 'rejected' && sys.committee_state === 'not_needed' && sys.decided_by_role === 'system',
+                'A System rejection (no reply in time) is final at once and never awaits the committee', JSON.stringify(sys));
+        } finally {
+            await removeTestStudents(); // the student and their applications
+        }
+    }
+
+    section('4w. The committee decides (round 2 Group 2 Part C): what members see, keep or change, one step only, never their own decision');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}C${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Committee', 'Security Check Committee', 'Security Check Committee') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, links) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role, name",
+                    [`Committee ${key}`, `${STAFF_TEST_PREFIX}cw-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                for (const [linkRole, assist] of links) {
+                    await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)', [user.id, programmeId, linkRole, assist]);
+                }
+                return user;
+            };
+            const M = await person('main', 'reviewer', [['main', false]]);
+            const C1 = await person('one', 'committee', [['committee', false]]);
+            const C2 = await person('two', 'committee', [['committee', false]]);
+            const RC = await person('both', 'reviewer', [['extra', true], ['committee', false]]); // assisting reviewer AND committee member
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Committee Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role`,
+                [`cw-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `W${stamp.slice(-5)}`.padEnd(6, 'W').slice(0, 6), programmeId]
+            )).rows[0];
+            const [TM, T1, T2, TRC, TS] = [tokenFor(M), tokenFor(C1), tokenFor(C2), tokenFor(RC), tokenFor(student)];
+            const app = async (n, status = 'pending') => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_code: `CW${n}`, course_name: `Committee course ${n}` }]), `CW${n}${stamp}`.slice(0, 20), status]
+            )).rows[0].id;
+            const decide = (id, json, token = TM) => call('PUT', `applications/${id}/status`, { token, json });
+            const step = (id, json, token = T1) => call('PUT', `committee/applications/${id}/decision`, { token, json });
+            const listOf = async (token, tab = 'waiting') => ((await call('GET', `committee/applications?tab=${tab}`, { token })).body?.applications || []).map((a) => a.id);
+
+            // What a member sees: decided ones only, of their programmes
+            const pending = await app(1);
+            const waitingForStudent = await app(2, 'needs_info');
+            const a3 = await app(3);
+            await expect('The reviewer approves (grade 4)', decide(a3, { status: 'approved', final_grade: 4, note: 'Reviewer reason' }), 200);
+            const waitingList = await listOf(T1);
+            report(waitingList.includes(a3) && !waitingList.includes(pending) && !waitingList.includes(waitingForStudent),
+                'Waiting list: the decided application, never pending or needs info', JSON.stringify(waitingList));
+            await expect('A member opens a pending application', call('GET', `committee/applications/${pending}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('A member opens a needs-info application', call('GET', `committee/applications/${waitingForStudent}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('A member takes the step on a pending application', step(pending, { action: 'keep' }), 404, 'APPLICATION_NOT_FOUND');
+            const otherAwaiting = (await pool.query("SELECT id FROM applications WHERE status = 'awaiting_committee' AND programme_id <> $1 LIMIT 1", [programmeId])).rows[0]?.id;
+            if (otherAwaiting) await expect("A member opens another programme's decision", call('GET', `committee/applications/${otherAwaiting}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            const details = await call('GET', `committee/applications/${a3}`, { token: T1 });
+            report(details.status === 200 && details.body.application.decision.reviewer_decision === 'approved' && details.body.application.decision.reviewer_grade === 4,
+                "A member opens the decided application with the reviewer's decision and grade", `${details.status}`);
+            await expect('A reviewer without committee links on the committee list', call('GET', 'committee/applications', { token: TM }), 403, 'FORBIDDEN_ROLE');
+            await expect('A student on the committee list', call('GET', 'committee/applications', { token: TS }), 403, 'FORBIDDEN_ROLE');
+
+            // The rules of the step
+            await expect('An unknown action', step(a3, { action: 'reopen' }), 400, 'INVALID_ACTION');
+            await expect('Change without a note', step(a3, { action: 'change' }), 400, 'COMMITTEE_NOTE_REQUIRED');
+            await expect('A grade of 6', step(a3, { action: 'keep', final_grade: 6 }), 400, 'INVALID_FINAL_GRADE');
+            await expect('Keep the approval, another grade (3)', step(a3, { action: 'keep', final_grade: 3, note: 'Grade adjusted' }), 200);
+            const kept = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_state, committee_by, committee_by_role FROM applications WHERE id = $1', [a3])).rows[0];
+            report(kept.status === 'approved' && kept.final_grade === 3 && kept.reviewer_grade === 4 && kept.committee_state === 'kept' && kept.committee_by === C1.id && kept.committee_by_role === 'committee',
+                "Kept: final approved with the committee's grade; the reviewer's grade stays; who acted recorded", JSON.stringify(kept));
+            await expect('A second step on it', step(a3, { action: 'change', note: 'x' }, T2), 409, 'ALREADY_DECIDED');
+            const mine = (await call('GET', 'applications/mine', { token: TS })).body?.applications || [];
+            const studentKept = mine.find((a) => a.id === a3);
+            report(studentKept?.status === 'approved' && studentKept.final_grade === 3 && studentKept.decided_by === 'committee'
+                && studentKept.decision_rationale === 'Reviewer reason' && studentKept.committee_note === 'Grade adjusted' && !JSON.stringify(mine).includes('"reviewer_grade"'),
+            'The student: approved, the final grade only, "decided by: committee", the reason and the committee note', JSON.stringify(studentKept && { s: studentKept.status, g: studentKept.final_grade, by: studentKept.decided_by }));
+            const history = (await call('GET', `applications/mine/${a3}`, { token: TS })).body?.application?.events || [];
+            report(history.some((e) => e.kind === 'committee_kept' && e.actor_role === 'committee') && !history.some((e) => e.kind === 'decided'),
+                "The student's history: the committee's step as \"committee\", never the reviewer's");
+
+            // Reviewer rejected, committee changes to approved: a grade is required
+            const a4 = await app(4);
+            await expect('The reviewer rejects', decide(a4, { status: 'rejected', note: 'Different content' }), 200);
+            await expect('Change reject -> approve without a grade', step(a4, { action: 'change', note: 'Equivalent after all' }), 400, 'GRADE_REQUIRED');
+            await expect('Keep a rejection with a grade', step(a4, { action: 'keep', final_grade: 4 }), 400, 'GRADE_ONLY_ON_APPROVE');
+            await expect('Change reject -> approve with grade 5', step(a4, { action: 'change', final_grade: 5, note: 'Equivalent after all' }), 200);
+            const changed = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === a4);
+            report(changed?.status === 'approved' && changed.final_grade === 5 && changed.decision_rationale === null && changed.committee_note === 'Equivalent after all',
+                "Changed: the student sees the committee's note only, never the reviewer's reason", JSON.stringify(changed && { s: changed.status, r: changed.decision_rationale }));
+
+            // Two members at the same moment: one step
+            const a5 = await app(5);
+            await decide(a5, { status: 'approved', final_grade: 4 });
+            const both = await Promise.all([step(a5, { action: 'keep' }, T1), step(a5, { action: 'change', note: 'No' }, T2)]);
+            const answers = both.map((r) => `${r.status}${r.code ? ` ${r.code}` : ''}`).sort();
+            report(answers.join(' | ') === '200 | 409 ALREADY_DECIDED', 'Two members at once: one saved, the other 409 ALREADY_DECIDED', answers.join(' | '));
+            report((await pool.query("SELECT count(*)::int AS n FROM application_events WHERE application_id = $1 AND kind LIKE 'committee_%'", [a5])).rows[0].n === 1, 'One committee step in the history');
+
+            // Never your own decision
+            const a6 = await app(6);
+            await expect('The assisting reviewer (also a committee member) decides', decide(a6, { status: 'rejected', note: 'Mine' }, TRC), 200);
+            await expect('…and tries the committee step on it', step(a6, { action: 'keep' }, TRC), 409, 'OWN_DECISION');
+            report((await listOf(TRC)).includes(a6), 'They still see it in the committee list (marked as their own)');
+            await expect('Another member takes the step', step(a6, { action: 'keep' }, T2), 200);
+
+            // The admin takes the step directly: recorded as the admin
+            const a7 = await app(7);
+            await decide(a7, { status: 'approved', final_grade: 2 });
+            await expect('A reviewer on the admin route', call('PUT', `admin/applications/${a7}/committee`, { token: TM, json: { action: 'keep' } }), 403, 'FORBIDDEN_ROLE');
+            await expect('The admin keeps it', call('PUT', `admin/applications/${a7}/committee`, { token: S, json: { action: 'keep' } }), 200);
+            const byAdmin = (await pool.query("SELECT a.committee_by_role, e.actor_role FROM applications a JOIN application_events e ON e.application_id = a.id AND e.kind = 'committee_kept' WHERE a.id = $1", [a7])).rows[0];
+            report(byAdmin?.committee_by_role === 'admin' && byAdmin.actor_role === 'admin', 'The admin\'s step is recorded as the admin ("Admin, as committee")', JSON.stringify(byAdmin));
+            const forStudent = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === a7);
+            report(forStudent?.decided_by === 'committee', 'The student still sees "decided by: committee"');
+            const a8 = await app(8);
+            await decide(a8, { status: 'approved', final_grade: 4 }, S);
+            await expect('The admin confirms their own decision', call('PUT', `admin/applications/${a8}/committee`, { token: S, json: { action: 'keep' } }), 409, 'OWN_DECISION');
+            const handled = await listOf(T1, 'handled');
+            report([a3, a4, a5, a6, a7].every((id) => handled.includes(id)) && !handled.includes(a8), 'Handled list: the decided ones, not the one still waiting');
+            const pdf = await fetch(`${API}/committee/applications/${a3}/pdf`, { headers: { Authorization: `Bearer ${T1}` } });
+            report(pdf.status === 200 && Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'A member downloads the application as a PDF');
+            const noPdf = await fetch(`${API}/committee/applications/${pending}/pdf`, { headers: { Authorization: `Bearer ${T1}` } });
+            report(noPdf.status === 404, "…but not a pending application's PDF", `${noPdf.status}`);
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary committee programme (${removed}) with its people and applications)`);
         }
     }
 

@@ -233,10 +233,10 @@ const seed = async (pool) => {
                 (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names,
                  system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id, created_at,
                  reviewer_note, student_resubmit_note, supplemental_files, reviewed_by, reviewed_at,
-                 info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale)
+                 info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale, committee_state)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::timestamptz AT TIME ZONE 'UTC',
                      $15, $16, $17, $18, $19::timestamptz AT TIME ZONE 'UTC',
-                     $20, info_reply_deadline($20), $21, $22, $23, $24, $25)
+                     $20, info_reply_deadline($20), $21, $22, $23, $24, $25, CASE WHEN ($11)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
              RETURNING id`,
             [
                 student.id, programmes[student.programme],

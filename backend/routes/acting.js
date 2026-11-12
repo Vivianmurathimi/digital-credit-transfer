@@ -27,11 +27,12 @@ router.post('/acting/start', verifyToken, requireRole('superadmin'), async (req,
             'SELECT id, name, role, deactivated_at FROM users WHERE id = $1', [personId]
         )).rows[0];
         if (!person) return sendError(res, 404, 'USER_NOT_FOUND', 'User not found');
-        if (!['student', 'reviewer'].includes(person.role)) {
-            return sendError(res, 400, 'CANNOT_ACT_AS_ROLE', 'You can only act as a student or a reviewer');
+        // A committee member too (round 2 Group 2): what they do is recorded as the admin
+        if (!['student', 'reviewer', 'committee'].includes(person.role)) {
+            return sendError(res, 400, 'CANNOT_ACT_AS_ROLE', 'You can only act as a student, a reviewer or a committee member');
         }
-        if (person.role === 'reviewer' && person.deactivated_at) {
-            return sendError(res, 400, 'CANNOT_ACT_AS_REMOVED_REVIEWER', 'This reviewer has been removed');
+        if ((person.role === 'reviewer' || person.role === 'committee') && person.deactivated_at) {
+            return sendError(res, 400, 'CANNOT_ACT_AS_REMOVED_REVIEWER', 'This account has been removed');
         }
 
         const sessionId = await inTransaction(async (client) => {

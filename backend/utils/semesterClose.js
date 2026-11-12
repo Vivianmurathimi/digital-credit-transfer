@@ -10,6 +10,7 @@ const { ARCHIVE_BUCKET } = require('../config/buckets');
 //   - its application period is over (no Close now needed: its closing time has passed),
 //   - no late access of it is still running, and
 //   - nothing in it is pending or in needs info (every application decided or withdrawn),
+//   - nothing in it awaits the committee (round 2 Group 2: the decisions are final),
 // even before its review deadline (the review deadline is a target, not a lock). The preview lists
 // what blocks it, per programme. Nobody is rejected by the close any more (old closes keep their
 // "SEMESTER_ENDED" records and texts). In ONE transaction:
@@ -21,7 +22,8 @@ const { ARCHIVE_BUCKET } = require('../config/buckets');
 // semester, so the admin can generate it again. Nothing else is deleted.
 // A closed semester is read-only for everyone (utils/semesters.js semesterEndedSql).
 
-const OPEN = ['pending', 'needs_info'];
+// Everything that blocks a close: undecided, and (round 2 Group 2) awaiting the committee
+const NOT_FINAL = ['pending', 'needs_info', 'awaiting_committee'];
 
 // Shared by the preview and the close: $1 the semester, $2 now
 const STATE_SQL = `
@@ -29,6 +31,7 @@ const STATE_SQL = `
     s.review_end_at <= $2 AS review_passed, s.review_end_at,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'pending') AS pending,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'needs_info') AS needs_info,
+    (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'awaiting_committee') AS awaiting_committee,
     (SELECT count(*)::int FROM late_access l WHERE l.semester_id = s.id AND l.revoked_at IS NULL AND l.deadline > $2) AS late_access,
     -- drafts stay when another semester's application period is open or still to come
     EXISTS (SELECT 1 FROM semesters o WHERE o.id <> s.id AND o.status IN ('setup', 'active') AND o.applications_close_at > $2) AS drafts_belong_elsewhere`;
@@ -38,6 +41,7 @@ const blockersOf = (r) => [
     !r.period_over && 'PERIOD_STILL_OPEN',
     r.late_access > 0 && 'LATE_ACCESS_ACTIVE',
     r.pending + r.needs_info > 0 && 'UNDECIDED_APPLICATIONS',
+    r.awaiting_committee > 0 && 'AWAITING_COMMITTEE',
 ].filter(Boolean);
 
 /**
@@ -59,18 +63,19 @@ const closePreview = async (db, semesterId, { now = new Date(), onlyDraftsOf = n
     const undecided = (await db.query(
         `SELECT p.code, p.name_en, p.name_hu, p.name_de,
                 count(*) FILTER (WHERE a.status = 'pending')::int AS pending,
-                count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
+                count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info,
+                count(*) FILTER (WHERE a.status = 'awaiting_committee')::int AS awaiting_committee
          FROM applications a JOIN programmes p ON p.id = a.programme_id
          WHERE a.semester_id = $1 AND a.status = ANY($2)
          GROUP BY p.id ORDER BY p.code`,
-        [semesterId, OPEN]
+        [semesterId, NOT_FINAL]
     )).rows;
     const blockers = r.status === 'closed' ? ['ALREADY_CLOSED']
         : r.status !== 'active' && requireActive ? ['SEMESTER_NOT_ACTIVE'] : blockersOf(r);
     return {
         id: r.id, name: r.name, status: r.status, canClose: blockers.length === 0, blockers,
         periodOver: r.period_over, reviewPassed: r.review_passed, reviewEndAt: r.review_end_at,
-        pending: r.pending, needsInfo: r.needs_info, lateAccess: r.late_access,
+        pending: r.pending, needsInfo: r.needs_info, awaitingCommittee: r.awaiting_committee, lateAccess: r.late_access,
         drafts: r.drafts_belong_elsewhere ? 0 : r.drafts, draftsKept: r.drafts_belong_elsewhere ? r.drafts : 0,
         undecidedByProgramme: undecided,
     };
@@ -81,6 +86,7 @@ const REFUSAL = {
     PERIOD_STILL_OPEN: [409, 'PERIOD_STILL_OPEN', 'The application period is still open: close it first (Close now) or wait for its closing time'],
     LATE_ACCESS_ACTIVE: [409, 'LATE_ACCESS_ACTIVE', 'Late access of this semester is still running: wait for its deadline or revoke it'],
     UNDECIDED_APPLICATIONS: [409, 'UNDECIDED_APPLICATIONS', 'Some applications are still pending or in needs info: decide them first'],
+    AWAITING_COMMITTEE: [409, 'AWAITING_COMMITTEE', 'Some decisions are still waiting for the committee'],
 };
 
 /**
@@ -131,7 +137,7 @@ const closeSemester = async ({ semesterId, adminId, confirmName, now = new Date(
             return { error: [400, 'CONFIRM_NAME_MISMATCH', 'Type the semester name exactly to confirm', 'confirm_name'] };
         }
         // The undecided ones, locked, so none can turn up between this check and the close
-        await client.query('SELECT id FROM applications WHERE semester_id = $1 AND status = ANY($2) FOR UPDATE', [s.id, OPEN]);
+        await client.query('SELECT id FROM applications WHERE semester_id = $1 AND status = ANY($2) FOR UPDATE', [s.id, NOT_FINAL]);
         const [blocker] = blockersOf(s);
         if (blocker) return { error: REFUSAL[blocker] };
 

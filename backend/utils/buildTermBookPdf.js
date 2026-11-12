@@ -19,7 +19,7 @@ const COLORS = {
     brand: BRAND_COLORS.brand, text: BRAND_COLORS.text, muted: BRAND_COLORS.textMuted, line: BRAND_COLORS.line,
     status: BRAND_COLORS.status,
 };
-const STATUS_LABELS = { pending: 'Pending', needs_info: 'Needs Info', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' };
+const STATUS_LABELS = { pending: 'Pending', needs_info: 'Needs Info', awaiting_committee: 'Awaiting committee', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' };
 const NOTE_LABELS = [
     ['student', "Student's note"],
     ['system', 'System note (credit check)'],

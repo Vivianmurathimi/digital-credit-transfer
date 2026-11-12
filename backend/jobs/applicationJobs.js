@@ -88,7 +88,9 @@ const rejectInTransaction = async (client, { now, condition, params = [], only =
         `UPDATE applications
          SET status = 'rejected', reviewer_note = NULL, reviewed_by = NULL, reviewed_at = $1::timestamptz AT TIME ZONE 'UTC',
              info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL,
-             final_grade = NULL, decided_by = NULL, decided_by_role = 'system', decided_at = $1, decision_rationale = NULL
+             final_grade = NULL, decided_by = NULL, decided_by_role = 'system', decided_at = $1, decision_rationale = NULL,
+             -- final at once: a System decision never goes to the committee (round 2 Group 2)
+             committee_state = 'not_needed'
          WHERE (${condition}) AND ($2::int[] IS NULL OR id = ANY($2))
          RETURNING id, student_id`,
         [now, only, ...params]

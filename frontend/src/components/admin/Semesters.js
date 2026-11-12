@@ -130,7 +130,7 @@ export const ClosePanel = ({ semester, onClosed }) => {
                     {preview.undecidedByProgramme.length > 0 && (
                         <ul style={{ margin: '0 0 8px', paddingLeft: '18px' }}>
                             {preview.undecidedByProgramme.map((p) => (
-                                <li key={p.code}>{t('close_undecided_programme', { programme: programmeName(p, i18n), pending: p.pending, needsInfo: p.needs_info })}</li>
+                                <li key={p.code}>{t('close_undecided_programme', { programme: programmeName(p, i18n), pending: p.pending, needsInfo: p.needs_info, awaiting: p.awaiting_committee })}</li>
                             ))}
                         </ul>
                     )}

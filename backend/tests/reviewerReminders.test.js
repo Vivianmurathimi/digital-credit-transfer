@@ -42,9 +42,9 @@ const recorder = () => {
 const application = async (semester, status) => {
     const code = `REMTEST${Date.now().toString(36)}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade)
+        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade, committee_state)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN $7::timestamptz END,
-                 CASE WHEN $5::varchar = 'approved' THEN 4 END) RETURNING id`,
+                 CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
         [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Reminder test', credits: 1 }]), code, status,
             semesterIds[semester], moment(SEMESTERS[semester].end, 10 * DAY)]
     );

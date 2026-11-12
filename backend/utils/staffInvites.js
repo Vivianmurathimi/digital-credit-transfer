@@ -9,7 +9,8 @@ const { FRONTEND_URL } = require('../config/urls');
 // database never holds a working link.
 
 const INVITE_DAYS = 7;
-const INVITE_ROLES = ['reviewer', 'superadmin'];
+// committee (round 2 Group 2): someone only on committees; a reviewer joins one through a link instead
+const INVITE_ROLES = ['reviewer', 'committee', 'superadmin'];
 const MAX_EMAIL_LENGTH = 100; // users.email
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -42,7 +43,7 @@ const programmeListIn = (programmes, language) => programmes
 const sendInviteEmail = async ({ email, language, role, programmes = [], token }) => {
     try {
         const lang = normalizeLanguage(language);
-        const type = role === 'superadmin' ? 'adminInvite' : 'reviewerInvite';
+        const type = { superadmin: 'adminInvite', committee: 'committeeInvite' }[role] || 'reviewerInvite';
         const { subject, html } = buildAccountEmail(type, lang, { url: inviteLink(token), programme: programmeListIn(programmes, lang) });
         await sendEmail({ email, subject, html });
     } catch (err) {

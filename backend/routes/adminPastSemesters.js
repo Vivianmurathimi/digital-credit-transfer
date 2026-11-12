@@ -16,7 +16,7 @@ const { sendPdf, applicationPdf } = require('../utils/pdfDownloads');
 // Closing a semester and the Past semesters section (admin round Group 6), superadmin only.
 
 const adminOnly = [verifyToken, requireRole('superadmin')];
-const STATUSES = ['pending', 'needs_info', 'approved', 'rejected', 'withdrawn'];
+const STATUSES = ['pending', 'needs_info', 'awaiting_committee', 'approved', 'rejected', 'withdrawn'];
 const PAGE_SIZE = 200;
 const EXPORT_LIMIT = 10000;
 

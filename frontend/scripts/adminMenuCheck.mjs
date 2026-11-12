@@ -22,7 +22,7 @@ const report = (ok, name, detail = '') => {
 // Every admin screen built in Groups 1-5 and round 2 (component, or component:role when one serves two roles)
 const ADMIN_SCREENS = [
     'ReviewerOverview', 'AdminOverview', 'Semesters', 'PeriodControls', 'LateAccess', 'CatalogueImport', 'Catalogue',
-    'ApplicationsSection', 'PastSemesters', 'TermArchive', 'Analytics', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'ReviewerSharing', 'ActAs:reviewer', 'ActAs:student',
+    'ApplicationsSection', 'PastSemesters', 'TermArchive', 'Analytics', 'StaffAccess:reviewer', 'StaffAccess:superadmin', 'StaffAccess:committee', 'ReviewerSharing', 'ActAs:reviewer', 'ActAs:committee', 'ActAs:student',
     'StudentProgrammes', 'AllowedDomains',
 ];
 

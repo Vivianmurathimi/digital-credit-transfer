@@ -38,9 +38,9 @@ const formatNote = (note) => escapeHtml(note).replace(/\r?\n/g, '<br>');
 
 // Same labels the student sees in My Status (student_status_* keys in the frontend locales)
 const statusLabels = {
-    hu: { pending: 'Elbírálás alatt', needs_info: 'Kiegészítés szükséges', approved: 'Elfogadva', rejected: 'Elutasítva', withdrawn: 'Visszavonva' },
-    en: { pending: 'Under review', needs_info: 'Information needed', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' },
-    de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
+    hu: { pending: 'Elbírálás alatt', needs_info: 'Kiegészítés szükséges', awaiting_committee: 'Bizottsági elbírálás alatt', approved: 'Elfogadva', rejected: 'Elutasítva', withdrawn: 'Visszavonva' },
+    en: { pending: 'Under review', needs_info: 'Information needed', awaiting_committee: 'Under committee review', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' },
+    de: { pending: 'In Prüfung', needs_info: 'Informationen benötigt', awaiting_committee: 'Prüfung durch den Ausschuss', approved: 'Genehmigt', rejected: 'Abgelehnt', withdrawn: 'Zurückgezogen' },
 };
 
 // Reasons stored as codes (automatic decisions, jobs/applicationJobs.js; PROGRAMME_CHANGED: withdrawn
@@ -295,9 +295,9 @@ const buildEmail = (type, lang, data) => {
 // invitation, in the language chosen for it.
 // A reviewer's role in a programme (round 2 Group 1), e.g. in the invite: "Civil Engineering (extra reviewer)"
 const staffRoleLabels = {
-    hu: { main: 'fő bíráló', extra: 'további bíráló' },
-    en: { main: 'main reviewer', extra: 'extra reviewer' },
-    de: { main: 'Hauptgutachter', extra: 'zusätzlicher Gutachter' },
+    hu: { main: 'fő bíráló', extra: 'további bíráló', committee: 'bizottsági tag' },
+    en: { main: 'main reviewer', extra: 'extra reviewer', committee: 'committee member' },
+    de: { main: 'Hauptgutachter', extra: 'zusätzlicher Gutachter', committee: 'Ausschussmitglied' },
 };
 
 const accountTemplates = {
@@ -329,6 +329,14 @@ const accountTemplates = {
             text: (_, deadline) => `Az adminisztrátor késői hozzáférést adott Önnek: ${deadline}-ig (budapesti idő) regisztrálhat és beadhatja kreditátviteli kérelmét, akkor is, ha a jelentkezési időszak lezárult.`,
             button: 'Tovább a rendszerbe',
             footer: 'Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
+        },
+        // Round 2 Group 2: someone only on committees, for the programmes listed
+        committeeInvite: {
+            subject: 'Meghívó a bizottságba – PTE Kreditátvitel',
+            heading: 'Meghívó a PTE Kreditátviteli rendszerébe',
+            text: (programme) => `Meghívást kapott a bizottságba: ${programme}. A bizottság megerősíti vagy módosítja a bírálók döntéseit. Az alábbi gombra kattintva állítsa be jelszavát és aktiválja fiókját.`,
+            button: 'Meghívó elfogadása',
+            footer: 'A link 7 napig érvényes, és csak egyszer használható. Ha a gomb nem működik, másolja be ezt a linket a böngészőjébe:',
         },
         adminInvite: {
             subject: 'Meghívó adminisztrátornak – PTE Kreditátvitel',
@@ -367,6 +375,13 @@ const accountTemplates = {
             button: 'Go to the application system',
             footer: "If the button doesn't work, copy this link into your browser:",
         },
+        committeeInvite: {
+            subject: 'Committee invitation – PTE Credit Transfer',
+            heading: 'Invitation to the PTE Credit Transfer System',
+            text: (programme) => `You have been invited to the committee for: ${programme}. The committee confirms or changes the reviewers' decisions. Click the button below to set your password and activate your account.`,
+            button: 'Accept invitation',
+            footer: "This link is valid for 7 days and can be used once. If the button doesn't work, copy this link into your browser:",
+        },
         adminInvite: {
             subject: 'Administrator invitation – PTE Credit Transfer',
             heading: 'Invitation to the PTE Credit Transfer System',
@@ -404,6 +419,13 @@ const accountTemplates = {
             button: 'Zum Antragssystem',
             footer: 'Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
         },
+        committeeInvite: {
+            subject: 'Einladung in den Ausschuss – PTE-Kreditübertragung',
+            heading: 'Einladung zum PTE-Kreditübertragungssystem',
+            text: (programme) => `Sie wurden in den Ausschuss eingeladen für: ${programme}. Der Ausschuss bestätigt oder ändert die Entscheidungen der Gutachter/innen. Klicken Sie auf die Schaltfläche unten, um Ihr Passwort festzulegen und Ihr Konto zu aktivieren.`,
+            button: 'Einladung annehmen',
+            footer: 'Dieser Link ist 7 Tage gültig und kann nur einmal verwendet werden. Falls die Schaltfläche nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:',
+        },
         adminInvite: {
             subject: 'Einladung als Administrator – PTE-Kreditübertragung',
             heading: 'Einladung zum PTE-Kreditübertragungssystem',
@@ -416,7 +438,7 @@ const accountTemplates = {
 
 /**
  * Builds an account email with its link button.
- * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'adminInvite'|'lateAccess'} type
+ * @param {'verifyAccount'|'resetPassword'|'reviewerInvite'|'committeeInvite'|'adminInvite'|'lateAccess'} type
  * @param {string} lang  falls back to Hungarian
  * @param {{ url: string, programme?: string }} data  programme: the programme's name (reviewer invite)
  * @returns {{ subject: string, html: string }}

@@ -37,8 +37,8 @@ const summaries = (now, summarize) => sendDailySummaries({ now, summarize, onlyR
 const application = async (n, { status = 'pending', semester = null } = {}) => {
     const code = `ZSUM${run}${n}`.slice(0, 20);
     const id = (await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
-         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6) RETURNING id`,
+        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
+         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
         [student.id, programmeId, JSON.stringify([{ course_code: code, course_name: `Summary course ${n}` }]), code, status, semester]
     )).rows[0].id;
     apps.push(id);

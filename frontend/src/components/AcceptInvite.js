@@ -35,6 +35,7 @@ const AcceptInvite = () => {
     const [done, setDone] = useState(false);
     // Admin invites have their own texts (no programme)
     const isAdmin = invite?.role === 'superadmin';
+    const isCommittee = invite?.role === 'committee'; // round 2 Group 2
 
     useEffect(() => {
         http.get(`invites/${token}`).json()
@@ -96,8 +97,8 @@ const AcceptInvite = () => {
 
     return (
         <div style={boxStyle}>
-            <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t(isAdmin ? 'invite_title_admin' : 'invite_title')}</h2>
-            <p>{isAdmin ? t('invite_intro_admin') : t('invite_intro', {
+            <h2 style={{ textAlign: 'center', color: 'var(--link)', marginTop: 0 }}>{t(isAdmin ? 'invite_title_admin' : isCommittee ? 'invite_title_committee' : 'invite_title')}</h2>
+            <p>{isAdmin ? t('invite_intro_admin') : t(isCommittee ? 'invite_intro_committee' : 'invite_intro', {
                 // "Computer Science Engineering (Main reviewer), Civil Engineering (Extra reviewer)"
                 programme: (invite.programmes || []).map((link) => t('staff_link_summary', { programme: programmeName(link, i18n), role: t(`staff_link_role_${link.role}`) })).join(', '),
             })}</p>

@@ -53,9 +53,9 @@ router.get('/admin/analytics', ...adminOnly, async (req, res) => {
 const HEADERS = {
     status: { en: ['Status', 'Applications'], hu: ['Állapot', 'Kérelmek'], de: ['Status', 'Anträge'] },
     programmes: {
-        en: ['Programme', 'Pending', 'Needs info', 'Approved', 'Rejected', 'Withdrawn', 'Total'],
-        hu: ['Szak', 'Bírálatra vár', 'Kiegészítés szükséges', 'Elfogadva', 'Elutasítva', 'Visszavonva', 'Összesen'],
-        de: ['Studiengang', 'In Prüfung', 'Informationen benötigt', 'Genehmigt', 'Abgelehnt', 'Zurückgezogen', 'Gesamt'],
+        en: ['Programme', 'Pending', 'Needs info', 'Awaiting committee', 'Approved', 'Rejected', 'Withdrawn', 'Total'],
+        hu: ['Szak', 'Bírálatra vár', 'Kiegészítés szükséges', 'Bizottságra vár', 'Elfogadva', 'Elutasítva', 'Visszavonva', 'Összesen'],
+        de: ['Studiengang', 'In Prüfung', 'Informationen benötigt', 'Wartet auf den Ausschuss', 'Genehmigt', 'Abgelehnt', 'Zurückgezogen', 'Gesamt'],
     },
     turnaround: {
         en: ['Programme', 'Decided', 'Average days to decision', 'Median days to decision', 'Average days, excluding waiting for the student', 'Median days, excluding waiting for the student'],
@@ -77,7 +77,7 @@ router.get('/admin/analytics/export.csv', ...adminOnly, async (req, res) => {
         if (problem) return sendError(res, problem[0], problem[1], problem[2], { field: problem[3] });
         const a = await semesterAnalytics(pool, semester.id);
         let rows;
-        if (table === 'status') rows = STATUSES.map((s) => [statusLabels[lang][s], a.status.overall[s]]).concat([[HEADERS.programmes[lang][6], a.status.overall.total]]);
+        if (table === 'status') rows = STATUSES.map((s) => [statusLabels[lang][s], a.status.overall[s]]).concat([[HEADERS.programmes[lang].at(-1), a.status.overall.total]]);
         if (table === 'programmes') rows = a.status.byProgramme.map((r) => [programmeText(r.programme, lang), ...STATUSES.map((s) => r[s]), r.total]);
         if (table === 'turnaround') {
             rows = [...a.turnaround.byProgramme, a.turnaround.overall].map((r) => [

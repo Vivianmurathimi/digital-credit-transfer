@@ -20,6 +20,7 @@ const staffInviteRoutes = require('./routes/staffInvites');
 const reviewerRoutes = require('./routes/reviewer');
 const adminOverviewRoutes = require('./routes/adminOverview');
 const adminSharingRoutes = require('./routes/adminSharing');
+const committeeRoutes = require('./routes/committee');
 const applicationRoutes = require('./routes/applications');
 const uploadRoutes = require('./routes/uploads');
 const settingsRoutes = require('./routes/settings');
@@ -88,6 +89,7 @@ app.use('/api', adminCatalogueRoutes); // semesters and the Neptun catalogue (ad
 app.use('/api', adminStudentRoutes); // allowed domains and students' programmes (admin round Group 3)
 app.use('/api', adminOverviewRoutes); // the admin's per-programme overview (reviewer Group 7)
 app.use('/api', adminSharingRoutes); // sharing work between reviewers: assist, assign, distribute (round 2 Group 1)
+app.use('/api', committeeRoutes); // the committee (round 2 Group 2)
 app.use('/api', applicationRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/settings', settingsRoutes);

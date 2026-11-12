@@ -12,6 +12,8 @@ export const SECTIONS = [
     { id: 'past-semesters', path: 'past-semesters', labelKey: 'admin_menu_past_semesters', components: ['PastSemesters', 'TermArchive'] },
     { id: 'analytics', path: 'analytics', labelKey: 'admin_menu_analytics', components: ['Analytics'] },
     { id: 'reviewers', path: 'reviewers', labelKey: 'admin_menu_reviewers', components: ['StaffAccess:reviewer', 'ReviewerSharing', 'ActAs:reviewer'] },
+    // Round 2 Group 2: committee members (and reviewers who also sit on a committee)
+    { id: 'committee', path: 'committee', labelKey: 'admin_menu_committee', components: ['StaffAccess:committee', 'ActAs:committee'] },
     { id: 'students', path: 'students', labelKey: 'admin_menu_students', components: ['StudentProgrammes', 'ActAs:student'] },
     { id: 'admins', path: 'admins', labelKey: 'admin_menu_admins', components: ['StaffAccess:superadmin'] },
     { id: 'domains', path: 'domains', labelKey: 'admin_menu_domains', components: ['AllowedDomains'] },

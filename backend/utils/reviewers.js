@@ -6,8 +6,18 @@
 //   - its main reviewer, always;
 //   - an extra reviewer only while "allowed to assist" (can_assist) is on. A standby extra
 //     reviewer sees nothing of that programme.
-// verifyToken reads these from the database on every request (req.user.programmeIds), so a
-// change by the admin takes effect from the next request on.
+// Committee members (round 2 Group 2): links with role 'committee' (any number per programme, no
+// main). Someone only on a committee has users.role 'committee'; a reviewer may also have
+// committee links. Committee access always comes from the CURRENT committee links.
+// verifyToken reads these from the database on every request (req.user.programmeIds,
+// req.user.committeeProgrammeIds), so a change by the admin takes effect from the next request on.
+
+// The two sides of a link: reviewer (main, extra) and committee
+const REVIEWER_ROLES = ['main', 'extra'];
+const LINK_ROLES = ['main', 'extra', 'committee'];
+const sideOf = (role) => (role === 'committee' ? 'committee' : 'reviewer');
+// SQL: a link of the same side as $role (alias sp)
+const sameSideSql = (sp, param) => `(${sp}.role = 'committee') = (${param}::text = 'committee')`;
 
 // Applications that are not decided yet
 const OPEN_STATUSES = ['pending', 'needs_info'];
@@ -34,14 +44,28 @@ const visibleProgrammeIds = async (db, userId) => (await db.query(
     [userId]
 )).rows.map((row) => row.programme_id);
 
+// The programmes whose committee this person is on now (current committee links), as an id list
+const committeeProgrammeIds = async (db, userId) => (await db.query(
+    "SELECT sp.programme_id FROM staff_programmes sp WHERE sp.user_id = $1 AND sp.role = 'committee' AND sp.ended_at IS NULL ORDER BY sp.programme_id",
+    [userId]
+)).rows.map((row) => row.programme_id);
+
+// A person's current committee links, with the programme names
+const committeeProgrammes = async (db, userId) => (await db.query(
+    `SELECT sp.programme_id, p.code, p.name_en, p.name_hu, p.name_de
+     FROM staff_programmes sp JOIN programmes p ON p.id = sp.programme_id
+     WHERE sp.user_id = $1 AND sp.role = 'committee' AND sp.ended_at IS NULL ORDER BY p.code`,
+    [userId]
+)).rows;
+
 /**
- * Every current link of a person, with the programme and whether it lets them see it.
+ * Every current REVIEWER-side link of a person (main, extra), with the programme and whether it lets them see it.
  * @returns {Promise<Array<{ programme_id, code, name_en, name_hu, name_de, role, can_assist, sees }>>}
  */
 const reviewerProgrammes = async (db, userId) => (await db.query(
     `SELECT sp.programme_id, p.code, p.name_en, p.name_hu, p.name_de, sp.role, sp.can_assist, ${seesProgrammeSql('sp')} AS sees
      FROM staff_programmes sp JOIN programmes p ON p.id = sp.programme_id
-     WHERE sp.user_id = $1 AND sp.ended_at IS NULL
+     WHERE sp.user_id = $1 AND sp.ended_at IS NULL AND sp.role IN ('main', 'extra')
      ORDER BY p.code`,
     [userId]
 )).rows;
@@ -78,7 +102,9 @@ const mainReviewerOf = async (db, programmeId, { lock = false } = {}) => (await 
  * (a swap). Returns how many applications changed.
  */
 const endLink = async (client, { linkId, userId, programmeId, handOverTo = null }) => {
-    await client.query('UPDATE staff_programmes SET ended_at = now() WHERE id = $1 AND ended_at IS NULL', [linkId]);
+    const ended = (await client.query('UPDATE staff_programmes SET ended_at = now() WHERE id = $1 AND ended_at IS NULL RETURNING role', [linkId])).rows[0];
+    // A committee link has no assigned applications: ending it never touches the person's reviewer work
+    if (ended && ended.role === 'committee') return 0;
     return (await client.query(
         'UPDATE applications SET assigned_reviewer_id = $4 WHERE assigned_reviewer_id = $1 AND programme_id = $2 AND status = ANY($3)',
         [userId, programmeId, OPEN_STATUSES, handOverTo]
@@ -100,6 +126,7 @@ const resolveReviewerView = async (db, req) => {
 };
 
 module.exports = {
+    REVIEWER_ROLES, LINK_ROLES, sideOf, sameSideSql, committeeProgrammeIds, committeeProgrammes,
     OPEN_STATUSES, STAFF_ROLES, seesProgrammeSql, programmeHasReviewerSql, visibleProgrammeIds, reviewerProgrammes,
     programmeScopeOf, lockProgramme, lockProgrammes, mainReviewerOf, endLink, resolveReviewerView,
 };
