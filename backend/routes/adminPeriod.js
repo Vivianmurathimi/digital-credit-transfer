@@ -85,8 +85,10 @@ router.post('/admin/semesters/:id/close-now', ...adminOnly, requireIdParam('id')
             if (!s) return { error: [404, 'SEMESTER_NOT_FOUND', 'Semester not found'] };
             if (s.status !== 'active') return { error: [409, 'SEMESTER_NOT_ACTIVE', 'Only a semester in progress has an application period to close'] };
             if (!s.started || s.period_over) return { error: [409, 'PERIOD_NOT_OPEN', 'The application period is not open right now'] };
-            // close_reason: '' = closed by the admin without a reason (NULL = closed by its dates)
-            await client.query('UPDATE semesters SET applications_close_at = now(), close_reason = $2 WHERE id = $1', [s.id, reason]);
+            // close_reason: '' = closed by the admin without a reason (NULL = closed by its dates).
+            // The earlier of the database's clock and the server's: the period is judged by the server's
+            // clock (utils/applicationPeriod.js), so a database clock a few ms ahead must not keep it open.
+            await client.query('UPDATE semesters SET applications_close_at = LEAST(now(), $3::timestamptz), close_reason = $2 WHERE id = $1', [s.id, reason, new Date()]);
             return {};
         });
         if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2]);

@@ -3181,6 +3181,76 @@ const run = async () => {
         }
     }
 
+    section('4x. Committee members and files (round 2 Group 2 Part D): only files of applications their committee can see');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}F${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Files', 'Security Check Files', 'Security Check Files') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, linkRole) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role",
+                    [`Files ${key}`, `${STAFF_TEST_PREFIX}cx-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, $3)', [user.id, programmeId, linkRole]);
+                return user;
+            };
+            const main = await person('main', 'reviewer', 'main');
+            const member = await person('member', 'committee', 'committee');
+            const [TM, TC] = [tokenFor(main), tokenFor(member)];
+            const file = (name) => call('GET', `uploads/${encodeURIComponent(name)}`, { token: TC });
+            // A temporary application of student A in this programme naming one file, in the given state
+            const app = async (n, fileName, status, extra = {}) => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                     info_requested_at, info_deadline, decided_by_role, decided_at, committee_state)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END,
+                         $8, $9, $10) RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify(extra.institutions || []), JSON.stringify(extra.courses || [{ course_name: 'File check', file: fileName }]),
+                    JSON.stringify([{ course_code: `CX${n}`, course_name: 'File check' }]), `CX${n}${stamp}`.slice(0, 20), status,
+                    extra.by || null, extra.by ? new Date() : null, extra.state || null]
+            )).rows[0].id;
+
+            const fileB = d.fileOfB; // a real file of student B, named by applications of another programme only
+            const fileA = d.fileOfA;
+            const before = await file(fileB);
+            report(before.status === 404 && before.code === 'FILE_NOT_FOUND', "A member can't open another programme's file", `${before.status}`);
+            await expect('A member: no token', call('GET', `uploads/${encodeURIComponent(fileB)}`), 401, 'NO_TOKEN');
+
+            // Named in a pending application of the member's programme: still refused
+            const pending = await app(1, fileB, 'pending');
+            report((await file(fileB)).status === 404, "A pending application's file (transcript): refused");
+            await pool.query("UPDATE applications SET status = 'needs_info', info_requested_at = now(), info_deadline = now() + interval '2 days' WHERE id = $1", [pending]);
+            report((await file(fileB)).status === 404, "A needs-info application's file: refused");
+            // A withdrawn one, and a System decision, naming the other file (as a grading document)
+            await app(2, null, 'withdrawn', { courses: [], institutions: [{ name: 'X', country: 'AT', grading_file: fileA }] });
+            await app(3, null, 'rejected', { courses: [], institutions: [{ name: 'X', country: 'AT', grading_file: fileA }], by: 'system', state: 'not_needed' });
+            report((await file(fileA)).status === 404, 'Files of withdrawn and System-decided applications: refused');
+
+            // The reviewer decides: now it is the committee's, and so is its file
+            await pool.query("UPDATE applications SET status = 'pending', info_requested_at = NULL, info_deadline = NULL WHERE id = $1", [pending]);
+            await expect('The reviewer approves it', call('PUT', `applications/${pending}/status`, { token: TM, json: { status: 'approved', final_grade: 4 } }), 200);
+            const allowed = await call('GET', `uploads/${encodeURIComponent(fileB)}`, { token: TC });
+            report(allowed.status === 200, "Awaiting the committee: the member opens the application's file", `${allowed.status} ${allowed.code || ''}`);
+            report((await file(fileA)).status === 404, 'Still not the file named only by the withdrawn and System-decided ones');
+            // Handled by the committee: still theirs to see (read-only)
+            await expect('The member keeps the decision', call('PUT', `committee/applications/${pending}/decision`, { token: TC, json: { action: 'keep' } }), 200);
+            report((await file(fileB)).status === 200, 'Handled by the committee: the file still opens');
+
+            // The link ends, or the member is removed: refused from the next request on
+            await pool.query("UPDATE staff_programmes SET ended_at = now() WHERE user_id = $1 AND role = 'committee'", [member.id]);
+            report((await file(fileB)).status === 404, 'The committee link ended: the file is refused at once');
+            await pool.query("UPDATE staff_programmes SET ended_at = NULL WHERE user_id = $1 AND role = 'committee'", [member.id]);
+            await pool.query('UPDATE users SET deactivated_at = now() WHERE id = $1', [member.id]);
+            const removed = await file(fileB);
+            report(removed.status === 401, 'A removed member is refused', `${removed.status} ${removed.code || ''}`);
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary files programme (${removed}) with its people and applications)`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
