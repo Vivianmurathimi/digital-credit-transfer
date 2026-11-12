@@ -3058,6 +3058,129 @@ const run = async () => {
         }
     }
 
+    section('4w. The committee decides (round 2 Group 2 Part C): what members see, keep or change, one step only, never their own decision');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}C${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Committee', 'Security Check Committee', 'Security Check Committee') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, links) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role, name",
+                    [`Committee ${key}`, `${STAFF_TEST_PREFIX}cw-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                for (const [linkRole, assist] of links) {
+                    await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)', [user.id, programmeId, linkRole, assist]);
+                }
+                return user;
+            };
+            const M = await person('main', 'reviewer', [['main', false]]);
+            const C1 = await person('one', 'committee', [['committee', false]]);
+            const C2 = await person('two', 'committee', [['committee', false]]);
+            const RC = await person('both', 'reviewer', [['extra', true], ['committee', false]]); // assisting reviewer AND committee member
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Committee Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role`,
+                [`cw-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `W${stamp.slice(-5)}`.padEnd(6, 'W').slice(0, 6), programmeId]
+            )).rows[0];
+            const [TM, T1, T2, TRC, TS] = [tokenFor(M), tokenFor(C1), tokenFor(C2), tokenFor(RC), tokenFor(student)];
+            const app = async (n, status = 'pending') => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_code: `CW${n}`, course_name: `Committee course ${n}` }]), `CW${n}${stamp}`.slice(0, 20), status]
+            )).rows[0].id;
+            const decide = (id, json, token = TM) => call('PUT', `applications/${id}/status`, { token, json });
+            const step = (id, json, token = T1) => call('PUT', `committee/applications/${id}/decision`, { token, json });
+            const listOf = async (token, tab = 'waiting') => ((await call('GET', `committee/applications?tab=${tab}`, { token })).body?.applications || []).map((a) => a.id);
+
+            // What a member sees: decided ones only, of their programmes
+            const pending = await app(1);
+            const waitingForStudent = await app(2, 'needs_info');
+            const a3 = await app(3);
+            await expect('The reviewer approves (grade 4)', decide(a3, { status: 'approved', final_grade: 4, note: 'Reviewer reason' }), 200);
+            const waitingList = await listOf(T1);
+            report(waitingList.includes(a3) && !waitingList.includes(pending) && !waitingList.includes(waitingForStudent),
+                'Waiting list: the decided application, never pending or needs info', JSON.stringify(waitingList));
+            await expect('A member opens a pending application', call('GET', `committee/applications/${pending}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('A member opens a needs-info application', call('GET', `committee/applications/${waitingForStudent}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('A member takes the step on a pending application', step(pending, { action: 'keep' }), 404, 'APPLICATION_NOT_FOUND');
+            const otherAwaiting = (await pool.query("SELECT id FROM applications WHERE status = 'awaiting_committee' AND programme_id <> $1 LIMIT 1", [programmeId])).rows[0]?.id;
+            if (otherAwaiting) await expect("A member opens another programme's decision", call('GET', `committee/applications/${otherAwaiting}`, { token: T1 }), 404, 'APPLICATION_NOT_FOUND');
+            const details = await call('GET', `committee/applications/${a3}`, { token: T1 });
+            report(details.status === 200 && details.body.application.decision.reviewer_decision === 'approved' && details.body.application.decision.reviewer_grade === 4,
+                "A member opens the decided application with the reviewer's decision and grade", `${details.status}`);
+            await expect('A reviewer without committee links on the committee list', call('GET', 'committee/applications', { token: TM }), 403, 'FORBIDDEN_ROLE');
+            await expect('A student on the committee list', call('GET', 'committee/applications', { token: TS }), 403, 'FORBIDDEN_ROLE');
+
+            // The rules of the step
+            await expect('An unknown action', step(a3, { action: 'reopen' }), 400, 'INVALID_ACTION');
+            await expect('Change without a note', step(a3, { action: 'change' }), 400, 'COMMITTEE_NOTE_REQUIRED');
+            await expect('A grade of 6', step(a3, { action: 'keep', final_grade: 6 }), 400, 'INVALID_FINAL_GRADE');
+            await expect('Keep the approval, another grade (3)', step(a3, { action: 'keep', final_grade: 3, note: 'Grade adjusted' }), 200);
+            const kept = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_state, committee_by, committee_by_role FROM applications WHERE id = $1', [a3])).rows[0];
+            report(kept.status === 'approved' && kept.final_grade === 3 && kept.reviewer_grade === 4 && kept.committee_state === 'kept' && kept.committee_by === C1.id && kept.committee_by_role === 'committee',
+                "Kept: final approved with the committee's grade; the reviewer's grade stays; who acted recorded", JSON.stringify(kept));
+            await expect('A second step on it', step(a3, { action: 'change', note: 'x' }, T2), 409, 'ALREADY_DECIDED');
+            const mine = (await call('GET', 'applications/mine', { token: TS })).body?.applications || [];
+            const studentKept = mine.find((a) => a.id === a3);
+            report(studentKept?.status === 'approved' && studentKept.final_grade === 3 && studentKept.decided_by === 'committee'
+                && studentKept.decision_rationale === 'Reviewer reason' && studentKept.committee_note === 'Grade adjusted' && !JSON.stringify(mine).includes('"reviewer_grade"'),
+            'The student: approved, the final grade only, "decided by: committee", the reason and the committee note', JSON.stringify(studentKept && { s: studentKept.status, g: studentKept.final_grade, by: studentKept.decided_by }));
+            const history = (await call('GET', `applications/mine/${a3}`, { token: TS })).body?.application?.events || [];
+            report(history.some((e) => e.kind === 'committee_kept' && e.actor_role === 'committee') && !history.some((e) => e.kind === 'decided'),
+                "The student's history: the committee's step as \"committee\", never the reviewer's");
+
+            // Reviewer rejected, committee changes to approved: a grade is required
+            const a4 = await app(4);
+            await expect('The reviewer rejects', decide(a4, { status: 'rejected', note: 'Different content' }), 200);
+            await expect('Change reject -> approve without a grade', step(a4, { action: 'change', note: 'Equivalent after all' }), 400, 'GRADE_REQUIRED');
+            await expect('Keep a rejection with a grade', step(a4, { action: 'keep', final_grade: 4 }), 400, 'GRADE_ONLY_ON_APPROVE');
+            await expect('Change reject -> approve with grade 5', step(a4, { action: 'change', final_grade: 5, note: 'Equivalent after all' }), 200);
+            const changed = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === a4);
+            report(changed?.status === 'approved' && changed.final_grade === 5 && changed.decision_rationale === null && changed.committee_note === 'Equivalent after all',
+                "Changed: the student sees the committee's note only, never the reviewer's reason", JSON.stringify(changed && { s: changed.status, r: changed.decision_rationale }));
+
+            // Two members at the same moment: one step
+            const a5 = await app(5);
+            await decide(a5, { status: 'approved', final_grade: 4 });
+            const both = await Promise.all([step(a5, { action: 'keep' }, T1), step(a5, { action: 'change', note: 'No' }, T2)]);
+            const answers = both.map((r) => `${r.status}${r.code ? ` ${r.code}` : ''}`).sort();
+            report(answers.join(' | ') === '200 | 409 ALREADY_DECIDED', 'Two members at once: one saved, the other 409 ALREADY_DECIDED', answers.join(' | '));
+            report((await pool.query("SELECT count(*)::int AS n FROM application_events WHERE application_id = $1 AND kind LIKE 'committee_%'", [a5])).rows[0].n === 1, 'One committee step in the history');
+
+            // Never your own decision
+            const a6 = await app(6);
+            await expect('The assisting reviewer (also a committee member) decides', decide(a6, { status: 'rejected', note: 'Mine' }, TRC), 200);
+            await expect('…and tries the committee step on it', step(a6, { action: 'keep' }, TRC), 409, 'OWN_DECISION');
+            report((await listOf(TRC)).includes(a6), 'They still see it in the committee list (marked as their own)');
+            await expect('Another member takes the step', step(a6, { action: 'keep' }, T2), 200);
+
+            // The admin takes the step directly: recorded as the admin
+            const a7 = await app(7);
+            await decide(a7, { status: 'approved', final_grade: 2 });
+            await expect('A reviewer on the admin route', call('PUT', `admin/applications/${a7}/committee`, { token: TM, json: { action: 'keep' } }), 403, 'FORBIDDEN_ROLE');
+            await expect('The admin keeps it', call('PUT', `admin/applications/${a7}/committee`, { token: S, json: { action: 'keep' } }), 200);
+            const byAdmin = (await pool.query("SELECT a.committee_by_role, e.actor_role FROM applications a JOIN application_events e ON e.application_id = a.id AND e.kind = 'committee_kept' WHERE a.id = $1", [a7])).rows[0];
+            report(byAdmin?.committee_by_role === 'admin' && byAdmin.actor_role === 'admin', 'The admin\'s step is recorded as the admin ("Admin, as committee")', JSON.stringify(byAdmin));
+            const forStudent = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === a7);
+            report(forStudent?.decided_by === 'committee', 'The student still sees "decided by: committee"');
+            const a8 = await app(8);
+            await decide(a8, { status: 'approved', final_grade: 4 }, S);
+            await expect('The admin confirms their own decision', call('PUT', `admin/applications/${a8}/committee`, { token: S, json: { action: 'keep' } }), 409, 'OWN_DECISION');
+            const handled = await listOf(T1, 'handled');
+            report([a3, a4, a5, a6, a7].every((id) => handled.includes(id)) && !handled.includes(a8), 'Handled list: the decided ones, not the one still waiting');
+            const pdf = await fetch(`${API}/committee/applications/${a3}/pdf`, { headers: { Authorization: `Bearer ${T1}` } });
+            report(pdf.status === 200 && Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString() === '%PDF', 'A member downloads the application as a PDF');
+            const noPdf = await fetch(`${API}/committee/applications/${pending}/pdf`, { headers: { Authorization: `Bearer ${T1}` } });
+            report(noPdf.status === 404, "…but not a pending application's PDF", `${noPdf.status}`);
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary committee programme (${removed}) with its people and applications)`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

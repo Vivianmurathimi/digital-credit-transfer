@@ -15,7 +15,9 @@ const asList = (value) => (Array.isArray(value) ? value : []);
  * @returns {Promise<object|null>}  null when it isn't there (or withdrawn, or outside the limits)
  */
 // includeWithdrawn: the admin's Past semesters shows withdrawn applications too (the reviewer never sees them)
-const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId = null, includeWithdrawn = false } = {}) => {
+// committeeOnly (round 2 Group 2): only what a committee member may see (decided by a reviewer or
+// admin: awaiting the committee or handled by it), and who in the committee acted stays hidden
+const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId = null, includeWithdrawn = false, committeeOnly = false } = {}) => {
     const found = (await db.query(
         `SELECT a.id, a.status, a.student_id, a.target_course_code, a.target_courses, a.fulfilled_courses_json, a.institutions,
                 a.supplemental_files, a.final_grade, a.decided_by_role, decider.name AS decided_by_name, a.decided_at,
@@ -29,8 +31,9 @@ const loadApplicationDetails = async (db, id, { programmeIds = null, semesterId 
          LEFT JOIN semesters sem ON sem.id = a.semester_id
          LEFT JOIN users decider ON decider.id = a.decided_by
          WHERE a.id = $1 AND ($2::int[] IS NULL OR a.programme_id = ANY($2::int[])) AND ($3::int IS NULL OR a.semester_id = $3)
-           AND ($4::boolean OR a.status <> 'withdrawn')`,
-        [id, programmeIds, semesterId, includeWithdrawn]
+           AND ($4::boolean OR a.status <> 'withdrawn')
+           AND (NOT $5::boolean OR a.committee_state IN ('awaiting', 'kept', 'changed'))`,
+        [id, programmeIds, semesterId, includeWithdrawn, committeeOnly]
     )).rows[0];
     if (!found) return null;
 

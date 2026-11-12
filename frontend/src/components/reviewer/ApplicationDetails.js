@@ -33,7 +33,8 @@ const decisionButton = (cue) => ({
 // details from its own route, read-only.
 // pdfUrl (round 2 Group 1): "Download as PDF" for this application, the same pages as in the book
 // (the reviewer's own route by default; the admin's views pass theirs).
-const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdfUrl = null }) => {
+// readOnlyNote: the note shown when read-only (the committee shows its own, round 2 Group 2)
+const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdfUrl = null, readOnlyNote = 'reviewer_read_only_details' }) => {
     const { t, i18n } = useTranslation();
     const language = (i18n.resolvedLanguage || i18n.language || 'en').slice(0, 2);
     const [details, setDetails] = useState(null);
@@ -210,7 +211,7 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                 past-semester rule on the server) */}
             {(readOnly || details.read_only) && (
                 <p role="note" style={{ margin: 0, color: 'var(--cue-system-text)', fontSize: '14px' }}>
-                    <span aria-hidden="true">🔒 </span>{t('reviewer_read_only_details')}
+                    <span aria-hidden="true">🔒 </span>{t(readOnlyNote)}
                 </p>
             )}
             {details.status === 'pending' && !(readOnly || details.read_only) && (
