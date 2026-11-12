@@ -29,6 +29,12 @@ const AdminOverview = ({ summary }) => {
                 ...values, key: 'admin_warning_review_passed', to: '/admin/applications',
                 list: s.undecidedByProgramme.map((p) => t('admin_warning_review_passed_programme', { programme: programmeName(p, i18n), pending: p.pending, needsInfo: p.needs_info })).join('; '),
             },
+            // The committee deadline (round 2 Group 2): soon / passed while decisions await the committee
+            s.committeeSoon && { ...values, key: 'admin_warning_committee_soon', to: '/admin/applications', date: formatDateTime(s.committeeEndsAt, language), count: s.awaitingCommittee },
+            s.committeePassed && {
+                ...values, key: 'admin_warning_committee_passed', to: '/admin/applications', date: formatDateTime(s.committeeEndsAt, language),
+                list: (s.awaitingByProgramme || []).map((p) => t('admin_overview_awaiting_programme', { programme: programmeName(p, i18n), count: p.awaiting })).join('; '),
+            },
             s.canClose && { ...values, key: 'admin_warning_ready_to_close', to: '/admin/semesters' },
         ];
     });

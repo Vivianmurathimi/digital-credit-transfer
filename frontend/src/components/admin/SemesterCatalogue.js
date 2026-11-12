@@ -13,13 +13,13 @@ const useSemesters = () => {
     const { t } = useTranslation();
     const [semesters, setSemesters] = useState([]);
     // The timeline's numbers come from the server (utils/semesters.js), round 2 Group 1
-    const [numbers, setNumbers] = useState({ reviewDaysDefault: null, reviewMarginDays: null });
+    const [numbers, setNumbers] = useState({ reviewDaysDefault: null, reviewMarginDays: null, committeeDaysDefault: null });
     const [error, setError] = useState('');
     const load = useCallback(async () => {
         try {
             const data = await http.get('admin/semesters').json();
             setSemesters(data.semesters);
-            setNumbers({ reviewDaysDefault: data.reviewDaysDefault, reviewMarginDays: data.reviewMarginDays });
+            setNumbers({ reviewDaysDefault: data.reviewDaysDefault, reviewMarginDays: data.reviewMarginDays, committeeDaysDefault: data.committeeDaysDefault });
             setError('');
         } catch (err) { setError(getErrorMessage(err, t, 'semesters_load_failed')); }
     }, [t]);
@@ -35,7 +35,7 @@ export const SemesterSection = ({ onChange = () => {} }) => {
     return (
         <>
             <LoadError error={error} />
-            <Semesters semesters={semesters} reviewDaysDefault={numbers.reviewDaysDefault} reviewMarginDays={numbers.reviewMarginDays} onChange={() => { load(); onChange(); }} />
+            <Semesters semesters={semesters} reviewDaysDefault={numbers.reviewDaysDefault} reviewMarginDays={numbers.reviewMarginDays} committeeDaysDefault={numbers.committeeDaysDefault} onChange={() => { load(); onChange(); }} />
         </>
     );
 };

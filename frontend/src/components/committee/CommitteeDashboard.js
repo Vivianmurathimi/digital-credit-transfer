@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import http from '../../http';
 import { getErrorMessage, unpackBlobError } from '../../errorMessage';
 import { programmeName } from '../../programmeName';
+import { formatDateTime } from '../../dates';
 import { matchesSearch } from '../../reviewerList';
 import downloadPdf from '../../downloadPdf';
 import ReviewerSearch from '../reviewer/ReviewerSearch';
@@ -24,6 +25,7 @@ const tabButton = (active) => ({
 
 const CommitteeDashboard = () => {
     const { t, i18n } = useTranslation();
+    const language = i18n.resolvedLanguage || i18n.language;
     const [me, setMe] = useState(null);
     const [lists, setLists] = useState({ waiting: null, handled: null });
     const [tab, setTab] = useState('waiting');
@@ -73,6 +75,19 @@ const CommitteeDashboard = () => {
                 <>
                     <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>{t('committee_programmes', { programmes: me.programmes.map((p) => programmeName(p, i18n)).join(', ') })}</p>
                     <p style={{ color: 'var(--text-muted)', marginTop: 0 }}>{t('committee_intro')}</p>
+                    {/* The committee deadline of each semester in progress (Part F): soon (amber) or passed (red)
+                        while decisions of my programmes still await the committee; otherwise just the date */}
+                    {me.semesters.filter((s) => s.committeeEndsAt && s.status === 'active').map((s) => {
+                        const cue = s.committeePassed ? 'rejected' : s.committeeSoon ? 'needs-info' : null;
+                        const text = t(s.committeePassed ? 'committee_deadline_passed' : 'committee_deadline', {
+                            name: s.name, date: formatDateTime(s.committeeEndsAt, language), count: s.awaiting,
+                        });
+                        return cue ? (
+                            <p key={s.id} role="alert" style={{ margin: '0 0 10px', padding: '8px 10px', borderRadius: '5px', backgroundColor: `var(--cue-${cue}-bg)`, color: `var(--cue-${cue}-text)`, borderLeft: `4px solid var(--cue-${cue}-border)` }}>
+                                <span aria-hidden="true">{s.committeePassed ? '⚠ ' : '⏰ '}</span>{text}
+                            </p>
+                        ) : <p key={s.id} style={{ margin: '0 0 10px', color: 'var(--text-secondary)' }}>{text}</p>;
+                    })}
                     {notice && <div role="status" style={{ backgroundColor: 'var(--success-bg)', color: 'var(--success-text)', padding: '10px', borderRadius: '5px', marginBottom: '12px' }}>{notice}</div>}
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>

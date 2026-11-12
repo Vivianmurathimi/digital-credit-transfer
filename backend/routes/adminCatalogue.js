@@ -8,7 +8,7 @@ const { requireIdParam, positiveInt } = require('../utils/validate');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
-const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS } = require('../utils/semesters');
+const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT } = require('../utils/semesters');
 const { readNeptunFile, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
 const { MAX_BYTES } = require('../utils/neptun/parse');
 
@@ -36,6 +36,9 @@ const SEMESTER_COLUMNS = `
     s.last_days_warning_days AS last_days, s.close_reason,
     s.applications_open_at <= now() AS started, s.applications_close_at <= now() AS period_over,
     s.review_end_at <= now() AS review_passed, s.book_error,
+    -- the committee deadline in effect, and whether it is the default (round 2 Group 2)
+    (SELECT b.committee_ends_at FROM semester_bounds b WHERE b.id = s.id) AS committee_end_at,
+    s.committee_end_at IS NULL AS committee_end_default,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id) AS applications,
     (SELECT count(*)::int FROM courses c WHERE c.semester_id = s.id) AS courses`;
 const readSemester = async (db, id) => (await db.query(
@@ -44,7 +47,9 @@ const readSemester = async (db, id) => (await db.query(
 
 // The checks shared by create and edit; returns [code, message, field] or null.
 // review_end_at: optional (create: applications close + REVIEW_DAYS_DEFAULT days; edit: unchanged)
-const checkSemesterInput = ({ name, opens_at: opensAt, closes_at: closesAt, review_end_at: reviewAt, end_date: endDate, last_days: lastDays }) => {
+// committee_end_at (round 2 Group 2): optional; missing = the default on create, unchanged on edit;
+// null = back to the default (review deadline + COMMITTEE_DAYS_DEFAULT). Never before the review deadline.
+const checkSemesterInput = ({ name, opens_at: opensAt, closes_at: closesAt, review_end_at: reviewAt, committee_end_at: committeeAt, end_date: endDate, last_days: lastDays }) => {
     // The last-days warning (admin round Group 5): whole days 0-60, default 3
     if (lastDays !== undefined && !(Number.isInteger(lastDays) && lastDays >= 0 && lastDays <= 60)) return ['INVALID_LAST_DAYS', 'The warning days must be 0 to 60', 'last_days'];
     if (typeof name !== 'string' || !name.trim() || name.trim().length > MAX_NAME) return ['INVALID_SEMESTER_NAME', `A name of 1 to ${MAX_NAME} characters`, 'name'];
@@ -56,11 +61,24 @@ const checkSemesterInput = ({ name, opens_at: opensAt, closes_at: closesAt, revi
         if (!isLocalTime(reviewAt)) return ['INVALID_TIME', 'The review deadline must be a date and time', 'review_end_at'];
         if (reviewAt < closesAt) return ['REVIEW_BEFORE_CLOSE', 'The review deadline cannot be before applications close', 'review_end_at'];
     }
+    if (committeeAt !== undefined && committeeAt !== null && committeeAt !== '') {
+        if (!isLocalTime(committeeAt)) return ['INVALID_TIME', 'The committee deadline must be a date and time', 'committee_end_at'];
+        if (committeeAt < closesAt || (reviewAt && committeeAt < reviewAt)) return COMMITTEE_BEFORE_REVIEW;
+    }
     return null;
+};
+
+const COMMITTEE_BEFORE_REVIEW = ['COMMITTEE_BEFORE_REVIEW', 'The committee deadline cannot be before the review deadline', 'committee_end_at'];
+// The committee deadline of a save: [mode, value]: keep it, set it, or back to the default
+const committeeChange = (value, { creating }) => {
+    if (value === undefined || value === '') return creating ? ['default', null] : ['keep', null];
+    if (value === null) return ['default', null];
+    return ['set', value];
 };
 
 // Database refusals of a semester save, as answers
 const semesterSaveError = (err) => {
+    if (err.code === '23514' && err.constraint === 'semesters_committee_after_review') return [400, ...COMMITTEE_BEFORE_REVIEW];
     if (err.code === '23505' && err.constraint === 'semesters_name_key') return [409, 'SEMESTER_NAME_TAKEN', 'A semester with this name already exists', 'name'];
     if (err.code === '23P01') return [409, 'SEMESTERS_OVERLAP', 'This application period overlaps another semester\'s', 'opens_at'];
     // e.g. an edit that moves applications closing after the semester's review deadline
@@ -79,7 +97,7 @@ router.get('/admin/semesters', ...adminOnly, async (req, res) => {
             `SELECT ${SEMESTER_COLUMNS} FROM semesters s LEFT JOIN users closer ON closer.id = s.closed_by
              ORDER BY s.applications_open_at DESC`
         );
-        res.json({ success: true, semesters: rows, reviewDaysDefault: REVIEW_DAYS_DEFAULT, reviewMarginDays: REVIEW_MARGIN_DAYS });
+        res.json({ success: true, semesters: rows, reviewDaysDefault: REVIEW_DAYS_DEFAULT, reviewMarginDays: REVIEW_MARGIN_DAYS, committeeDaysDefault: COMMITTEE_DAYS_DEFAULT });
     } catch (err) {
         console.error('❌ Semester list error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not list the semesters');
@@ -93,12 +111,13 @@ router.post('/admin/semesters', ...adminOnly, async (req, res) => {
     if (problem) return sendError(res, 400, problem[0], problem[1], { field: problem[2] });
     try {
         const { rows } = await pool.query(
-            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, review_end_at, end_date, last_days_warning_days)
+            `INSERT INTO semesters (name, status, applications_open_at, applications_close_at, review_end_at, end_date, last_days_warning_days, committee_end_at)
              VALUES ($1, 'setup', $2::timestamp AT TIME ZONE 'Europe/Budapest', $3::timestamp AT TIME ZONE 'Europe/Budapest',
                      COALESCE($6::timestamp, $3::timestamp + make_interval(days => $7)) AT TIME ZONE 'Europe/Budapest',
-                     $4::date, COALESCE($5::int, 3))
+                     $4::date, COALESCE($5::int, 3), $8::timestamp AT TIME ZONE 'Europe/Budapest')
              RETURNING id`,
-            [body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null, body.review_end_at || null, REVIEW_DAYS_DEFAULT]
+            [body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null, body.review_end_at || null, REVIEW_DAYS_DEFAULT,
+                committeeChange(body.committee_end_at, { creating: true })[1]]
         );
         res.status(201).json({ success: true, semester: await readSemester(pool, rows[0].id) });
     } catch (err) {
@@ -120,9 +139,11 @@ router.put('/admin/semesters/:id', ...adminOnly, requireIdParam('id'), async (re
                  applications_close_at = $4::timestamp AT TIME ZONE 'Europe/Budapest', end_date = $5::date,
                  review_end_at = COALESCE($7::timestamp AT TIME ZONE 'Europe/Budapest', review_end_at),
                  last_days_warning_days = COALESCE($6::int, last_days_warning_days),
+                 committee_end_at = CASE $8::text WHEN 'keep' THEN committee_end_at WHEN 'set' THEN $9::timestamp AT TIME ZONE 'Europe/Budapest' END,
                  close_reason = NULL -- new times: the dates are in charge again (clears an earlier Close now)
              WHERE id = $1 AND status <> 'closed'`,
-            [req.ids.id, body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null, body.review_end_at || null]
+            [req.ids.id, body.name.trim(), body.opens_at, body.closes_at, body.end_date, body.last_days ?? null, body.review_end_at || null,
+                ...committeeChange(body.committee_end_at, { creating: false })]
         );
         if (rowCount === 0) {
             const exists = (await pool.query('SELECT status FROM semesters WHERE id = $1', [req.ids.id])).rows[0];

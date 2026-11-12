@@ -1,10 +1,10 @@
 const pool = require('../db');
 const notifyStudent = require('../utils/notifyStudent');
 const sendEmail = require('../utils/sendEmail');
-const { buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail } = require('../utils/emailTemplates');
+const { buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, buildCommitteeEmail, buildCommitteeSummaryEmail } = require('../utils/emailTemplates');
 const { seesProgrammeSql } = require('../utils/reviewers');
 const inTransaction = require('../utils/transaction');
-const { REVIEW_WARNING_DAYS } = require('../utils/semesters');
+const { REVIEW_WARNING_DAYS, COMMITTEE_WARNING_DAYS } = require('../utils/semesters');
 
 // Background steps for applications (Group 9), run regularly by jobs/scheduler.js.
 //
@@ -18,9 +18,11 @@ const { REVIEW_WARNING_DAYS } = require('../utils/semesters');
 // (a fixed time in the tests and with `npm run jobs:run -- --now=...`, the real time otherwise),
 // `notify` sends the student email (notifyStudent by default), `remind` the reviewer's review-deadline
 // reminder (remindReviewer by default), `alert` the admins' review-deadline email (alertAdmins by
-// default), `summarize` the reviewer's daily summary (sendReviewerSummary by default), and `only` /
-// `onlyDraftsOf` / `onlyReviewers` (tests only) limit the step to these application ids, these
-// students' drafts and these reviewers, so a test never touches real data.
+// default), `summarize` the reviewer's daily summary (sendReviewerSummary by default); for the
+// committee (round 2 Group 2 Part F) `summarizeCommittee`, `remindCommittee` and `alertCommittee`;
+// and `only` / `onlyDraftsOf` / `onlyReviewers` / `onlyMembers` (tests only) limit the step to these
+// application ids, these students' drafts, these reviewers and these committee members, so a test
+// never touches real data.
 //
 // Catching up: every condition compares with `now` ("the deadline has passed", "the last days have
 // started"), so whatever passed while the server was off is handled by the first run after it starts.
@@ -371,12 +373,225 @@ const alertReviewDeadlinePassed = async ({ now, alert = alertAdmins, only = null
     return rows.length;
 };
 
+// ---------------------------------------------------------------------------------------------
+// The committee (round 2 Group 2 Part F): its daily summary, the reminders before the committee
+// deadline, and the admins' email when it passes. Like the review deadline it is a target, never a
+// lock: nothing is decided automatically. Only applications awaiting the committee count (the
+// reviewers' steps above count only pending and needs info).
+// ---------------------------------------------------------------------------------------------
+
+// Who is on a programme's committee now: a current committee link of an active account (alias cl)
+const CURRENT_MEMBER_SQL = (cl, u) => `${cl}.role = 'committee' AND ${cl}.ended_at IS NULL AND ${u}.deactivated_at IS NULL AND ${u}.role IN ('committee', 'reviewer')`;
+const beforeCommitteeDeadline = (days) => `((sb.committee_ends_at AT TIME ZONE 'Europe/Budapest') - make_interval(days => ${days})) AT TIME ZONE 'Europe/Budapest'`;
+
+// One member's daily summary email, in their language. Never throws.
+const sendCommitteeSummary = async (summary) => {
+    try {
+        const email = buildCommitteeSummaryEmail(summary.preferred_language, { name: summary.member_name, decisions: summary.decisions, waiting: summary.waiting });
+        await sendEmail({ email: summary.member_email, subject: email.subject, html: email.html });
+    } catch (err) {
+        console.error(`❌ Committee daily summary for member ${summary.member_id} failed:`, err.message);
+    }
+};
+
+/**
+ * The committee members' daily summary, at DAILY_SUMMARY_HOUR (07:00) Budapest time, the same rules
+ * as the reviewers' (sendDailySummaries): recorded first (committee_summaries, once per member and
+ * day, also with two processes), covering everything since the previous one; an email only when
+ * something is new. What is new: decisions made in the member's current committee programmes that
+ * still await the committee, except the member's own (they can't confirm those). Someone who is also
+ * a reviewer gets this and the reviewer summary separately: two tables, two emails.
+ */
+const sendCommitteeSummaries = async ({ now, summarizeCommittee = sendCommitteeSummary, onlyMembers = null }) => {
+    const { rows: recorded } = await pool.query(
+        `WITH clock AS (SELECT ($1::timestamptz AT TIME ZONE 'Europe/Budapest') AS local),
+         due AS (
+             SELECT u.id AS member_id FROM users u, clock
+             WHERE clock.local::time >= make_time($3::int, 0, 0)
+               AND ($2::int[] IS NULL OR u.id = ANY($2))
+               AND EXISTS (SELECT 1 FROM staff_programmes cl WHERE cl.user_id = u.id AND ${CURRENT_MEMBER_SQL('cl', 'u')})
+               AND NOT EXISTS (SELECT 1 FROM committee_summaries c WHERE c.member_id = u.id AND c.day = clock.local::date)
+         )
+         INSERT INTO committee_summaries (member_id, day, covered_from, covered_until)
+         SELECT d.member_id, (SELECT local::date FROM clock),
+                LEAST(COALESCE((SELECT max(p.covered_until) FROM committee_summaries p WHERE p.member_id = d.member_id), $1 - interval '24 hours'), $1),
+                $1
+         FROM due d
+         ON CONFLICT (member_id, day) DO NOTHING
+         RETURNING member_id, day, covered_from, covered_until`,
+        [now, onlyMembers, DAILY_SUMMARY_HOUR]
+    );
+    let emailed = 0;
+    for (const row of recorded) {
+        const programmeIds = (await pool.query(
+            "SELECT programme_id FROM staff_programmes WHERE user_id = $1 AND role = 'committee' AND ended_at IS NULL", [row.member_id]
+        )).rows.map((r) => r.programme_id);
+        const decisions = (await pool.query(
+            `SELECT s.name AS student, p.code AS programme,
+                    a.target_course_code || COALESCE(' – ' || (a.target_courses->0->>'course_name'), '') AS course
+             FROM application_events e
+             JOIN applications a ON a.id = e.application_id
+             JOIN users s ON s.id = a.student_id
+             JOIN programmes p ON p.id = a.programme_id
+             WHERE e.kind = 'decided' AND e.created_at > $2 AND e.created_at <= $3
+               AND a.programme_id = ANY($1) AND a.status = 'awaiting_committee' AND a.decided_by IS DISTINCT FROM $4
+             ORDER BY e.created_at, e.id`,
+            [programmeIds, row.covered_from, row.covered_until, row.member_id]
+        )).rows;
+        await pool.query(
+            'UPDATE committee_summaries SET new_decisions = $3, emailed = $4 WHERE member_id = $1 AND day = $2',
+            [row.member_id, row.day, decisions.length, decisions.length > 0]
+        );
+        if (decisions.length === 0) continue;
+        const member = (await pool.query('SELECT name, email, preferred_language FROM users WHERE id = $1', [row.member_id])).rows[0];
+        const waiting = (await pool.query(
+            `SELECT count(*)::int AS n FROM applications a
+             WHERE a.programme_id = ANY($1) AND a.status = 'awaiting_committee' AND a.decided_by IS DISTINCT FROM $2
+               AND NOT EXISTS (SELECT 1 FROM semesters c WHERE c.id = a.semester_id AND c.status = 'closed')`,
+            [programmeIds, row.member_id]
+        )).rows[0].n;
+        try {
+            await summarizeCommittee({
+                member_id: row.member_id, member_name: member.name, member_email: member.email, preferred_language: member.preferred_language,
+                day: row.day, decisions, waiting,
+            });
+            emailed += 1;
+        } catch (err) {
+            console.error(`❌ Committee daily summary for member ${row.member_id} failed:`, err.message);
+        }
+    }
+    return emailed;
+};
+
+// A member's reminder before the committee deadline, in their language. Never throws.
+const remindCommitteeMember = async (reminder) => {
+    try {
+        const email = buildCommitteeEmail(reminder.kind === '1_day' ? 'deadlineTomorrow' : 'deadlineSoon', reminder.preferred_language, {
+            name: reminder.member_name,
+            programme: reminder[`programme_${String(reminder.preferred_language || 'hu').slice(0, 2)}`] || reminder.programme_hu,
+            deadline: reminder.committee_ends_at,
+            awaiting: reminder.awaiting_count,
+        });
+        if (email) await sendEmail({ email: reminder.member_email, subject: email.subject, html: email.html });
+    } catch (err) {
+        console.error(`❌ Committee deadline reminder (${reminder.kind}) for programme ${reminder.programme_id} failed:`, err.message);
+    }
+};
+
+/**
+ * Reminders before the COMMITTEE DEADLINE, like the reviewers' before the review deadline: for each
+ * programme with applications awaiting the committee in a semester in progress, to every current
+ * member of its committee: 7_days from COMMITTEE_WARNING_DAYS before it, 1_day from 1 day before it,
+ * until the deadline (Budapest wall clock). Recorded first (committee_reminders: once per semester,
+ * programme, kind and member). Off for the whole 7-day window: only the 1-day one. A member who made
+ * every one of those decisions (they can't confirm their own) is not reminded.
+ */
+const remindCommitteeBeforeDeadline = async ({ now, remindCommittee = remindCommitteeMember, only = null }) => {
+    const { rows } = await pool.query(
+        `WITH due AS (
+             SELECT sb.id AS semester_id, a.programme_id, m.id AS member_id,
+                    CASE WHEN ${beforeCommitteeDeadline(1)} <= $1 THEN '1_day' ELSE '7_days' END AS kind,
+                    count(*)::int AS awaiting_count
+             FROM semester_bounds sb
+             JOIN applications a ON a.semester_id = sb.id AND a.status = 'awaiting_committee'
+             JOIN staff_programmes cl ON cl.programme_id = a.programme_id
+             JOIN users m ON m.id = cl.user_id AND ${CURRENT_MEMBER_SQL('cl', 'm')}
+             WHERE sb.status = 'active' AND ${beforeCommitteeDeadline('$3::int')} <= $1 AND sb.committee_ends_at > $1
+               AND a.decided_by IS DISTINCT FROM m.id
+               AND ($2::int[] IS NULL OR a.id = ANY($2))
+             GROUP BY 1, 2, 3, 4
+         ), recorded AS (
+             INSERT INTO committee_reminders (semester_id, programme_id, kind, member_id, awaiting_count, sent_at)
+             SELECT semester_id, programme_id, kind, member_id, awaiting_count, $1 FROM due
+             ON CONFLICT (semester_id, programme_id, kind, member_id) DO NOTHING
+             RETURNING semester_id, programme_id, kind, member_id, awaiting_count
+         )
+         SELECT recorded.*, m.name AS member_name, m.email AS member_email, m.preferred_language,
+                p.name_hu AS programme_hu, p.name_en AS programme_en, p.name_de AS programme_de,
+                s.committee_ends_at
+         FROM recorded
+         JOIN users m ON m.id = recorded.member_id
+         JOIN programmes p ON p.id = recorded.programme_id
+         JOIN semester_bounds s ON s.id = recorded.semester_id`,
+        [now, only, COMMITTEE_WARNING_DAYS]
+    );
+    for (const reminder of rows) {
+        try {
+            await remindCommittee(reminder);
+        } catch (err) {
+            console.error(`❌ Committee deadline reminder (${reminder.kind}) for programme ${reminder.programme_id} failed:`, err.message);
+        }
+    }
+    return rows.length;
+};
+
+// The admins' "committee deadline passed" email: every active admin, in their language. Never throws.
+const alertAdminsCommittee = async (alert) => {
+    try {
+        const { rows: admins } = await pool.query(
+            "SELECT name, email, preferred_language FROM users WHERE role = 'superadmin' AND deactivated_at IS NULL ORDER BY id"
+        );
+        for (const admin of admins) {
+            const lang = String(admin.preferred_language || 'hu').slice(0, 2);
+            const email = buildAdminEmail('committeeDeadlinePassed', admin.preferred_language, {
+                name: admin.name, semester: alert.semester_name, deadline: alert.committee_ends_at,
+                programmes: alert.programmes.map((p) => ({ name: `${p.code} – ${p[`name_${lang}`] || p.name_en}`, awaiting: p.awaiting })),
+            });
+            if (email) await sendEmail({ email: admin.email, subject: email.subject, html: email.html });
+        }
+    } catch (err) {
+        console.error(`❌ Committee deadline email for semester ${alert.semester_id} failed:`, err.message);
+    }
+};
+
+/**
+ * The committee deadline has passed and applications still await the committee: NOTHING is decided.
+ * The admins get one email per semester with the counts per programme (Overview shows them too).
+ * Recorded first (committee_deadline_alerts), so it goes out once. Nothing awaiting: nothing sent.
+ */
+const alertCommitteeDeadlinePassed = async ({ now, alertCommittee = alertAdminsCommittee, only = null }) => {
+    const { rows } = await pool.query(
+        `WITH due AS (
+             SELECT sb.id AS semester_id, count(*)::int AS awaiting_count
+             FROM semester_bounds sb
+             JOIN applications a ON a.semester_id = sb.id AND a.status = 'awaiting_committee'
+             WHERE sb.status = 'active' AND sb.committee_ends_at <= $1 AND ($2::int[] IS NULL OR a.id = ANY($2))
+             GROUP BY 1
+         ), recorded AS (
+             INSERT INTO committee_deadline_alerts (semester_id, awaiting_count, sent_at)
+             SELECT semester_id, awaiting_count, $1 FROM due
+             ON CONFLICT (semester_id) DO NOTHING
+             RETURNING semester_id, awaiting_count
+         )
+         SELECT recorded.*, sb.name AS semester_name, sb.committee_ends_at FROM recorded JOIN semester_bounds sb ON sb.id = recorded.semester_id`,
+        [now, only]
+    );
+    for (const row of rows) {
+        const programmes = (await pool.query(
+            `SELECT p.code, p.name_en, p.name_hu, p.name_de, count(*)::int AS awaiting
+             FROM applications a JOIN programmes p ON p.id = a.programme_id
+             WHERE a.semester_id = $1 AND a.status = 'awaiting_committee' AND ($2::int[] IS NULL OR a.id = ANY($2))
+             GROUP BY p.id ORDER BY p.code`,
+            [row.semester_id, only]
+        )).rows;
+        try {
+            await alertCommittee({ ...row, programmes });
+        } catch (err) {
+            console.error(`❌ Committee deadline email for semester ${row.semester_id} failed:`, err.message);
+        }
+    }
+    return rows.length;
+};
+
 // The steps of one run, in order. Each is independent; a failing one never stops the others.
 const STEPS = [
     ['unsent draft reminders', remindUnsentDrafts],
     ['reviewer daily summaries', sendDailySummaries],
     ['reviewer reminders', remindReviewersBeforeReviewDeadline],
     ['review deadline passed', alertReviewDeadlinePassed],
+    ['committee daily summaries', sendCommitteeSummaries],
+    ['committee reminders', remindCommitteeBeforeDeadline],
+    ['committee deadline passed', alertCommitteeDeadlinePassed],
     ['deadline reminders', sendDeadlineReminders],
     ['overdue information requests', rejectOverdueInfoRequests],
 ];
@@ -387,14 +602,19 @@ const STEPS = [
  */
 const runApplicationJobs = async ({
     now = new Date(), notify = notifyStudent, remind = remindReviewer, alert = alertAdmins, summarize = sendReviewerSummary,
-    only = null, onlyDraftsOf = null, onlyReviewers = null,
+    summarizeCommittee = sendCommitteeSummary, remindCommittee = remindCommitteeMember, alertCommittee = alertAdminsCommittee,
+    only = null, onlyDraftsOf = null, onlyReviewers = null, onlyMembers = null,
 } = {}) => {
     const results = {};
-    // A run limited to some applications (the tests) never summarises real reviewers: only the named ones
+    // A run limited to some applications (the tests) never summarises real reviewers or members: only the named ones
     const reviewers = only !== null && onlyReviewers === null ? [] : onlyReviewers;
+    const members = only !== null && onlyMembers === null ? [] : onlyMembers;
     for (const [name, step] of STEPS) {
         try {
-            results[name] = await step({ now, notify, remind, alert, summarize, only, onlyDraftsOf, onlyReviewers: reviewers });
+            results[name] = await step({
+                now, notify, remind, alert, summarize, summarizeCommittee, remindCommittee, alertCommittee,
+                only, onlyDraftsOf, onlyReviewers: reviewers, onlyMembers: members,
+            });
             if (results[name] > 0) console.log(`⏱️  Background job, ${name}: ${results[name]}`);
         } catch (err) {
             results[name] = 'failed';
@@ -431,5 +651,7 @@ const withJobsLock = async (work) => {
 module.exports = {
     runApplicationJobs, withJobsLock, JOBS_LOCK_KEY, sendDeadlineReminders, rejectOverdueInfoRequests, remindUnsentDrafts,
     remindReviewersBeforeReviewDeadline, remindReviewer, alertReviewDeadlinePassed, alertAdmins, sendDailySummaries, sendReviewerSummary,
+    sendCommitteeSummaries, sendCommitteeSummary, remindCommitteeBeforeDeadline, remindCommitteeMember,
+    alertCommitteeDeadlinePassed, alertAdminsCommittee,
     DAILY_SUMMARY_HOUR, rejectAutomatically, rejectInTransaction, notifyEach, REJECTION_REASONS,
 };

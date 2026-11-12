@@ -17,7 +17,8 @@ import ReviewDeadlineMove, { reviewSituation, suggestedReviewEnd } from './Revie
 // reviewer) are shown in the confirmation; they don't block it.
 
 const STATUS_CUES = { setup: 'pending', active: 'approved', closed: 'neutral' };
-const EMPTY = { name: '', opens_at: '', closes_at: '', review_end_at: '', end_date: '', last_days: 3 };
+// committee_end_at: '' = the default (the review deadline + committeeDaysDefault days, round 2 Group 2)
+const EMPTY = { name: '', opens_at: '', closes_at: '', review_end_at: '', committee_end_at: '', end_date: '', last_days: 3 };
 
 // The active semester's period controls (admin round Group 5): Close now (with an optional reason
 // for students) and Reopen until (a new closing time in the future). The server checks both.
@@ -60,6 +61,7 @@ const PeriodControls = ({ semester, margin, onChange }) => {
             <p style={{ marginTop: 0, fontWeight: 'bold' }}>
                 {t(semester.review_passed ? 'period_admin_review_passed' : 'period_admin_review', { date: formatDateTime(semester.review_end_at, language) })}
             </p>
+            <p style={{ marginTop: 0, fontWeight: 'bold' }}>{t('period_admin_committee', { date: formatDateTime(semester.committee_end_at, language) })}</p>
             {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
             {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px', alignItems: 'end' }}>
@@ -127,6 +129,10 @@ export const ClosePanel = ({ semester, onClosed }) => {
                     <ul style={{ margin: '0 0 8px', paddingLeft: '18px' }}>
                         {preview.blockers.map((code) => <li key={code}>{t(`close_blocker_${code}`, { count: preview.lateAccess })}</li>)}
                     </ul>
+                    {/* Awaiting the committee (round 2 Group 2): by when the committee should act */}
+                    {preview.blockers.includes('AWAITING_COMMITTEE') && preview.committeeEndAt && (
+                        <p style={{ margin: '0 0 8px' }}>{t(preview.committeePassed ? 'close_committee_passed' : 'close_committee_deadline', { date: formatDateTime(preview.committeeEndAt, language) })}</p>
+                    )}
                     {preview.undecidedByProgramme.length > 0 && (
                         <ul style={{ margin: '0 0 8px', paddingLeft: '18px' }}>
                             {preview.undecidedByProgramme.map((p) => (
@@ -188,8 +194,8 @@ export const CloseResult = ({ result, onBookGenerated }) => {
     );
 };
 
-// reviewDaysDefault / reviewMarginDays: from the server (utils/semesters.js), never written here
-const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange }) => {
+// reviewDaysDefault / reviewMarginDays / committeeDaysDefault: from the server (utils/semesters.js), never written here
+const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, committeeDaysDefault, onChange }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const [form, setForm] = useState(null); // { id?, name, opens_at, closes_at, review_end_at, end_date } while editing
@@ -202,7 +208,9 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
         setNotice('');
         setForm(semester
             ? { id: semester.id, name: semester.name, opens_at: toBudapestInput(semester.opens_at), closes_at: toBudapestInput(semester.closes_at),
-                review_end_at: toBudapestInput(semester.review_end_at), end_date: semester.end_date, last_days: semester.last_days }
+                review_end_at: toBudapestInput(semester.review_end_at),
+                committee_end_at: semester.committee_end_default ? '' : toBudapestInput(semester.committee_end_at),
+                end_date: semester.end_date, last_days: semester.last_days }
             : EMPTY);
     };
 
@@ -210,7 +218,8 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
         e.preventDefault();
         setError('');
         const { id, ...fields } = form;
-        const json = { ...fields, last_days: Number(fields.last_days) };
+        // An empty committee deadline: the default (also back to it after a chosen one)
+        const json = { ...fields, last_days: Number(fields.last_days), committee_end_at: fields.committee_end_at || null };
         try {
             if (id) await http.put(`admin/semesters/${id}`, { json }).json();
             else await http.post('admin/semesters', { json }).json();
@@ -258,13 +267,14 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
                     {field('opens_at', 'datetime-local', 'semesters_opens_label')}
                     {field('closes_at', 'datetime-local', 'semesters_closes_label')}
                     {field('review_end_at', 'datetime-local', 'semesters_review_label')}
+                    {field('committee_end_at', 'datetime-local', 'semesters_committee_label')}
                     {field('end_date', 'date', 'semesters_end_label')}
                     {field('last_days', 'number', 'semesters_last_days_label')}
                     <div style={{ display: 'flex', gap: '8px' }}>
                         <button type="submit" style={{ ...smallButton(), backgroundColor: 'var(--brand)', color: 'var(--text-on-primary)', border: 'none' }}>{t('semesters_save_button')}</button>
                         <button type="button" onClick={() => setForm(null)} style={smallButton()}>{t('staff_cancel')}</button>
                     </div>
-                    <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>{t('semesters_time_hint')} {t('semesters_review_hint', { days: reviewDaysDefault })}</p>
+                    <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: '13px', color: 'var(--text-muted)' }}>{t('semesters_time_hint')} {t('semesters_review_hint', { days: reviewDaysDefault })} {t('semesters_committee_hint', { days: committeeDaysDefault })}</p>
                 </form>
             )}
 
@@ -277,6 +287,7 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
                             <th style={th}>{t('semesters_opens_label')}</th>
                             <th style={th}>{t('semesters_closes_label')}</th>
                             <th style={th}>{t('semesters_review_label')}</th>
+                            <th style={th}>{t('semesters_committee_label')}</th>
                             <th style={th}>{t('semesters_end_label')}</th>
                             <th style={th}>{t('semesters_counts_column')}</th>
                             <th style={th}>{t('staff_actions_column')}</th>
@@ -284,7 +295,7 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
                     </thead>
                     <tbody>
                         {semesters.length === 0 ? (
-                            <tr><td colSpan="8" style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>{t('semesters_none')}</td></tr>
+                            <tr><td colSpan="9" style={{ ...td, color: 'var(--text-muted)', textAlign: 'center' }}>{t('semesters_none')}</td></tr>
                         ) : semesters.map((s) => (
                             <tr key={s.id}>
                                 <td style={td}>{s.name}</td>
@@ -292,6 +303,10 @@ const Semesters = ({ semesters, reviewDaysDefault, reviewMarginDays, onChange })
                                 <td style={td}>{formatDateTime(s.opens_at, language)}</td>
                                 <td style={td}>{formatDateTime(s.closes_at, language)}</td>
                                 <td style={td}>{formatDateTime(s.review_end_at, language)}{s.status === 'active' && s.review_passed && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('semesters_review_passed')}</div>}</td>
+                                <td style={td}>
+                                    {s.status === 'closed' ? '—' : formatDateTime(s.committee_end_at, language)}
+                                    {s.status !== 'closed' && s.committee_end_default && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('semesters_committee_default')}</div>}
+                                </td>
                                 <td style={td}>{formatDay(s.end_date, language)}</td>
                                 <td style={td}>{t('semesters_counts', { courses: s.courses, applications: s.applications })}</td>
                                 <td style={td}>

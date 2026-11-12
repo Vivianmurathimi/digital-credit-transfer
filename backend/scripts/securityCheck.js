@@ -3320,6 +3320,36 @@ const run = async () => {
         }
     }
 
+    section('4z. The committee deadline (round 2 Group 2 Part F): only the admin sets it; never before the review deadline');
+    {
+        // A temporary semester in setup, far in the future (deleted at the end, also after a crash)
+        const base = { name: `Security check committee ${Date.now()}`, opens_at: '2097-02-01T08:00', closes_at: '2097-02-28T23:59', review_end_at: '2097-03-14T23:59', end_date: '2097-06-30', last_days: 3 };
+        const created = await call('POST', 'admin/semesters', { token: S, json: base });
+        report(created.status === 201, 'The admin creates a semester without a committee deadline', `${created.status} ${created.code || ''}`);
+        const semester = created.body?.semester;
+        if (semester) {
+            tempSemesterIds.push(semester.id);
+            report(semester.committee_end_default === true && new Date(semester.committee_end_at).toISOString() === '2097-03-28T22:59:00.000Z',
+                'The default: the review deadline + 14 days, 23:59 Budapest', `${semester.committee_end_at}`);
+            await expect('A committee deadline before the review deadline', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: '2097-03-10T23:59' } }), 400, 'COMMITTEE_BEFORE_REVIEW');
+            await expect('Not a date and time', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: 'soon' } }), 400, 'INVALID_TIME');
+            const { review_end_at: _review, ...withoutReview } = base;
+            await expect('Before the saved review deadline (checked by the database too)', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...withoutReview, committee_end_at: '2097-03-12T23:59' } }), 400, 'COMMITTEE_BEFORE_REVIEW');
+            const chosen = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: '2097-04-15T12:00' } });
+            report(chosen.status === 200 && chosen.body?.semester?.committee_end_default === false, 'The admin chooses one');
+            const kept = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...withoutReview } });
+            report(kept.body?.semester?.committee_end_default === false, 'An edit without it keeps the chosen one');
+            const back = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: null } });
+            report(back.body?.semester?.committee_end_default === true, 'null: back to the default');
+            for (const [who, token] of [['A reviewer', R], ['A student', A]]) {
+                const refused = await call('PUT', `admin/semesters/${semester.id}`, { token, json: { ...base, committee_end_at: '2097-04-15T12:00' } });
+                report(refused.status === 403, `${who} can't set the committee deadline`, `${refused.status}`);
+            }
+        }
+        const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+        report((summary.semesters || []).every((x) => 'committeeEndsAt' in x && 'committeeSoon' in x && 'committeePassed' in x), 'The admin overview has the committee deadline of each semester in progress');
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

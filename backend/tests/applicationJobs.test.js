@@ -200,7 +200,8 @@ test('a full run does the reminder and the rejection steps together', async () =
     const overdue = await waitingApplication({ deadline: at(50 * HOUR) });
     const { notify } = recorder();
     const results = await runApplicationJobs({ now: at(60 * HOUR), notify, remind: noReminders, only: [soon, overdue], onlyDraftsOf: [] });
-    assert.deepEqual(results, { 'unsent draft reminders': 0, 'reviewer daily summaries': 0, 'reviewer reminders': 0, 'review deadline passed': 0, 'deadline reminders': 1, 'overdue information requests': 1 });
+    assert.deepEqual(results, { 'unsent draft reminders': 0, 'reviewer daily summaries': 0, 'reviewer reminders': 0, 'review deadline passed': 0,
+        'committee daily summaries': 0, 'committee reminders': 0, 'committee deadline passed': 0, 'deadline reminders': 1, 'overdue information requests': 1 });
     assert.ok((await read(soon)).info_reminder_sent_at);
     assert.equal((await read(overdue)).status, 'rejected');
 });

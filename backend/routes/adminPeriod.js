@@ -12,7 +12,7 @@ const { FRONTEND_URL } = require('../config/urls');
 const { normalizeEmail } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
 const { isValidInviteEmail } = require('../utils/staffInvites');
-const { REVIEW_MARGIN_DAYS, reviewSoonSql } = require('../utils/semesters');
+const { REVIEW_MARGIN_DAYS, reviewSoonSql, committeeSoonSql } = require('../utils/semesters');
 const { periodFor } = require('../utils/applicationPeriod');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 
@@ -282,7 +282,9 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
         const period = await periodFor(pool);
         const catalogueSemester = period.semester ? period.semester.id : null;
         const semesters = (await pool.query(
-            `SELECT sb.id, sb.name, sb.opens_at, sb.closes_at, sb.review_ends_at,
+            `SELECT sb.id, sb.name, sb.opens_at, sb.closes_at, sb.review_ends_at, sb.committee_ends_at,
+                    sb.committee_ends_at <= now() AS committee_passed,
+                    ${committeeSoonSql('sb', 'now()')} AND sb.committee_ends_at > now() AS committee_soon,
                     sb.opens_at <= now() AND sb.closes_at > now() AS period_open,
                     sb.closes_at <= now() AS period_over,
                     sb.review_ends_at <= now() AS review_passed,
@@ -315,6 +317,10 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 reviewPassed: r.review_passed && undecided > 0,
                 undecidedByProgramme: r.review_passed ? r.undecided_by_programme : [],
                 awaitingByProgramme: r.awaiting_by_programme,
+                // The committee deadline (round 2 Group 2): soon / passed only while something awaits the committee
+                committeeEndsAt: r.committee_ends_at,
+                committeeSoon: r.committee_soon && r.awaiting_committee > 0,
+                committeePassed: r.committee_passed && r.awaiting_committee > 0,
                 // nothing undecided and nothing awaiting the committee (round 2 Group 2)
                 canClose: r.period_over && r.late_access === 0 && undecided === 0 && r.awaiting_committee === 0,
             };

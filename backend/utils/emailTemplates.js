@@ -599,6 +599,13 @@ const adminTemplates = {
             after: '<p>A rendszer semmit sem utasított el. Meghosszabbíthatja a határidőt (Félévek), engedheti segíteni egy további bírálót (Bírálók), vagy adminisztrátorként dönthet (Kérelmek). A félév akkor zárható le, ha minden kérelem el van bírálva.</p>',
             counts: { pending: 'elbírálásra vár', needsInfo: 'a hallgató válaszára vár' },
         },
+        // The committee deadline passed with applications awaiting the committee (round 2 Group 2)
+        committeeDeadlinePassed: {
+            subject: 'Lejárt a bizottsági határidő: döntések várnak a bizottságra',
+            intro: ({ semester, date }) => `<p>A(z) <strong>${semester}</strong> félév bizottsági határideje lejárt (${date}). Ezek a döntések még a bizottságra várnak:</p>`,
+            after: '<p>A rendszer semmit sem döntött el. Meghosszabbíthatja a bizottsági határidőt (Félévek), vagy adminisztrátorként, bizottságként dönthet (Kérelmek). A félév akkor zárható le, ha a bizottság mindent megerősített.</p>',
+            count: 'a bizottságra vár',
+        },
     },
     en: {
         greeting: (name) => `Dear ${name},`,
@@ -614,6 +621,13 @@ const adminTemplates = {
             intro: ({ semester, date }) => `<p>The review deadline of <strong>${semester}</strong> has passed (${date}). These applications are still undecided:</p>`,
             after: '<p>Nothing has been rejected. You can extend the review deadline (Semesters), let an extra reviewer assist (Reviewers), or decide as admin (Applications). The semester can be closed once everything is decided.</p>',
             counts: { pending: 'waiting for a decision', needsInfo: "waiting for the student's reply" },
+        },
+        // The committee deadline passed with applications awaiting the committee (round 2 Group 2)
+        committeeDeadlinePassed: {
+            subject: 'The committee deadline has passed: decisions are awaiting the committee',
+            intro: ({ semester, date }) => `<p>The committee deadline of <strong>${semester}</strong> has passed (${date}). These decisions are still awaiting the committee:</p>`,
+            after: '<p>Nothing has been decided automatically. You can extend the committee deadline (Semesters), or take the committee step as admin (Applications). The semester can be closed once the committee has confirmed everything.</p>',
+            count: 'awaiting the committee',
         },
     },
     de: {
@@ -631,14 +645,21 @@ const adminTemplates = {
             after: '<p>Es wurde nichts abgelehnt. Sie können die Frist verlängern (Semester), eine zusätzliche Person mithelfen lassen (Gutachter/innen) oder als Administration entscheiden (Anträge). Das Semester kann abgeschlossen werden, sobald alles entschieden ist.</p>',
             counts: { pending: 'warten auf eine Entscheidung', needsInfo: 'warten auf die Antwort der Studierenden' },
         },
+        // The committee deadline passed with applications awaiting the committee (round 2 Group 2)
+        committeeDeadlinePassed: {
+            subject: 'Die Ausschussfrist ist abgelaufen: Entscheidungen warten auf den Ausschuss',
+            intro: ({ semester, date }) => `<p>Die Ausschussfrist von <strong>${semester}</strong> ist abgelaufen (${date}). Diese Entscheidungen warten noch auf den Ausschuss:</p>`,
+            after: '<p>Es wurde nichts automatisch entschieden. Sie können die Ausschussfrist verlängern (Semester) oder als Administration den Schritt des Ausschusses übernehmen (Anträge). Das Semester kann abgeschlossen werden, sobald der Ausschuss alles bestätigt hat.</p>',
+            count: 'warten auf den Ausschuss',
+        },
     },
 };
 
 /**
  * An email to one admin, in their language. Every value is escaped here.
- * @param {'noMainReviewer'|'reviewDeadlinePassed'} type
+ * @param {'noMainReviewer'|'reviewDeadlinePassed'|'committeeDeadlinePassed'} type
  * @param {{ name: string, programme?: string, extras?: string, semester?: string, deadline?: Date|string,
- *   programmes?: Array<{ name: string, pending: number, needsInfo: number }> }} data
+ *   programmes?: Array<{ name: string, pending?: number, needsInfo?: number, awaiting?: number }> }} data
  */
 const buildAdminEmail = (type, lang, { name, programme = '', extras = '', semester = '', deadline = null, programmes = [] }) => {
     const language = normalizeLanguage(lang);
@@ -646,7 +667,12 @@ const buildAdminEmail = (type, lang, { name, programme = '', extras = '', semest
     const template = words[type];
     if (!template) return null;
     // reviewDeadlinePassed: the undecided counts per programme, as a list (no plural forms needed)
-    const body = type === 'reviewDeadlinePassed'
+    const deadlineText = deadline ? escapeHtml(formatDeadline(deadline, language)) : '';
+    const body = type === 'committeeDeadlinePassed'
+        ? `${template.intro({ semester: escapeHtml(semester), date: deadlineText })}
+           <ul>${programmes.map((p) => `<li><strong>${escapeHtml(p.name)}</strong>: ${Number(p.awaiting) || 0} ${template.count}</li>`).join('')}</ul>
+           ${template.after}`
+        : type === 'reviewDeadlinePassed'
         ? `${template.intro({ semester: escapeHtml(semester), date: deadline ? escapeHtml(formatDeadline(deadline, language)) : '' })}
            <ul>${programmes.map((p) => `<li><strong>${escapeHtml(p.name)}</strong>: ${Number(p.pending) || 0} ${template.counts.pending}, ${Number(p.needsInfo) || 0} ${template.counts.needsInfo}</li>`).join('')}</ul>
            ${template.after}`
@@ -696,7 +722,110 @@ const buildReviewerSummaryEmail = (lang, { name, newApplications = [], replies =
     return { subject: template.subject, html };
 };
 
-// Every text table by language, for the translation check (frontend: npm run check:translations)
-const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels, adminTemplates };
+// Emails to committee members (round 2 Group 2 Part F), in the member's saved language: the daily
+// summary at 07:00 Budapest time (decisions newly awaiting the committee), and the reminders 7 days
+// and 1 day before the committee deadline. Someone who is also a reviewer gets these separately.
+const committeeTemplates = {
+    hu: {
+        greeting: (name) => `Kedves ${name}!`,
+        button: 'Bejelentkezés',
+        signature: 'PTE Kreditátvitel',
+        dailySummary: {
+            subject: 'Bizottsági napi összefoglaló: megerősítendő döntések',
+            intro: '<p>Az előző összefoglaló óta ezek a döntések kerültek a bizottság elé az Ön szakjain:</p>',
+            newDecisions: 'Új, a bizottságra váró döntések',
+            more: (count) => `… és még ${count}`,
+            waiting: (count) => `<p>Jelenleg a bizottságra vár: <strong>${count}</strong>.</p>`,
+        },
+        deadlineSoon: {
+            subject: 'Közeleg a bizottsági határidő: döntések várnak a bizottságra',
+            body: ({ date, programme, awaiting }) => `<p>A bizottsági határidő: <strong>${date}</strong>.</p><p>Szak: <strong>${programme}</strong></p><ul><li>A bizottságra vár: <strong>${awaiting}</strong></li></ul><p>Kérjük, addig erősítse meg vagy változtassa meg őket. A határidő után a rendszer semmit sem dönt el, de az adminisztrátorok értesítést kapnak.</p>`,
+        },
+        deadlineTomorrow: {
+            subject: 'Holnap jár le a bizottsági határidő: döntések várnak a bizottságra',
+            body: ({ date, programme, awaiting }) => `<p>A bizottsági határidő holnap jár le: <strong>${date}</strong>.</p><p>Szak: <strong>${programme}</strong></p><ul><li>A bizottságra vár: <strong>${awaiting}</strong></li></ul><p>A határidő után a rendszer semmit sem dönt el, de az adminisztrátorok értesítést kapnak.</p>`,
+        },
+    },
+    en: {
+        greeting: (name) => `Dear ${name},`,
+        button: 'Log in',
+        signature: 'PTE Credit Transfer',
+        dailySummary: {
+            subject: 'Committee daily summary: decisions to confirm',
+            intro: '<p>These decisions have come to the committee in your programmes since your last summary:</p>',
+            newDecisions: 'New decisions awaiting the committee',
+            more: (count) => `… and ${count} more`,
+            waiting: (count) => `<p>Awaiting the committee now: <strong>${count}</strong>.</p>`,
+        },
+        deadlineSoon: {
+            subject: 'The committee deadline is coming: decisions are awaiting the committee',
+            body: ({ date, programme, awaiting }) => `<p>The committee deadline is <strong>${date}</strong>.</p><p>Programme: <strong>${programme}</strong></p><ul><li>Awaiting the committee: <strong>${awaiting}</strong></li></ul><p>Please keep or change them by then. Nothing is decided automatically when the deadline passes, but the administrators are told.</p>`,
+        },
+        deadlineTomorrow: {
+            subject: 'The committee deadline is tomorrow: decisions are awaiting the committee',
+            body: ({ date, programme, awaiting }) => `<p>The committee deadline is tomorrow: <strong>${date}</strong>.</p><p>Programme: <strong>${programme}</strong></p><ul><li>Awaiting the committee: <strong>${awaiting}</strong></li></ul><p>Nothing is decided automatically when the deadline passes, but the administrators are told.</p>`,
+        },
+    },
+    de: {
+        greeting: (name) => `Liebe/r ${name},`,
+        button: 'Anmelden',
+        signature: 'PTE-Kreditübertragung',
+        dailySummary: {
+            subject: 'Tägliche Zusammenfassung des Ausschusses: zu bestätigende Entscheidungen',
+            intro: '<p>Seit Ihrer letzten Zusammenfassung sind diese Entscheidungen in Ihren Studiengängen an den Ausschuss gegangen:</p>',
+            newDecisions: 'Neue Entscheidungen für den Ausschuss',
+            more: (count) => `… und ${count} weitere`,
+            waiting: (count) => `<p>Jetzt warten auf den Ausschuss: <strong>${count}</strong>.</p>`,
+        },
+        deadlineSoon: {
+            subject: 'Die Ausschussfrist rückt näher: Entscheidungen warten auf den Ausschuss',
+            body: ({ date, programme, awaiting }) => `<p>Die Ausschussfrist ist der <strong>${date}</strong>.</p><p>Studiengang: <strong>${programme}</strong></p><ul><li>Warten auf den Ausschuss: <strong>${awaiting}</strong></li></ul><p>Bitte bestätigen oder ändern Sie sie bis dahin. Nach der Frist wird nichts automatisch entschieden, aber die Administration wird informiert.</p>`,
+        },
+        deadlineTomorrow: {
+            subject: 'Die Ausschussfrist endet morgen: Entscheidungen warten auf den Ausschuss',
+            body: ({ date, programme, awaiting }) => `<p>Die Ausschussfrist endet morgen: <strong>${date}</strong>.</p><p>Studiengang: <strong>${programme}</strong></p><ul><li>Warten auf den Ausschuss: <strong>${awaiting}</strong></li></ul><p>Nach der Frist wird nichts automatisch entschieden, aber die Administration wird informiert.</p>`,
+        },
+    },
+};
 
-module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };
+const emailFrame = (words, name, body) => `
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
+            <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
+            <p>${escapeHtml(words.greeting(name || ''))}</p>
+            ${body}
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+        </div>`;
+
+/**
+ * A committee member's reminder before the committee deadline. Every value is escaped here.
+ * @param {'deadlineSoon'|'deadlineTomorrow'} type
+ * @param {{ name: string, programme: string, deadline: Date|string, awaiting: number }} data
+ */
+const buildCommitteeEmail = (type, lang, { name, programme = '', deadline = null, awaiting = 0 }) => {
+    const language = normalizeLanguage(lang);
+    const words = committeeTemplates[language];
+    const template = typeof words[type]?.body === 'function' ? words[type] : null;
+    if (!template) return null;
+    const body = template.body({ programme: escapeHtml(programme), date: deadline ? escapeHtml(formatDeadline(deadline, language)) : '', awaiting: Number(awaiting) || 0 });
+    return { subject: template.subject, html: emailFrame(words, name, body) };
+};
+
+/**
+ * A committee member's daily summary. Every value is escaped here.
+ * @param {{ name: string, decisions: Array<{ student, course, programme }>, waiting: number }} data
+ */
+const buildCommitteeSummaryEmail = (lang, { name, decisions = [], waiting = 0 }) => {
+    const language = normalizeLanguage(lang);
+    const words = committeeTemplates[language];
+    const template = words.dailySummary;
+    const shown = decisions.slice(0, SUMMARY_LIST_MAX).map((i) => `<li><strong>${escapeHtml(i.student)}</strong>, ${escapeHtml(i.course)} (${escapeHtml(i.programme)})</li>`);
+    if (decisions.length > SUMMARY_LIST_MAX) shown.push(`<li>${escapeHtml(template.more(decisions.length - SUMMARY_LIST_MAX))}</li>`);
+    const list = decisions.length ? `<h3 style="color: ${C.brand}; font-size: 15px;">${escapeHtml(template.newDecisions)} (${decisions.length})</h3><ul>${shown.join('')}</ul>` : '';
+    return { subject: template.subject, html: emailFrame(words, name, `${template.intro}${list}${template.waiting(Number(waiting) || 0)}`) };
+};
+
+// Every text table by language, for the translation check (frontend: npm run check:translations)
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels, adminTemplates, committeeTemplates };
+
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, buildCommitteeEmail, buildCommitteeSummaryEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };

@@ -8,7 +8,7 @@ require('dotenv').config();
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, gradeLabel } = require('../utils/emailTemplates');
+const { buildEmail, buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, buildCommitteeEmail, buildCommitteeSummaryEmail, gradeLabel } = require('../utils/emailTemplates');
 
 const LANGUAGES = ['hu', 'en', 'de'];
 
@@ -107,4 +107,22 @@ test("admins' review deadline email: every programme with both numbers, escaped,
     }
     assert.ok(buildAdminEmail('noMainReviewer', 'en', { name: 'A', programme: 'CS', extras: 'B' }).html.includes('CS'));
     assert.equal(buildAdminEmail('nothing', 'en', { name: 'x' }), null);
+});
+
+test("the committee's emails (round 2 Group 2 Part F): reminders, daily summary, the admins' deadline email; every language, escaped", () => {
+    const deadline = new Date('2093-11-03T22:59:00Z'); // 23:59 on 3 November in Budapest
+    for (const lang of LANGUAGES) {
+        for (const type of ['deadlineSoon', 'deadlineTomorrow']) {
+            const email = buildCommitteeEmail(type, lang, { name: 'Dr. <Kiss>', programme: 'Civil <Eng>', deadline, awaiting: 3 });
+            assert.ok(email.subject && email.html.includes('Civil &lt;Eng&gt;') && email.html.includes('<strong>3</strong>'), `${lang} ${type}: programme and count`);
+            assert.ok(/23:59/.test(email.html) && !email.html.includes('<Kiss>'), `${lang} ${type}: deadline, name escaped`);
+        }
+        const item = { student: 'Kovács <Ödön>', course: 'IVM123 – Statika', programme: 'CIVIL' };
+        const summary = buildCommitteeSummaryEmail(lang, { name: 'x', decisions: [item, item], waiting: 4 });
+        assert.ok(summary.subject && summary.html.includes('Kovács &lt;Ödön&gt;') && summary.html.includes('(2)') && summary.html.includes('<strong>4</strong>'), `${lang}: summary`);
+        const admin = buildAdminEmail('committeeDeadlinePassed', lang, { name: 'A', semester: '2093 <autumn>', deadline, programmes: [{ name: 'CIVIL – Civil', awaiting: 2 }] });
+        assert.ok(admin.subject && admin.html.includes('2093 &lt;autumn&gt;') && admin.html.includes('CIVIL – Civil') && admin.html.includes(': 2 '), `${lang}: admins' email`);
+    }
+    assert.equal(buildCommitteeEmail('nothing', 'en', { name: 'x' }), null);
+    assert.ok(buildCommitteeSummaryEmail('en', { name: 'x', decisions: Array(35).fill({ student: 's', course: 'c', programme: 'p' }) }).html.includes('and 5 more'));
 });

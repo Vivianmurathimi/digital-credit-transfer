@@ -29,6 +29,9 @@ const NOT_FINAL = ['pending', 'needs_info', 'awaiting_committee'];
 const STATE_SQL = `
     s.applications_close_at <= $2 AS period_over,
     s.review_end_at <= $2 AS review_passed, s.review_end_at,
+    -- the committee deadline in effect (round 2 Group 2): shown with the "awaiting the committee" blocker
+    (SELECT b.committee_ends_at FROM semester_bounds b WHERE b.id = s.id) AS committee_end_at,
+    (SELECT b.committee_ends_at FROM semester_bounds b WHERE b.id = s.id) <= $2 AS committee_passed,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'pending') AS pending,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'needs_info') AS needs_info,
     (SELECT count(*)::int FROM applications a WHERE a.semester_id = s.id AND a.status = 'awaiting_committee') AS awaiting_committee,
@@ -46,7 +49,7 @@ const blockersOf = (r) => [
 
 /**
  * What a close would do right now, and what blocks it; saves nothing. The same conditions as closeSemester.
- * @returns {Promise<null | { id, name, status, canClose, blockers, periodOver, reviewPassed, reviewEndAt,
+ * @returns {Promise<null | { id, name, status, canClose, blockers, periodOver, reviewPassed, reviewEndAt, committeeEndAt, committeePassed,
  *   pending, needsInfo, lateAccess, drafts, draftsKept, undecidedByProgramme }>}
  */
 // requireActive: false only in the tests (their far-future semesters stay in setup), as in closeSemester
@@ -75,6 +78,7 @@ const closePreview = async (db, semesterId, { now = new Date(), onlyDraftsOf = n
     return {
         id: r.id, name: r.name, status: r.status, canClose: blockers.length === 0, blockers,
         periodOver: r.period_over, reviewPassed: r.review_passed, reviewEndAt: r.review_end_at,
+        committeeEndAt: r.committee_end_at, committeePassed: r.committee_passed,
         pending: r.pending, needsInfo: r.needs_info, awaitingCommittee: r.awaiting_committee, lateAccess: r.late_access,
         drafts: r.drafts_belong_elsewhere ? 0 : r.drafts, draftsKept: r.drafts_belong_elsewhere ? r.drafts : 0,
         undecidedByProgramme: undecided,
