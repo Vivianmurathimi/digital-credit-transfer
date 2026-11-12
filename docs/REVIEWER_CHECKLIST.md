@@ -1,7 +1,7 @@
 # Reviewer side: final manual browser checklist
 
 Uses the demo data, so nothing in the development database changes. Tick each box.
-Each programme has its own reviewer (both programmes' logins are in the Setup table below).
+Each programme has a main reviewer and an extra reviewer (round 2: assisting in CS, standby in Civil); the logins are in the Setup table below.
 How it all works: `backend/REVIEWER.md`.
 
 ## Setup
@@ -20,6 +20,8 @@ All demo passwords: `Demo1234!`
 | Superadmin | demo.admin@staff.example | |
 | Reviewer, Computer Science | demo.reviewer.cs@staff.example | Dr. Katalin Szabó |
 | Reviewer, Civil Engineering | demo.reviewer.civil@staff.example | Dr. Péter Horváth (Hungarian emails) |
+| Extra reviewer, CS (assisting) | demo.extra.cs@staff.example | Dr. Gergely Balogh: sees CS |
+| Extra reviewer, Civil (standby) | demo.extra.civil@staff.example | Dr. Réka Fehér: sees nothing until allowed to assist |
 | Students CS | demo.anna@, demo.bence@, demo.csilla@, demo.daniel@ (all @students.example) | |
 | Students Civil | demo.eszter@, demo.ferenc@, demo.gabor@ (all @students.example) | |
 
@@ -65,7 +67,7 @@ As the admin, use **Staff access** on the admin dashboard (admin round Group 2):
 
 ## 3. The admin acting as a reviewer
 
-- [ ] **The banner:** as the admin, it shows one line per programme: pending, waiting for the student, the semester's last day, and the reviewer's name.
+- [ ] **The banner:** as the admin, it shows one line per programme: pending, waiting for the student, the review deadline, the main reviewer and the extra reviewers (assisting / standby).
 - [ ] **Act as a reviewer → Dr. Szabó:**
   - the same list and details she sees, nothing from Civil, and files open
   - the banner "Acting as Dr. Szabó (Reviewer)" at the top
@@ -106,17 +108,25 @@ As the admin, use **Staff access** on the admin dashboard (admin round Group 2):
 - [ ] **CS reviewer:** the application is under Completed, with "Decided by System" and the reason in the reviewer's language.
 - [ ] **Run the same command again:** it reports 0, and no second email is sent.
 
-## 6. Reminder emails before the semester ends
+## 6. Reviewer emails (round 2): daily summary and review-deadline reminders
 
-- [ ] Run the "7 days before the semester end" command. Each reviewer gets an email (CS in English, Civil in Hungarian) with the semester's last day and two numbers: waiting for your decision, and waiting for the student's reply.
-- [ ] Run it again: `reviewer reminders: 0`, and no second email.
-- [ ] Run the "semester's last day" command: one more email each, saying today is the last day.
+- [ ] **No email per event:** a student submits or replies; no reviewer email arrives at that moment.
+- [ ] Run the jobs for 07:00 Budapest time tomorrow (`npm run jobs:run -- --now=<tomorrow>T06:00:00Z --yes` in winter, `T05:00:00Z` in summer): the CS main and the assisting extra reviewer each get one **daily summary** (new applications and replies, how many wait now); the standby Civil extra reviewer gets none. Run it again that day: `reviewer daily summaries: 0`.
+- [ ] Run the "7 days before the review deadline" command `demo:seed` printed: everyone who can see the undecided applications (CS: main and assisting; Civil: main) gets a reminder with the review deadline and two numbers. Again: 0.
+- [ ] Run the "1 day before the review deadline" command: one more each.
 
-## 7. Semester close: automatic rejection
+## 7. The review deadline and closing (round 2)
 
-- [ ] Run the "semester has ended" command: everything still pending or waiting for information is rejected by System ("Not reviewed before the semester closed"), and each student gets the email.
-- [ ] Run it again: 0.
-- [ ] The reviewer's Completed tab shows them as "Decided by System". The browser still lives in the real date, inside the semester, so they are listed as this semester's decisions.
+- [ ] Run the "review deadline has passed" command: **nothing is rejected**; the admins get one email with the undecided counts per programme; the Overview shows "review deadline passed … nothing was rejected". Again: no second email.
+- [ ] As the admin, Semesters: Close now the current semester, then "Check the close…": it lists the undecided applications per programme and cannot close yet.
+- [ ] Decide or withdraw everything, check again: nothing blocks it (also before the review deadline). Close it: nobody is rejected; the semester is read-only and listed under Past semesters.
+- [ ] The previous semester's old record still shows "Not reviewed before the semester closed" (closes before round 2 keep it).
+
+## 7b. Sharing the work and PDFs (round 2)
+
+- [ ] As the admin, Reviewers, "Sharing the work", CS: assign two applications to Dr. Balogh, distribute the rest evenly, unassign one. The reviewers' lists show "Assigned to …" and the filter Assigned to me / Unassigned works; deciding someone else's application asks first.
+- [ ] Put Dr. Balogh on standby: his list is empty and his header says "On standby". Allow him to assist again.
+- [ ] As the CS reviewer: "Download the PDF book of my programmes (interim, not final)": only CS, INTERIM on the cover and in every header. Open an application, "Download as PDF": that application's pages only.
 
 ## 8. Term book PDF
 
@@ -180,7 +190,7 @@ The demo's previous semester has Bence's approved CS101 (CS) and Eszter's CE101,
   ```
   The answer is `SEMESTER_ENDED` (409). Use the id `demo:seed` printed for "approved, grade 5, previous semester".
 - [ ] **Files can't be deleted:** a file of a submitted application can't be deleted by its student. The security check covers this (409 `FILE_IN_USE`); in the browser, removing a row in a new draft still works.
-- [ ] **The draft warning:** in the student form during the application period's last 7 days, the warning ends with "Unsent drafts are deleted when the semester ends." To see it in the demo, the current semester's application period would have to end within 7 days.
+- [ ] **Unsent drafts:** when a semester's last-days warning starts, a student with an unsent draft gets one email with the closing time. When the semester is closed, unsent drafts are deleted, unless another application period is open or still to come (then they are kept; the close preview says which). To see the email in the demo, the current semester's application period would have to end within its last-days warning.
 
 ## When done
 

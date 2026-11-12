@@ -1,128 +1,103 @@
 # The reviewer side, in plain language
 
-How reviewers get access, what they see, how decisions work and what happens automatically.
-Each part names the file where it lives.
+How reviewers get access, what they see, how decisions and the semester timeline work, and what
+happens automatically. Each part names the file where it lives.
 
 ## The basic rules
 
 - **One application = one target PTE course.** A student who wants three courses recognised sends three applications. So each application has exactly one decision and one final grade.
-- **One active reviewer per programme** (Computer Science Engineering, Civil Engineering…). The database enforces it: a unique index allows only one reviewer per programme who is not deactivated (migration 010).
-- **Reviewers only ever see their own programme.** Applications, students and files of other programmes don't exist for them: they get the same "not found" as for something that really doesn't exist.
+- **Staff are linked to programmes** (round 2: `staff_programmes`, migration 019). Per programme: at most **one main reviewer** (a database rule) and any number of **extra reviewers**. A reviewer may be linked to several programmes. `users.programme_id` is for students only (a database rule too).
+- **Who sees a programme's applications:** its main reviewer, always; an extra reviewer only while **allowed to assist** (off by default). A standby extra reviewer sees nothing of that programme. Everyone else gets the same "not found" as for something that really doesn't exist.
 
-## 1. Getting access: invites (`routes/staffInvites.js`)
+## 1. Getting access: invites and links (`routes/staffInvites.js`, `utils/reviewers.js`)
 
-Reviewers and admins never register themselves (registration only ever creates students; staff addresses are refused). The superadmin invites them on the dashboard (**Staff access**); admins are invited the same way, without a programme (admin round Group 2):
+Reviewers and admins never register themselves (registration only ever creates students). The superadmin invites them in the admin menu (**Reviewers**, **Admins**):
 
-1. **Invite.** The superadmin sends an email address, a role and, for a reviewer, a programme (`POST /api/users/invites`). The address is checked and lowercased; an address that already belongs to an ACTIVE account (student, reviewer or admin) is refused. If the programme already has a reviewer, the superadmin must say `replace: true`. Each invite's status (sent, accepted, expired, cancelled) is worked out from its dates when it is read.
-2. **The link.** The invite email (in Hungarian, English or German) contains a link that works **once** and for **7 days**. Only a SHA-256 hash of the link's secret is stored, so even someone reading the database can't use it. A new invite to the same address, or "resend", makes the old link stop working; an invite can also be cancelled.
-3. **Accepting.** The person opens the link, chooses a password (at least 8 characters; the same rule everywhere, `utils/passwordRules.js`) and, for a new account, gives their name. The accept page is rate-limited.
-4. **Takeover, in one database transaction:**
-   - the programme's current reviewer is deactivated (only if the invite said "replace"),
-   - the new reviewer's account is created, or, for someone who was a reviewer before, reactivated (same account and name, new password, possibly a new programme),
-   - the programme's **open** applications (pending, needs info) move to the new reviewer. Decided applications keep the reviewer who decided them.
+1. **Invite.** An email address, a role and, for a reviewer, one or more programmes, each as **main** or **extra** (`POST /api/users/invites`). An address that already belongs to an ACTIVE account is refused. A main role for a programme that already has a main reviewer needs **"swap out the current main reviewer"**; an extra role never replaces anyone. Each invite's status (sent, accepted, expired, cancelled) is worked out from its dates.
+2. **The link** (Hungarian, English or German) works **once** and for **7 days**. Only a SHA-256 hash of its secret is stored. A new invite to the same address, or "resend", makes the old link stop working; an invite can also be cancelled.
+3. **Accepting.** The person sets a password (at least 8 characters, `utils/passwordRules.js`) and, for a new account, a name. Rate-limited.
+4. **The swap, in one transaction** (programmes locked in id order): a main role swaps out the current main reviewer (their link ends; their open applications assigned to them go to the new person; someone left with no programme is deactivated); the account is created, or a deactivated one reactivated (same id and name, new password); then the new links are made (an extra reviewer starts on standby). Until acceptance everyone keeps their access.
+5. **Changing an existing reviewer, no invite** (Reviewers screen): add a programme (main or extra), remove from a programme (not the last one), **make an extra reviewer the main one** (asks before swapping out a current main reviewer). **Removing a reviewer** (`PUT /api/users/:id/remove-reviewer`) deactivates the account (never deleted: their name stays on their decisions), ends every link (kept for history) and makes their assigned open applications shared again.
+6. **The main reviewer leaves while extra reviewers remain** (removed, taken off, made extra): **nobody is promoted automatically.** Every active admin gets one email (`utils/notifyAdmins.js`) and the Overview warns. An assisting extra reviewer keeps working meanwhile; with only standby extras the programme's applications wait for the admin.
 
-   Until the moment of acceptance the old reviewer keeps full access, so there is never a programme without anyone.
-5. **Removing a reviewer** (`PUT /api/users/:id/remove-reviewer`; admins: `PUT /api/users/:id/deactivate-admin`, never yourself or the last active admin): the account is deactivated, not deleted (their name must stay on their past decisions). They are refused from their very next request and can't log in. Their open applications have no reviewer until a new one accepts an invite.
+Every request re-reads the role, the deactivation and the reviewer's visible programmes from the database (`middleware/verifyToken.js`), so a change works from the next request on, never only when a login token expires. The very first admin: `npm run make-superadmin -- <email>`.
 
-Inviting a deactivated account's address again reactivates the same account (same id, new password). The very first admin is created with `npm run make-superadmin -- <email>` (or `FIRST_ADMIN_EMAIL`), which only works while no active admin exists and prints an admin invite link.
+## 2. Programme scoping and sharing work (`utils/reviewers.js`, `utils/fileOwner.js`, `routes/adminSharing.js`)
 
-A deactivated reviewer keeps the role "reviewer" but does not count as the programme's reviewer and is refused everywhere. Every request re-reads the role, programme and deactivation from the database (`middleware/verifyToken.js`), so a change takes effect immediately, not when a login token expires.
-
-## 2. Programme scoping: who sees what (`utils/reviewers.js`, `utils/fileOwner.js`)
-
-- Every reviewer query is limited to `programme_id = the reviewer's programme`, read from the database on each request.
-- **Files:** a reviewer may open a file only if an application of their own programme names it, in any of the five places a file can appear: transcript, syllabus, grading-system document, reply file, or the older reply-file list. Anything else gets "not found".
-- **The superadmin** sees everything. To see exactly what one reviewer sees, the superadmin **acts as** them (admin round Group 1, `routes/acting.js`): the server issues a session for the reviewer that also carries the admin's id, logged in `acting_sessions`. Anything the superadmin does there is recorded as done by **Admin**, with the admin's id, never in the reviewer's name. The session ends with Exit or after one hour.
-- Lists and details never contain email addresses or internal user ids; an admin's step shows as "Admin", the system's as "System".
+- Every reviewer query is limited to the programmes they can see now (one SQL rule, `seesProgrammeSql`): lists, details, files, decisions, the student view, PDFs.
+- **Files:** a reviewer may open a file only if an application of a programme they can see names it (transcript, syllabus, grading-system document, reply file, older reply-file list).
+- **Assigned or shared.** `applications.assigned_reviewer_id` empty = shared: everyone who can see the programme may decide it. New applications start shared. All optional, in the admin's **Sharing the work** panel per programme: allow an extra reviewer to assist or put them on standby (standby: their open assigned applications become shared), assign or unassign selected open applications (all or nothing), and **distribute evenly** (the unassigned pending ones, oldest first, each to the ticked reviewer with the fewest open applications assigned).
+- **The reviewer's list** shows "Assigned to you / to X / Shared" and filters All, Assigned to me, Unassigned. Deciding an application assigned to someone else asks first. **The first decision wins** (section 4).
+- **The superadmin** sees everything, and sees exactly what one reviewer sees by **acting as** them (`routes/acting.js`): recorded as Admin, never in the reviewer's name; ends with Exit or after one hour.
 
 ## 3. The reviewer dashboard (`routes/reviewer.js`, frontend `components/reviewer/`)
 
-- **Tabs:** Pending (waiting for a decision, including replies from students), Needs Info (waiting for the student), Completed (approved and rejected **in the current semester**). Withdrawn applications are never shown.
-- **Each row:** student, target course, how many days it has been waiting since its last action, and how many other applications the same student has.
-- **Details:** the student, the target course, the completed courses with their institutions and an ECTS comparison, every file, the conversation (student's note, reviewer's messages, student's replies, automatic reasons) and a history table of every step.
+- **Tabs:** Pending, Needs Info, Completed (approved and rejected in the semesters in progress). Withdrawn applications are never shown.
+- **Semesters:** several can be in progress (section 6). The picker offers all semesters in progress (default), one of them (with its review deadline), or a past one (read-only). The header names each semester in progress with its review deadline, and the programmes on standby.
+- **Each row:** student, target course, waiting days, other applications of the student, who it's assigned to, and the programme's code when the reviewer sees several.
+- **Details:** student, target course, completed courses with institutions and an ECTS comparison, every file, the conversation and the full history; **Download as PDF**.
+- **PDFs** (round 2, `utils/pdfDownloads.js`): the **PDF book of the reviewer's programmes** for a semester (made on request; marked **"INTERIM – not final"** while the semester is in progress; withdrawn ones left out), and one application as a PDF. Same layout as the admin's book; checked on the server.
 
-## 3b. Past semesters, read-only (`routes/reviewer.js`, frontend `reviewer/SemesterSelect.js`)
+## 3b. Past semesters, read-only
 
-- **The admin closes a semester** (admin round Group 6), never the date by itself: after its last day the admin dashboard shows "Ready to close". Until the close, reviewers can still decide and students can still answer requests for information; nobody can submit. Closing rejects the unreviewed applications as System (reason `SEMESTER_ENDED`), ends its late access and deletes unsent drafts, all in one transaction; then the students are emailed and the semester's PDF book is created. **Nothing else is deleted**: applications, history, files and courses stay, only hidden from the current view (admin: Past semesters).
-- The reviewer picks a past semester in the selector. It lists only closed semesters with applications of their own programme, newest first.
-- A past semester shows the same list, search and details (notes, files, history, decision, grade, who decided), but no decision buttons, and a "Past semester – read only" banner.
-- **The server enforces it, not only the screen.** Any status change on an application whose semester is closed is refused with 409 `SEMESTER_ENDED`: decisions, information requests, the student's withdrawal and replies, for everyone, also the superadmin. The check is part of the same conditional update, so there's no gap between checking and saving.
-- **Evidence is kept.** A student can't delete a file that any submitted application uses, in any status or semester (409 `FILE_IN_USE`). Files of unsent drafts can still be removed.
-- **Not yet built:** the superadmin's view of all programmes' past semesters comes in the admin round. Today the superadmin sees a reviewer's past semesters by acting as them.
+- **The admin closes a semester** (section 6), never a date by itself. After the close it's read-only and the PDF book is made. Nothing is deleted.
+- **The server enforces it:** any status change on an application of a closed semester is refused with 409 `SEMESTER_ENDED`, for everyone, inside the same conditional update.
+- **Evidence is kept:** a file any submitted application uses can't be deleted (409 `FILE_IN_USE`).
 
 ## 4. Decisions and the status rules (`utils/decisions.js`, `PUT /api/applications/:id/status`)
 
-The only allowed changes, for everyone (reviewer and superadmin alike):
-
 | From | To | Who | What is required |
 |---|---|---|---|
-| pending | approved | reviewer / admin | a **final grade 2–5** (jeles, jó, közepes, elégséges); a note is optional |
+| pending | approved | reviewer / admin | a **final grade 2–5**; a note is optional |
 | pending | rejected | reviewer / admin | a **reason** |
-| pending | needs info | reviewer / admin | a **message** saying what the student should send |
-| needs info | pending | the **student**, by replying | before the reply deadline and before the semester is closed |
+| pending | needs info | reviewer / admin | a **message** |
+| needs info | pending | the **student**, by replying | before the reply deadline |
 | pending / needs info | withdrawn | the **student** | — |
-| *anything* | *anything* | nobody, once the semester is closed | refused: 409 `SEMESTER_ENDED` (section 3b) |
-| needs info / pending | rejected | the **system** | no reply in time (section 5), or the admin's close (section 3b) |
+| needs info | rejected | the **system** | no reply by the deadline (section 5) |
+| *anything* | *anything* | nobody, once the semester is closed | 409 `SEMESTER_ENDED` |
 
-Approved and rejected are **final**. The database itself refuses an approval without a grade (migration 011).
+Approved and rejected are **final**; the database refuses an approval without a grade. **One decision at a time:** one conditional update ("WHERE the status is still pending"); of two people deciding at once, one succeeds and the other gets 409 `ALREADY_DECIDED`. **The reply deadline:** 23:59:59 Budapest time on the third day after the request. Every step is in `application_events`, an append-only history.
 
-**One decision at a time.** The change is one conditional database update: "set approved WHERE the status is still pending". If two people decide at the same moment, only one update matches; the other gets a clear "already decided" (409) answer. A refused change saves nothing.
+**Emails** (`utils/notifyStudent.js`, `utils/emailTemplates.js`, `jobs/applicationJobs.js`), each in the recipient's language:
 
-**The reply deadline.** When information is requested, the student has until **23:59:59 Budapest time on the third day** after the request (database function `info_reply_deadline`, correct across daylight-saving changes).
-
-**Who decided.** Every decision stores the grade, who decided (`decided_by`, and `decided_by_role`: reviewer, admin or system), when, and the reason or note. Every step also goes into `application_events`, an append-only history the database refuses to change or delete.
-
-**Emails** (`utils/notifyStudent.js`, `utils/notifyReviewer.js`, `utils/emailTemplates.js`), each in the recipient's language:
-
-- **To the student:** submitted, information needed (with the deadline), a reminder 24 hours before the deadline, the decision (with the grade, or the reason), and withdrawn.
-- **To the programme's active reviewer:** a new application, the student's reply, and the semester-end reminders.
-
-Emails are sent after the change is saved and never make a request fail. If a programme has no active reviewer, the reviewer email is skipped.
+- **To the student:** submitted, information needed, a reminder 24 hours before the deadline, the decision, withdrawn.
+- **To reviewers** (round 2): no email per new application or reply. **One daily summary** at 07:00 Budapest time (section 5), and the reminders before the review deadline.
+- **To the admins:** a main reviewer left while extra reviewers remain; the review deadline passed with undecided applications.
 
 ## 5. Automatic actions (`jobs/applicationJobs.js`, `jobs/scheduler.js`)
 
-The backend runs four steps **when it starts and then every 5 minutes**. (Closing the semester is not one of them: the admin does it, section 3b.)
+When the backend starts and then **every 5 minutes**:
 
-1. **Unsent drafts.** When the active semester's last-days warning starts, students with an unsent draft get one email, "your draft hasn't been submitted; applications close on <date>", once per student and semester (`draft_reminders`).
-2. **Reviewer reminders.** If the programme's active reviewer still has undecided applications in a semester that is ending, they get an email **7 days before the end** and again **on the last day**, with both numbers: waiting for their decision, and waiting for the student's reply.
-3. **Student reminder.** One email 24 hours before the reply deadline.
-4. **No reply in time.** Needs info past its deadline becomes **rejected by System**, reason `NO_INFO_RESPONSE` ("No response to information request").
+1. **Unsent drafts:** when a semester's last-days warning starts, one email per student and semester (`draft_reminders`).
+2. **Reviewer daily summary** (round 2): from **07:00 Budapest time** (`DAILY_SUMMARY_HOUR`), on the Budapest clock, each reviewer who can see a programme gets one summary a day of the applications submitted and the student replies since their last summary, in the programmes they can see then (withdrawn left out), with how many wait for their decision now. Nothing new: recorded, no email. Recorded first (`reviewer_summaries`, one row per reviewer and day), so never twice; a server off at 07:00 sends it at the next run that day; off for days: the next summary covers everything since the last one.
+3. **Reviewer reminders before the review deadline:** **7 days and 1 day before** it, to everyone who can see the undecided applications, with both numbers. Once per semester, programme, kind and reviewer (`reviewer_reminders`).
+4. **The review deadline passed** with applications pending or in needs info: **nothing is rejected.** The admins get one email per semester with the undecided counts per programme (`review_deadline_alerts`).
+5. **Student reminder:** 24 hours before the reply deadline.
+6. **No reply in time:** needs info past its deadline becomes **rejected by System**, reason `NO_INFO_RESPONSE`.
 
-How it is kept safe:
+Kept safe: **never twice** (conditional updates; every email recorded before it is sent), **never in parallel** (a Postgres advisory lock), **catching up** (every rule compares with "now"; a reminder whose time has passed is not sent late), **Budapest time** (worked out in the database), **codes, not text** (automatic reasons are codes, translated everywhere).
 
-- **Never twice.** Each change is a conditional update ("still needs info AND past the deadline"), and each reminder is recorded before its email goes out (`info_reminder_sent_at`; the `reviewer_reminders` table, one row per semester, programme and kind). Running again finds nothing left to do.
-- **Never in parallel.** A run takes a Postgres advisory lock. A second backend process, or a manual run, skips its turn while another run holds it.
-- **Catching up.** Every rule compares with "now" ("the deadline has passed"), not with a clock time. So if the server was off when a deadline passed, the run at startup handles it. A reminder whose time has passed is not sent late: a server that was off all week sends only the last-day reminder.
-- **Budapest time.** Deadlines and semester ends are worked out in the database in the Europe/Budapest time zone.
-- **Codes, not text.** An automatic rejection stores only its reason code, and every screen, email and the term book translate it (the term book in English).
+**For testing:** `npm run jobs:run` runs every step once; `npm run jobs:run -- --now=2027-01-31T06:00:00Z --yes` pretends it is that moment (refused in production; use a copy of the database). `npm test` uses a fake clock.
 
-**Why `setInterval` and not a cron library:** no rule is tied to a time of day, so a check every 5 minutes is always on time, the startup run gives the catch-up for free, and there is no extra dependency.
+## 6. The semester timeline (round 2: `utils/applicationPeriod.js`, `utils/semesters.js`, `utils/semesterClose.js`)
 
-**For testing:** `npm run jobs:run` runs all steps once. `npm run jobs:run -- --now=2027-01-31T08:00:00Z --yes` pretends it is that moment (refused in production; best used on a copy of the database). The automatic tests (`npm test`) use a fake clock.
+- A semester has an **application period** (opening and closing time; Close now and Reopen until change the closing time), a **review deadline** (`review_end_at`; default applications close + 14 days; a target, never a lock), and a name and last day that are **labels only**.
+- **Several semesters can be in progress:** the next one's application period may open while the previous one is still reviewed. **Application periods never overlap** (a database rule), so a new application belongs to exactly one semester. The period rule talks about the semester whose period is open, else the next to open, else the most recent; **late access** submits into its own semester.
+- **Reopen until and late access** run up to the review deadline at most; a later or tight end (fewer than 7 days of review left) offers to move the review deadline in the same step. Reopen until is refused if it would overlap the next semester's period.
+- **At the review deadline nothing is rejected** (section 5). The admin can extend it, let an extra reviewer assist, or decide as admin.
+- **Closing** (admin, Semesters screen): allowed once the application period is over, no late access runs and **nothing is pending or in needs info**, even before the review deadline. The preview lists what blocks it per programme. Nobody is rejected (old closes keep their `SEMESTER_ENDED` records). It ends the late access, deletes unsent drafts unless another application period is open or still to come, makes the semester read-only and creates its PDF book.
 
-## 6. The admin's overview (`routes/adminOverview.js`)
+## 7. The admin's overview (`routes/adminOverview.js`, `routes/adminPeriod.js`)
 
-At the top of the admin dashboard, one line per programme shows:
+One line per programme: the main reviewer, the extra reviewers (assisting or standby), pending and needs-info counts, and the first review deadline. Warnings: a programme nobody can review, a programme without a main reviewer, per semester "review deadline soon", "review deadline passed (nothing rejected)" with counts per programme, and "ready to close".
 
-- the active reviewer's name,
-- how many applications wait for a decision,
-- how many wait for the student's reply,
-- the current semester's last day.
+## 8. The term book (`utils/getTermData.js`, `utils/buildTermBookPdf.js`)
 
-A programme without an active reviewer is shown as a red warning.
-
-## 7. The term book (`utils/getTermData.js`, `utils/buildTermBookPdf.js`)
-
-The superadmin generates a PDF for a date range. Per application it shows:
-
-- the status, the final grade (with its Hungarian name), who decided ("Admin" and "System" without a name) and when,
-- the reason or note, the courses and the evidence files.
-
-It is stored privately in MinIO.
+Per closed semester (admin), stored privately in MinIO: cover with counts, index, then each application (status, final grade, who decided, reason, courses, evidence) with its decision line on every page. The reviewer's book and the single-application PDF use the same pages (section 3).
 
 ## Where to check that it all holds
 
-- `npm test` (backend): the jobs with a fake clock, reminders, the lock, emails.
-- `npm run security-check` (backend, with the backend running): access by role, programme scoping including files, invites, decisions, the admin overview.
-- `npm run check:translations`, `npm run check:reviewer-list` and `npm test` (frontend).
+- `npm test` (backend): the jobs with a fake clock (daily summary, reminders, review deadline alert, the lock), the period rule with several semesters, the close, the PDFs, emails in every language.
+- `npm run security-check` (backend, with the backend running): access by role, programme scoping (also files and PDFs), standby and assisting extra reviewers, one main reviewer per programme, two decisions at once, invites, sharing, the close refused while anything is undecided, no rejection at the review deadline, overlapping application periods refused.
+- `npm run check:translations`, `npm run check:missing-keys`, `npm run check:reviewer-list`, `CI=true npm test` (frontend).
 - The browser checklist: `docs/REVIEWER_CHECKLIST.md`.
