@@ -174,6 +174,18 @@ const removeTestStaff = async () => {
     return rowCount;
 };
 
+// ---------- section 4s: a temporary programme for sharing work (deleted at the end, also after a crash) ----------
+const SHARING_PROGRAMME_PREFIX = 'SECSHR';
+const removeSharingProgramme = async () => {
+    const ids = (await pool.query('SELECT id FROM programmes WHERE code LIKE $1', [`${SHARING_PROGRAMME_PREFIX}%`])).rows.map((r) => r.id);
+    if (ids.length === 0) return 0;
+    await pool.query('DELETE FROM applications WHERE programme_id = ANY($1)', [ids]);
+    await removeTestStaff();
+    await removeTestStudents();
+    await pool.query('DELETE FROM programmes WHERE id = ANY($1)', [ids]);
+    return ids.length;
+};
+
 // ---------- section 4l: temporary admins (deleted at the end, also after a crash) ----------
 const removeTestAdmins = async () => {
     const { rows } = await pool.query("SELECT id FROM users WHERE role = 'superadmin' AND email LIKE $1", [`%${TEST_DOMAIN}`]);
@@ -2622,6 +2634,126 @@ const run = async () => {
         }
     }
 
+    section('4s. Sharing work (round 2 Group 1): assist, assign, distribute, first decision wins, main reviewer gone');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Sharing', 'Security Check Sharing', 'Security Check Sharing') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, canAssist = false) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', 'reviewer', true) RETURNING id, role, name",
+                    [`Sharing ${key}`, `${STAFF_TEST_PREFIX}share-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)', [user.id, programmeId, role, canAssist]);
+                return user;
+            };
+            const M = await person('main', 'main');
+            const E1 = await person('assist', 'extra', true);
+            const E2 = await person('standby', 'extra', false);
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Security Check Sharing Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id`,
+                [`share-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `Q${stamp.slice(-5)}`.padEnd(6, 'Q').slice(0, 6), programmeId]
+            )).rows[0];
+            const app = async (n, status) => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+                     info_requested_at, info_deadline)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Temporary application of the security check',
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_code: `SHR${n}`, course_name: 'Security check', credits: 1 }]), `SHR${n}${stamp}`.slice(0, 20), status]
+            )).rows[0].id;
+            const [a1, a2, a3, a4] = [await app(1, 'pending'), await app(2, 'pending'), await app(3, 'pending'), await app(4, 'pending')];
+            const a5 = await app(5, 'needs_info');
+            const withdrawn = await app(6, 'withdrawn');
+            // Any application of another programme (its status does not matter: it is not this programme's)
+            const otherProgrammeApp = await app(7, 'pending').then(async (id) => {
+                await pool.query('UPDATE applications SET programme_id = $2 WHERE id = $1', [id, d.studentB.programme_id]);
+                tempApplicationIds.push(id);
+                return id;
+            });
+            const [TM, TE1, TE2] = [tokenFor(M), tokenFor(E1), tokenFor(E2)];
+            const base = `admin/sharing/${code}`;
+            const assigned = async (id) => (await pool.query('SELECT assigned_reviewer_id FROM applications WHERE id = $1', [id])).rows[0].assigned_reviewer_id;
+
+            // Only the admin
+            await expect('Reviewer: the sharing panel', call('GET', base, { token: TM }), 403, 'FORBIDDEN_ROLE');
+            await expect('Reviewer: assign applications', call('POST', `${base}/assign`, { token: TM, json: { application_ids: [a1], reviewer_id: M.id } }), 403, 'FORBIDDEN_ROLE');
+            await expect('Student: turn assisting on', call('PUT', `${base}/assist/${E2.id}`, { token: A, json: { can_assist: true } }), 403, 'FORBIDDEN_ROLE');
+            const panel = await call('GET', base, { token: S });
+            report(panel.status === 200 && panel.body.reviewers.length === 3 && panel.body.applications.length === 5
+                && !panel.body.applications.some((x) => x.id === withdrawn) && !JSON.stringify(panel.body).includes('@'),
+            'Admin: the programme\'s 3 reviewers and its 5 open applications (no withdrawn one, no email addresses)', `${panel.status} ${panel.body?.reviewers?.length}/${panel.body?.applications?.length}`);
+
+            // Assigning: only to someone who can see the programme, only open applications of it, all or nothing
+            await expect('Assign to a standby extra reviewer', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a1], reviewer_id: E2.id } }), 409, 'REVIEWER_CANNOT_SEE');
+            await expect('Assign to a reviewer of another programme', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a1], reviewer_id: d.reviewer.id } }), 409, 'REVIEWER_CANNOT_SEE');
+            await expect('Assign a withdrawn application (with an open one)', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a1, withdrawn], reviewer_id: M.id } }), 409, 'NOT_ASSIGNABLE');
+            report(await assigned(a1) === null, 'All or nothing: the open application was not assigned either');
+            if (otherProgrammeApp) await expect('Assign another programme\'s application', call('POST', `${base}/assign`, { token: S, json: { application_ids: [otherProgrammeApp], reviewer_id: M.id } }), 409, 'NOT_ASSIGNABLE');
+            else skip('Assign another programme\'s application', 'no open application in student B\'s programme');
+            await expect('Assign with a broken id list', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a1, a1], reviewer_id: M.id } }), 400, 'INVALID_FIELD');
+            await expect('Assign a1 to the assisting extra reviewer', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a1], reviewer_id: E1.id } }), 200);
+            const mainList = await call('GET', 'reviewer/applications', { token: TM });
+            const row = (mainList.body?.applications || []).find((x) => x.id === a1);
+            report(row && row.assigned_reviewer_id === E1.id && row.assigned_name === E1.name,
+                'The main reviewer still sees it, marked "Assigned to" the extra reviewer', row ? `${row.assigned_name}` : 'missing');
+            const standbyList = await call('GET', 'reviewer/applications', { token: TE2 });
+            report(standbyList.status === 200 && (standbyList.body.applications || []).length === 0, 'The standby extra reviewer sees nothing of the programme');
+
+            // Distribute evenly: the unassigned PENDING ones (a2, a3, a4), each to the ticked reviewer with the fewest
+            const spread = await call('POST', `${base}/distribute`, { token: S, json: { reviewer_ids: [M.id, E1.id] } });
+            const totals = Object.fromEntries((spread.body?.perReviewer || []).map((x) => [x.reviewer_id, x.total]));
+            report(spread.status === 200 && spread.body.distributed === 3 && totals[M.id] === 2 && totals[E1.id] === 2,
+                'Distribute evenly: 3 unassigned pending applications, 2 open each afterwards (a1 counted)', `${spread.status} ${JSON.stringify(totals)}`);
+            report(await assigned(a5) === null, 'Distribute leaves needs-info applications alone');
+            await expect('Distribute to a standby reviewer', call('POST', `${base}/distribute`, { token: S, json: { reviewer_ids: [M.id, E2.id] } }), 409, 'REVIEWER_CANNOT_SEE');
+            await expect('Unassign a2 (shared again)', call('POST', `${base}/assign`, { token: S, json: { application_ids: [a2], reviewer_id: null } }), 200);
+            report(await assigned(a2) === null, 'a2 is shared again');
+
+            // First decision wins: two reviewers approve the same application at the same moment
+            const target = a3;
+            const decide = (token) => call('PUT', `applications/${target}/status`, { token, json: { status: 'approved', final_grade: 4, note: 'Security check' } });
+            const [first, second] = await Promise.all([decide(TM), decide(TE1)]);
+            const statuses = [first.status, second.status].sort();
+            report(statuses[0] === 200 && statuses[1] === 409 && [first.code, second.code].includes('ALREADY_DECIDED'),
+                'Two reviewers deciding at once: one 200, the other 409 ALREADY_DECIDED', `${first.status} ${first.code || ''} / ${second.status} ${second.code || ''}`);
+
+            // Assisting off: their open assigned applications become shared, and out of reach at once
+            const e1Open = (await pool.query("SELECT array_agg(id) AS ids FROM applications WHERE assigned_reviewer_id = $1 AND status IN ('pending', 'needs_info')", [E1.id])).rows[0].ids || [];
+            const off = await call('PUT', `${base}/assist/${E1.id}`, { token: S, json: { can_assist: false } });
+            report(off.status === 200 && off.body.unassigned === e1Open.length, 'Assisting off: their open assigned applications become shared', `${off.status} ${off.body?.unassigned}/${e1Open.length}`);
+            report(e1Open.length === 0 || (await pool.query('SELECT count(*)::int AS n FROM applications WHERE id = ANY($1) AND assigned_reviewer_id IS NOT NULL', [e1Open])).rows[0].n === 0, 'None of them is assigned now');
+            await expect('Standby again: the application is out of reach', call('GET', `reviewer/applications/${a1}`, { token: TE1 }), 404, 'APPLICATION_NOT_FOUND');
+            await expect('Assist on a main reviewer', call('PUT', `${base}/assist/${M.id}`, { token: S, json: { can_assist: true } }), 400, 'ASSIST_ONLY_EXTRA');
+            await expect('Assist with a broken value', call('PUT', `${base}/assist/${E1.id}`, { token: S, json: { can_assist: 'yes' } }), 400, 'INVALID_FIELD');
+            await expect('Assist on again', call('PUT', `${base}/assist/${E1.id}`, { token: S, json: { can_assist: true } }), 200);
+
+            // The main reviewer leaves while an extra reviewer assists: nobody is promoted, the extra keeps working, the admin is warned
+            const summaryBefore = (await call('GET', 'admin/summary', { token: S })).body?.summary;
+            await expect('Remove the main reviewer', call('PUT', `users/${M.id}/remove-reviewer`, { token: S }), 200);
+            const mains = (await pool.query("SELECT count(*)::int AS n FROM staff_programmes WHERE programme_id = $1 AND role = 'main' AND ended_at IS NULL", [programmeId])).rows[0].n;
+            report(mains === 0, 'No automatic promotion: the programme has no main reviewer now');
+            await expect('The assisting extra reviewer keeps working', call('GET', `reviewer/applications/${a1}`, { token: TE1 }), 200);
+            const summaryAfter = (await call('GET', 'admin/summary', { token: S })).body?.summary;
+            report(summaryAfter?.programmesWithoutMain === (summaryBefore?.programmesWithoutMain ?? 0) + 1,
+                'The admin summary counts the programme without a main reviewer (Overview warning, menu badge)', `${summaryBefore?.programmesWithoutMain} -> ${summaryAfter?.programmesWithoutMain}`);
+            // Standby too: nobody can see it now, it waits for the admin
+            await call('PUT', `${base}/assist/${E1.id}`, { token: S, json: { can_assist: false } });
+            const summaryNobody = (await call('GET', 'admin/summary', { token: S })).body?.summary;
+            report(summaryNobody?.programmesWithoutReviewer === (summaryBefore?.programmesWithoutReviewer ?? 0) + 1,
+                'With only standby extra reviewers nobody can review it: counted as a programme without a reviewer', `${summaryBefore?.programmesWithoutReviewer} -> ${summaryNobody?.programmesWithoutReviewer}`);
+            // The admin chooses: make an extra reviewer the main one
+            await expect('Make the standby extra reviewer the main one', call('POST', `users/${E2.id}/programmes`, { token: S, json: { programme_code: code, role: 'main' } }), 200);
+            await expect('The new main reviewer sees the programme', call('GET', `reviewer/applications/${a1}`, { token: TE2 }), 200);
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary sharing programme (${removed}) with its reviewers, student and applications)`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);
@@ -2760,6 +2892,11 @@ const finish = async (ok) => {
         await removeTestAdmins();
     } catch (err) {
         console.error('Could not put back the admins of section 4l:', err.message);
+    }
+    try {
+        await removeSharingProgramme();
+    } catch (err) {
+        console.error('Could not remove the temporary programme of section 4s:', err.message);
     }
     try {
         await removeTestStaff();

@@ -36,7 +36,8 @@ const smallButton = (danger = false) => ({
 // role (admin menu, admin round Group 5): 'reviewer' (the Reviewers section) or 'superadmin' (the
 // Admins section). It fixes the invite form's role and shows only that role's invites and people.
 // onChange: called after any change (the menu's badges refresh).
-const StaffAccess = ({ role = 'reviewer', onChange = () => {} }) => {
+// version: changes when the sharing panel changed something (assisting), so the list reloads
+const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
 
@@ -69,7 +70,7 @@ const StaffAccess = ({ role = 'reviewer', onChange = () => {} }) => {
     useEffect(() => {
         http.get('programmes').json().then((data) => setProgrammes(data.programmes || [])).catch(() => setProgrammes([]));
         loadStaff();
-    }, [loadStaff]);
+    }, [loadStaff, version]);
     useEffect(() => { loadInvites(); }, [loadInvites]);
 
     const setField = (field, value) => { setForm((prev) => ({ ...prev, [field]: value })); setFormError(''); };

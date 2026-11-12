@@ -64,6 +64,24 @@ report(same(list.countsFor(apps, { student }), { pending: 1, needs_info: 1, comp
 report(same(list.rowsFor(apps, { tab: 'pending', query: 'anna' }).map((x) => x.id), [104]), 'Search inside a tab');
 report(list.targetCourse(app({ target_courses: null, target_course_code: 'OLD1' })).course_code === 'OLD1', 'Old rows without a target snapshot show the course code');
 
+// Assignment filter (round 2 Group 1): all / assigned to me / unassigned (shared)
+const ME = 7;
+const shared = [
+    app({ id: 201, assigned_reviewer_id: null }),
+    app({ id: 202, assigned_reviewer_id: ME }),
+    app({ id: 203, assigned_reviewer_id: 8 }),
+    app({ id: 204 }), // older rows without the field are shared
+    app({ id: 205, assigned_reviewer_id: ME, status: 'needs_info' }),
+];
+const ids = (assignment) => list.rowsFor(shared, { tab: 'pending', assignment, me: ME }).map((x) => x.id).sort();
+report(same(ids('all'), [201, 202, 203, 204]), 'Assignment filter All: everything in the tab', JSON.stringify(ids('all')));
+report(same(ids('mine'), [202]), 'Assigned to me: only the ones assigned to this reviewer', JSON.stringify(ids('mine')));
+report(same(ids('unassigned'), [201, 204]), 'Unassigned: only shared ones (no reviewer)', JSON.stringify(ids('unassigned')));
+report(same(list.countsFor(shared, { assignment: 'mine', me: ME }), { pending: 1, needs_info: 1, completed: 0 }), 'Tab counts follow the assignment filter');
+report(list.matchesAssignment(app({ assigned_reviewer_id: null }), 'mine', null) === false, 'Assigned to me never matches shared rows, even without an id');
+report(list.assignedToSomeoneElse(app({ assigned_reviewer_id: 8 }), ME) && !list.assignedToSomeoneElse(app({ assigned_reviewer_id: ME }), ME)
+    && !list.assignedToSomeoneElse(app({ assigned_reviewer_id: null }), ME), 'Deciding asks first only when assigned to someone else');
+
 // The list sends only the fulfilled course names
 report(list.matchesSearch(app({ fulfilled_courses_json: undefined, fulfilled_course_names: ['Werkstoffkunde'] }), 'werkstoff'), 'Search uses the list\'s fulfilled_course_names');
 

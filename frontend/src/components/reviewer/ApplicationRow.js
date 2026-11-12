@@ -14,7 +14,8 @@ const WAITING_CUES = { warn: { cue: 'needs-info', icon: '⏱' }, late: { cue: 'r
 
 // readOnly: a past semester (reviewer group L3): no waiting or deadline cues, no decision buttons
 // showProgramme: the reviewer sees more than one programme (round 2 Group 1): the row names its programme's code
-const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, onToggle, onShowStudent, onDecide }) => {
+// me: the reviewer's id, so "Assigned to you" differs from "Assigned to X" (round 2 Group 1)
+const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, me = null, onToggle, onShowStudent, onDecide }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     const target = targetCourse(app);
@@ -59,6 +60,12 @@ const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, on
                         <Chip cue={respondLate ? 'rejected' : 'needs-info'} icon={respondLate ? '⚠' : '⏰'}>
                             {t('reviewer_respond_by', { date: formatDate(app.respond_by, language) })}
                         </Chip>
+                    </div>
+                )}
+                {!readOnly && (app.status === 'pending' || app.status === 'needs_info') && (
+                    <div style={{ marginTop: '4px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        {app.assigned_reviewer_id == null ? t('reviewer_assigned_nobody')
+                            : app.assigned_reviewer_id === me ? t('reviewer_assigned_you') : t('reviewer_assigned_to', { name: app.assigned_name || '—' })}
                     </div>
                 )}
                 {(app.status === 'approved' || app.status === 'rejected') && (

@@ -544,7 +544,61 @@ const buildReviewerEmail = (type, lang, { name, student = '', course = '', progr
     return { subject: template.subject, html };
 };
 
-// Every text table by language, for the translation check (frontend: npm run check:translations)
-const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels };
+// Emails to the admins (round 2 Group 1)
+// noMainReviewer: a programme lost its main reviewer while extra reviewers remain. Nobody is
+// promoted automatically: the admin makes an extra reviewer the main one, or invites a swap.
+const adminTemplates = {
+    hu: {
+        greeting: (name) => `Kedves ${name}!`,
+        button: 'Bejelentkezés',
+        signature: 'PTE Kreditátvitel',
+        noMainReviewer: {
+            subject: 'Egy szaknak nincs fő bírálója',
+            body: ({ programme, extras }) => `<p>A(z) <strong>${programme}</strong> szaknak nincs többé fő bírálója. További bírálói: ${extras}.</p><p>A segítő további bírálók tovább dolgoznak a kérelmeken. Válasszon új fő bírálót a Bírálók menüben: tegyen meg egy további bírálót fő bírálónak, vagy hívjon meg valakit. Ha senki sem segíthet, a szak kérelmei Önre várnak.</p>`,
+        },
+    },
+    en: {
+        greeting: (name) => `Dear ${name},`,
+        button: 'Log in',
+        signature: 'PTE Credit Transfer',
+        noMainReviewer: {
+            subject: 'A programme has no main reviewer',
+            body: ({ programme, extras }) => `<p><strong>${programme}</strong> no longer has a main reviewer. Its extra reviewers: ${extras}.</p><p>Extra reviewers who are allowed to assist keep working on the applications. Choose a new main reviewer under Reviewers: make an extra reviewer the main one, or invite someone. If nobody is allowed to assist, the programme's applications wait for you.</p>`,
+        },
+    },
+    de: {
+        greeting: (name) => `Liebe/r ${name},`,
+        button: 'Anmelden',
+        signature: 'PTE-Kreditübertragung',
+        noMainReviewer: {
+            subject: 'Ein Studiengang hat keine/n Hauptgutachter/in',
+            body: ({ programme, extras }) => `<p><strong>${programme}</strong> hat keine/n Hauptgutachter/in mehr. Zusätzliche Gutachter/innen: ${extras}.</p><p>Zusätzliche Gutachter/innen, die mithelfen dürfen, arbeiten weiter an den Anträgen. Wählen Sie unter Gutachter/innen eine neue Hauptperson: Machen Sie eine zusätzliche Person dazu oder laden Sie jemanden ein. Darf niemand mithelfen, warten die Anträge des Studiengangs auf Sie.</p>`,
+        },
+    },
+};
 
-module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };
+/**
+ * An email to one admin, in their language. Every value is escaped here.
+ * @param {'noMainReviewer'} type
+ * @param {{ name: string, programme: string, extras: string }} data
+ */
+const buildAdminEmail = (type, lang, { name, programme = '', extras = '' }) => {
+    const language = normalizeLanguage(lang);
+    const words = adminTemplates[language];
+    const template = words[type];
+    if (!template) return null;
+    const html = `
+        <div style="font-family: Arial, sans-serif; color: ${C.textStrong}; max-width: 600px;">
+            <h2 style="color: ${C.brand};">${escapeHtml(words.signature)}</h2>
+            <p>${escapeHtml(words.greeting(name || ''))}</p>
+            ${template.body({ programme: escapeHtml(programme), extras: escapeHtml(extras) })}
+            <a href="${escapeHtml(`${FRONTEND_URL}/login`)}" style="background-color: ${C.brand}; color: ${C.textOnPrimary}; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 10px;">${escapeHtml(words.button)}</a>
+            <p style="color: ${C.textMuted}; font-size: 12px; margin-top: 25px;">${escapeHtml(words.signature)}</p>
+        </div>`;
+    return { subject: template.subject, html };
+};
+
+// Every text table by language, for the translation check (frontend: npm run check:translations)
+const translatedTables = { templates, statusLabels, reasons, common, accountTemplates, gradeNames, reviewerTemplates, staffRoleLabels, adminTemplates };
+
+module.exports = { buildEmail, buildAccountEmail, buildReviewerEmail, buildAdminEmail, gradeLabel, normalizeLanguage, escapeHtml, statusLabels, templates, reasons, staffRoleLabels, translatedTables };

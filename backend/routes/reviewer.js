@@ -25,6 +25,7 @@ const CURRENT_SEMESTER = "SELECT id, name FROM semester_bounds WHERE status = 'a
  * - withdrawn: never
  * last_action_at: the submission or the student's latest reply. waiting_days: Budapest calendar days since then.
  * other_count: the student's other listed applications in the same semester (so only what this reviewer sees).
+ * assigned_reviewer_id / assigned_name (round 2 Group 1): who the admin assigned it to; null = shared.
  * fulfilled_course_names: only for the search; the details come from GET /reviewer/applications/:id.
  */
 // The current view: open applications of any semester, decided ones of the current semester
@@ -56,12 +57,14 @@ const listQuery = (view) => `
            ((now() AT TIME ZONE 'Europe/Budapest')::date - (l.last_action_at AT TIME ZONE 'Europe/Budapest')::date) AS waiting_days,
            l.info_deadline AS respond_by,
            l.decided_by_role, decider.name AS decided_by_name, l.decided_at, l.final_grade,
+           l.assigned_reviewer_id, assignee.name AS assigned_name,
            (SELECT count(*)::int FROM listed o
             WHERE o.student_id = l.student_id AND o.id <> l.id AND o.semester_id IS NOT DISTINCT FROM l.semester_id) AS other_count
     FROM listed l
     JOIN users u ON u.id = l.student_id
     JOIN programmes lp ON lp.id = l.programme_id
     LEFT JOIN users decider ON decider.id = l.decided_by
+    LEFT JOIN users assignee ON assignee.id = l.assigned_reviewer_id
     ORDER BY l.last_action_at, l.id`;
 const LIST_QUERY = listQuery(CURRENT_VIEW);
 const PAST_LIST_QUERY = listQuery(PAST_VIEW);
