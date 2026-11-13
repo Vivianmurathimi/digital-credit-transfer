@@ -287,6 +287,28 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | The reviewer's book of a semester in progress; without a semester; of a semester in setup | a PDF; `404 SEMESTER_NOT_FOUND`; `404` |
 | | | One application of the reviewer's programme (reviewer, admin); another programme's; unknown; a withdrawn one (reviewer, admin) | PDF / PDF; `404`; `404`; `404` / PDF |
 | | | A standby extra reviewer: the book, an application | `404 NO_PROGRAMME`; `404` |
+| 4u | **The committee role (round 2 Group 2 Part A)**, temporary committee members and links | Committee routes without a token / as a student / as a reviewer without committee links | `401` / `403 FORBIDDEN_ROLE` / `403` |
+| | | A committee invite with programmes; accepting it; a reviewer joining a committee through "Add programme"; a committee-only account given a reviewer link | `201`; the account has role `committee` and its links; the reviewer keeps their reviewer links; `400 COMMITTEE_ONLY` |
+| | | Ending only the committee links, only the reviewer links; deactivating the account | the other side keeps working; both stop from the next request |
+| 4v | **The committee step's data model (Part B)** | A reviewer or the admin approves / rejects | status `awaiting_committee`, the reviewer's decision and grade kept, no final grade, no student email |
+| | | The student's API while awaiting | "awaiting_committee", no outcome, grade, reason or decided step |
+| | | Withdrawing while awaiting; closing the semester while anything awaits | `409 AWAITING_COMMITTEE`; refused with the `AWAITING_COMMITTEE` blocker |
+| 4w | **Keep / Change (Part C)**, a temporary programme | What a member lists and opens: decided ones of their programmes only; pending, needs info, withdrawn, System, another programme's | listed / `404` |
+| | | Keep and Change in each direction; Change without a note; a rejection changed without a grade; a grade with a rejection | final status and grade as in the table (REVIEWER.md §9); `400 COMMITTEE_NOTE_REQUIRED`; `400 GRADE_REQUIRED`; `400 GRADE_ONLY_ON_APPROVE` |
+| | | Two members at once; a second step; the member who made the reviewer decision | one `200`, one `409 ALREADY_DECIDED`; `409 ALREADY_DECIDED`; `409 OWN_DECISION` |
+| | | The admin's direct step; its PDF routes | recorded as "Admin, as committee"; PDF for visible, `404` otherwise |
+| 4x | **Files (Part D)** | A member opens files of another programme, of pending / needs-info / withdrawn / System-decided applications | `404 FILE_NOT_FOUND` |
+| | | After the reviewer decides; after the committee keeps it | `200` / `200` |
+| | | The committee link ended; the member removed | `404` at once; `401` |
+| 4y | **Who sees what (Parts E and G)** | The student after a Change | the final status, "committee", only the committee's note; never the reviewer's reason, grade or decided step |
+| | | The reviewer's list, details and history; the member's details | kept/changed, final result and note; who acted is `null`, the history says "Committee" |
+| | | The admin's list; Overview | the member who acted, by name; awaiting per programme |
+| | | Application PDFs for the reviewer, the member and the admin; the data they are built from | a PDF each; the reviewer's decision and the committee's step everywhere, who acted only in the admin's |
+| | | Committee analytics and its CSV as the admin; the CSV as a member / reviewer | counted, header in the language; `403` / `403` |
+| 4z | **The committee deadline (Part F)** | A new semester without one | the default: review deadline + 14 days, 23:59 Budapest |
+| | | Before the review deadline (in the request, or the saved one); not a date | `400 COMMITTEE_BEFORE_REVIEW`; `400 INVALID_TIME` |
+| | | Choose one; edit without it; `null` | chosen; kept; back to the default |
+| | | As a reviewer / a student | `403` |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -331,6 +353,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-13 | throwaway copy with migrations 022–024, round 2 Group 2 (the committee: role and links, the step, files, who sees what, the deadline, PDFs and analytics) | **966 passed, 0 failed, 1 skipped** (967 checks); the same skip as before. Temporary programmes, committee members, reviewers, students, applications and semesters removed |
 | 2026-11-12 | throwaway copy with migrations 019–021, round 2 Group 1 (staff and programmes, sharing, the timeline, reviewer emails, PDFs) | **840 passed, 0 failed, 1 skipped** (841 checks); the skip is the duplicate check (student B has no open application). Temporary programmes, reviewers, students, applications and semesters removed |
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
 | 2026-10-28 | local development backend, after the forgot-password fix | **63 passed, 0 failed, 0 skipped**; 0 emails sent |

@@ -73,6 +73,9 @@ const ACCOUNTS = [
     { role: 'reviewer', name: 'Test Reviewer CS', email: 'reviewer.cs@staff.example', programme: 'CS' },
     { role: 'reviewer', name: 'Test Reviewer Civil', email: 'reviewer.civil@staff.example', programme: 'CIVIL' },
     { role: 'superadmin', name: 'Test Admin', email: 'admin@staff.example' },
+    // The committee (round 2 Group 2): one member on both programmes' committees, one on CS only
+    { role: 'committee', name: 'Test Committee', email: 'committee@staff.example', committee: ['CS', 'CIVIL'] },
+    { role: 'committee', name: 'Test Committee CS', email: 'committee.cs@staff.example', committee: ['CS'] },
 ];
 
 // A one-page PDF standing in for a transcript
@@ -153,6 +156,13 @@ const seed = async () => {
                 await pool.query('DELETE FROM users WHERE id = $1', [result.rows[0].id]);
                 continue;
             }
+        }
+        // A new committee member gets a committee link to each of their programmes
+        for (const code of account.committee || []) {
+            await pool.query(
+                "INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, 'committee') ON CONFLICT DO NOTHING",
+                [result.rows[0].id, programmeIds[code]]
+            );
         }
         created.push(account.email);
 

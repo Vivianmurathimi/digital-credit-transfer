@@ -199,7 +199,7 @@ router.post('/admin/past-semesters/:id/book', ...adminOnly, requireIdParam('id')
 // one, as in the admin's book), the same pages as in the book; marked interim until its semester closes
 router.get('/admin/applications/:id/pdf', ...adminOnly, requireIdParam('id'), async (req, res) => {
     try {
-        const pdf = await applicationPdf(req.ids.id);
+        const pdf = await applicationPdf(req.ids.id, { showCommitteeMember: true });
         if (!pdf) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
         return sendPdf(res, pdf.fileName, pdf.buffer);
     } catch (err) {

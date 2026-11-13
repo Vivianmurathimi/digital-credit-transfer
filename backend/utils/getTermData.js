@@ -31,7 +31,7 @@ const splitList = (text, separator) =>
 const getTermData = async (from, to) => loadTermData({
     where: `a.created_at AT TIME ZONE 'UTC' >= $1::date AT TIME ZONE '${APP_TIMEZONE}'
            AND a.created_at AT TIME ZONE 'UTC' <  ($2::date + 1) AT TIME ZONE '${APP_TIMEZONE}'`,
-    params: [from, to], from, to,
+    params: [from, to], from, to, showCommitteeMember: true, // the admin's archive
 });
 
 const SEMESTER_LABEL_SQL = `SELECT name, status, to_char(applications_open_at AT TIME ZONE '${APP_TIMEZONE}', 'YYYY-MM-DD') AS from_day,
@@ -53,6 +53,7 @@ const getSemesterTermData = async (semesterId, { programmeIds = null, programmes
         where: forReviewer ? "a.semester_id = $1 AND a.programme_id = ANY($2::int[]) AND a.status <> 'withdrawn'" : 'a.semester_id = $1',
         params: forReviewer ? [semesterId, programmeIds] : [semesterId],
         from: semester.from_day, to: semester.to_day, label: semester.name,
+        showCommitteeMember: !forReviewer, // the admin's book says who in the committee acted; a reviewer's or member's doesn't
     });
     return { ...data, programmes: forReviewer ? programmes : null, interim: forReviewer && semester.status !== 'closed' };
 };
@@ -60,19 +61,20 @@ const getSemesterTermData = async (semesterId, { programmeIds = null, programmes
 /**
  * One application, for its own PDF (round 2 Group 1): the same pages as in the book, without the
  * cover and the index. null when it doesn't exist. interim: its semester isn't closed yet.
+ * showCommitteeMember: who in the committee acted (round 2 Group 2): the admin's PDF only.
  */
-const getApplicationTermData = async (applicationId) => {
+const getApplicationTermData = async (applicationId, { showCommitteeMember = false } = {}) => {
     const found = (await pool.query('SELECT semester_id FROM applications WHERE id = $1', [applicationId])).rows[0];
     if (!found) return null;
     const semester = found.semester_id ? (await pool.query(SEMESTER_LABEL_SQL, [found.semester_id])).rows[0] : null;
     const data = await loadTermData({
         where: 'a.id = $1', params: [applicationId],
-        from: semester ? semester.from_day : '', to: semester ? semester.to_day : '', label: semester ? semester.name : null,
+        from: semester ? semester.from_day : '', to: semester ? semester.to_day : '', label: semester ? semester.name : null, showCommitteeMember,
     });
     return { ...data, single: true, interim: !semester || semester.status !== 'closed' };
 };
 
-const loadTermData = async ({ where, params, from, to, label = null }) => {
+const loadTermData = async ({ where, params, from, to, label = null, showCommitteeMember = false }) => {
     const result = await pool.query(
         `SELECT a.id, a.status, a.fulfilled_courses_json, a.pte_course_names,
                 a.student_note, a.system_note, a.reviewer_note, a.student_resubmit_note,
@@ -82,12 +84,15 @@ const loadTermData = async ({ where, params, from, to, label = null }) => {
                 a.created_at AT TIME ZONE 'UTC' AS submitted_at,
                 a.reviewed_at AT TIME ZONE 'UTC' AS reviewed_at,
                 a.final_grade, a.decided_by_role, a.decided_at, a.decision_rationale, d.name AS decider_name,
+                a.reviewer_decision, a.reviewer_grade, a.committee_state, a.committee_at, a.committee_note, a.committee_by_role,
+                cm.name AS committee_member_name,
                 s.name AS student_name, s.email AS student_email,
                 r.name AS reviewer_name, r.email AS reviewer_email
          FROM applications a
          JOIN users s ON s.id = a.student_id
          LEFT JOIN users r ON r.id = a.reviewed_by
          LEFT JOIN users d ON d.id = a.decided_by
+         LEFT JOIN users cm ON cm.id = a.committee_by
          WHERE ${where}
          ORDER BY a.created_at, a.id`,
         params
@@ -115,9 +120,10 @@ const loadTermData = async ({ where, params, from, to, label = null }) => {
             reviewedAt: row.reviewed_at,
             student: { name: row.student_name, email: row.student_email },
             reviewer: row.reviewer_name ? { name: row.reviewer_name, email: row.reviewer_email } : null,
-            // The decision (reviewer Group 6): approved / rejected only. decidedBy: the reviewer's
-            // name, or 'Admin' / 'System' (from decided_by_role); null for older decisions without it
-            decision: ['approved', 'rejected'].includes(row.status) ? {
+            // The decision (reviewer Group 6): approved / rejected (round 2 Group 2: and awaiting the
+            // committee). decidedBy: the reviewer's name, or 'Admin' / 'System' (from decided_by_role);
+            // null for older decisions without it. finalGrade: the final one (none while awaiting).
+            decision: ['approved', 'rejected', 'awaiting_committee'].includes(row.status) ? {
                 finalGrade: row.final_grade,
                 decidedBy: row.decided_by_role === 'admin' ? 'Admin'
                     : row.decided_by_role === 'system' ? 'System'
@@ -126,6 +132,17 @@ const loadTermData = async ({ where, params, from, to, label = null }) => {
                 rationale: row.decision_rationale,
                 // An automatic rejection's reason code (reviewer Group 7); the PDF writes it in English
                 reasonCode: row.decided_by_role === 'system' ? row.auto_reason : null,
+                // The committee (round 2 Group 2): the reviewer's own decision and grade, then what the
+                // committee did; who acted only in the admin's PDFs ('Admin, as committee' or the name)
+                reviewerDecision: row.reviewer_decision,
+                reviewerGrade: row.reviewer_grade,
+                committee: ['awaiting', 'kept', 'changed'].includes(row.committee_state) ? {
+                    state: row.committee_state,
+                    at: row.committee_at,
+                    note: row.committee_note,
+                    by: !showCommitteeMember || !row.committee_by_role ? null
+                        : row.committee_by_role === 'admin' ? 'Admin, as committee' : (row.committee_member_name || 'Committee member'),
+                } : null,
             } : null,
             courses,
             pteCourses: splitList(row.pte_course_names, ' + '),

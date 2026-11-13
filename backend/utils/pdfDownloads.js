@@ -31,9 +31,9 @@ const reviewerBook = async (semester, programmes) => {
     return { buffer, fileName };
 };
 
-// One application's PDF, or null when it doesn't exist
-const applicationPdf = async (applicationId) => {
-    const data = await getApplicationTermData(applicationId);
+// One application's PDF, or null when it doesn't exist. showCommitteeMember: the admin's (who in the committee acted)
+const applicationPdf = async (applicationId, { showCommitteeMember = false } = {}) => {
+    const data = await getApplicationTermData(applicationId, { showCommitteeMember });
     if (!data || data.applications.length === 0) return null;
     const { buffer } = await buildTermBookPdf(data);
     return { buffer, fileName: `application_${applicationId}${data.interim ? '_interim' : ''}.pdf` };

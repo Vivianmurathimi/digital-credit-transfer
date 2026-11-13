@@ -32,6 +32,7 @@ const pool = require('../db');
 const minioClient = require('../minio');
 const { EVIDENCE_BUCKET, ARCHIVE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
+const { getApplicationTermData } = require('../utils/getTermData');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
 const BASE = (process.env.SECURITY_CHECK_URL || `http://localhost:${process.env.PORT || 5050}`).replace(/\/+$/, '');
@@ -1827,7 +1828,7 @@ const run = async () => {
         await expect('The new admin reads the staff list', call('GET', 'users/staff', { token: N }), 200);
         const staffList = await call('GET', 'users/staff', { token: S });
         const self = (staffList.body?.staff || []).find((p) => p.id === d.admin.id);
-        report(self?.is_self === true && (staffList.body?.staff || []).every((p) => ['reviewer', 'superadmin'].includes(p.role)), 'The staff list has reviewers and admins only, and marks yourself');
+        report(self?.is_self === true && (staffList.body?.staff || []).every((p) => ['reviewer', 'committee', 'superadmin'].includes(p.role)), 'The staff list has staff only (reviewers, committee members, admins; never students), and marks yourself');
         await expect('A reviewer cannot remove themselves', call('PUT', `users/${d.reviewer.id}/remove-reviewer`, { token: R }), 403, 'FORBIDDEN_ROLE');
 
         // Deactivating admins
@@ -3307,7 +3308,32 @@ const run = async () => {
             report(adminRow.committee_by_role === 'committee' && adminRow.committee_by_name === member.name, 'The admin list: the member who acted, by name', `${adminRow.committee_by_role} ${adminRow.committee_by_name}`);
             const adminWaiting = ((await call('GET', 'applications', { token: S })).body?.applications || []).find((a) => a.id === waiting) || {};
             report(adminWaiting.committee_state === 'awaiting' && adminWaiting.status === 'awaiting_committee', 'The admin list: the other one awaits the committee');
+            // PDFs (Part G): everyone's PDF has the committee's step; only the admin's says who acted
+            const pdfOf = async (path, token) => {
+                const res = await fetch(`${API}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+                return { status: res.status, type: res.headers.get('content-type') || '' };
+            };
+            for (const [who, path, token] of [['the reviewer', `reviewer/applications/${changed}/pdf`, TM], ['the member', `committee/applications/${changed}/pdf`, TC], ['the admin', `admin/applications/${changed}/pdf`, S]]) {
+                const pdf = await pdfOf(path, token);
+                report(pdf.status === 200 && pdf.type.includes('application/pdf'), `The application PDF for ${who}`, `${pdf.status}`);
+            }
+            const plain = (await getApplicationTermData(changed)).applications[0].decision;
+            const forAdmin = (await getApplicationTermData(changed, { showCommitteeMember: true })).applications[0].decision;
+            report(plain.reviewerDecision === 'approved' && plain.reviewerGrade === 4 && plain.committee?.state === 'changed' && plain.committee?.note === 'Committee note CY',
+                "The PDF has the reviewer's decision and the committee's step and note");
+            report(plain.committee?.by === null && forAdmin.committee?.by === member.name, "Who acted: only in the admin's PDF", `${plain.committee?.by} / ${forAdmin.committee?.by}`);
+
             if (activeSemester) {
+                // Analytics (Part G): the committee's numbers, for the admin only
+                const analytics = (await call('GET', `admin/analytics?semester_id=${activeSemester}`, { token: S })).body?.analytics;
+                report(analytics?.committee?.overall?.changed >= 1 && analytics?.committee?.overall?.awaiting >= 1, 'Analytics count the committee (changed, awaiting)');
+                const csv = await fetch(`${API}/admin/analytics/export.csv?semester_id=${activeSemester}&table=committee&lang=en`, { headers: { Authorization: `Bearer ${S}` } });
+                const text = csv.status === 200 ? await csv.text() : '';
+                report(csv.status === 200 && text.includes('Awaiting the committee') && text.includes(code), 'The committee CSV for the admin', `${csv.status}`);
+                for (const [who, token] of [['the member', TC], ['the reviewer', TM]]) {
+                    const refused = await call('GET', `admin/analytics/export.csv?semester_id=${activeSemester}&table=committee`, { token });
+                    report(refused.status === 403, `Not for ${who}`, `${refused.status}`);
+                }
                 const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
                 const row = (summary.semesters || []).find((x) => x.id === activeSemester)?.awaitingByProgramme?.find((p) => p.code === code);
                 report(row?.awaiting === 1, 'The admin overview: awaiting the committee per programme', JSON.stringify(row));

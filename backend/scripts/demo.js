@@ -132,6 +132,9 @@ const STAFF = [
     { key: 'reviewerCIVIL', role: 'reviewer', name: 'Dr. Péter Horváth', email: 'demo.reviewer.civil@staff.example', programme: 'CIVIL', staffRole: 'main', language: 'hu' },
     { key: 'extraCS', role: 'reviewer', name: 'Dr. Gergely Balogh', email: 'demo.extra.cs@staff.example', programme: 'CS', staffRole: 'extra', canAssist: true, language: 'en' },
     { key: 'extraCIVIL', role: 'reviewer', name: 'Dr. Réka Fehér', email: 'demo.extra.civil@staff.example', programme: 'CIVIL', staffRole: 'extra', canAssist: false, language: 'en' },
+    // The committee (round 2 Group 2): one member on both programmes' committees, one on CS only
+    { key: 'committeeBoth', role: 'committee', name: 'Prof. Judit Lakatos', email: 'demo.committee@staff.example', committee: ['CS', 'CIVIL'], language: 'en' },
+    { key: 'committeeCS', role: 'committee', name: 'Prof. András Takács', email: 'demo.committee.cs@staff.example', committee: ['CS'], language: 'hu' },
 ];
 const STUDENTS = [
     { key: 'anna', name: 'Anna Kovács', email: 'demo.anna@students.example', programme: 'CS', neptun: 'DMCS01', language: 'en' },
@@ -194,6 +197,9 @@ const seed = async (pool) => {
                 [rows[0].id, programmes[account.programme], account.staffRole, account.canAssist === true]
             );
         }
+        for (const code of account.committee || []) {
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, 'committee')", [rows[0].id, programmes[code]]);
+        }
         users[account.key] = { id: rows[0].id, name: account.name, programme: account.programme };
     }
     const reviewerOf = (programme) => users[`reviewer${programme}`];
@@ -233,10 +239,13 @@ const seed = async (pool) => {
                 (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names,
                  system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id, created_at,
                  reviewer_note, student_resubmit_note, supplemental_files, reviewed_by, reviewed_at,
-                 info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale, committee_state)
+                 info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale,
+                 reviewer_decision, reviewer_grade, committee_state, committee_by, committee_by_role, committee_at, committee_note)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::timestamptz AT TIME ZONE 'UTC',
                      $15, $16, $17, $18, $19::timestamptz AT TIME ZONE 'UTC',
-                     $20, info_reply_deadline($20), $21, $22, $23, $24, $25, CASE WHEN ($11)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                     $20, info_reply_deadline($20), $21, $22, $23, $24, $25,
+                     $26, $27, COALESCE($28, CASE WHEN ($11)::varchar IN ('approved', 'rejected') THEN 'before_committee' END),
+                     $29, CASE WHEN $29::int IS NOT NULL THEN 'committee' END, $30, $31)
              RETURNING id`,
             [
                 student.id, programmes[student.programme],
@@ -248,6 +257,9 @@ const seed = async (pool) => {
                 final.reviewerNote ?? null, final.replyNote ?? null, replyFiles.length ? replyFiles.join(',') : null,
                 final.reviewedBy ?? null, final.reviewedAt ? utc(final.reviewedAt) : null,
                 final.infoRequestedAt ?? null, final.grade ?? null, final.decidedBy ?? null, final.decidedByRole ?? null, final.decidedAt ?? null, final.rationale ?? null,
+                // The committee (round 2 Group 2): the reviewer's own decision, and the committee's step
+                final.reviewerDecision ?? null, final.reviewerGrade ?? null, final.committeeState ?? null,
+                final.committeeBy ?? null, final.committeeAt ?? null, final.committeeNote ?? null,
             ]
         );
         const id = rows[0].id;
@@ -309,14 +321,32 @@ const seed = async (pool) => {
         final: { status: 'needs_info', reviewerNote: cMessage, reviewedBy: reviewerOf('CS').id, reviewedAt: cRequested, infoRequestedAt: cRequested },
     });
 
-    const dDecided = daysAgo(3);
-    await add('approved, grade 4', {
+    const dDecided = daysAgo(0, 1); // an hour ago: in the committee's next daily summary
+    await add('awaiting the committee (the reviewer approved, grade 4)', {
         student: 'daniel', semester: 'current', target: 'MATH205', institution: INSTITUTIONS.bme,
         previous: course('Linear Algebra', 'BMETE90AX00', 5, '4'),
         submittedAt: daysAgo(10), note: '',
         events: [{ ...rv('CS'), kind: 'decided', status: 'approved', at: dDecided, note: 'Content and credits match the PTE course.' }],
-        final: { status: 'approved', grade: 4, reviewerNote: 'Content and credits match the PTE course.', reviewedBy: reviewerOf('CS').id, reviewedAt: dDecided,
-            decidedBy: reviewerOf('CS').id, decidedByRole: 'reviewer', decidedAt: dDecided, rationale: 'Content and credits match the PTE course.' },
+        final: { status: 'awaiting_committee', reviewerNote: 'Content and credits match the PTE course.', reviewedBy: reviewerOf('CS').id, reviewedAt: dDecided,
+            decidedBy: reviewerOf('CS').id, decidedByRole: 'reviewer', decidedAt: dDecided, rationale: 'Content and credits match the PTE course.',
+            reviewerDecision: 'approved', reviewerGrade: 4, committeeState: 'awaiting' },
+    });
+
+    // Changed by the committee: the reviewer approved, the CS committee member rejects (round 2 Group 2)
+    const hDecided = daysAgo(6);
+    const hCommittee = daysAgo(2);
+    const hNote = 'The completed course has no architecture or design-patterns part, which is half of CS401.';
+    await add('changed by the committee: approved -> rejected', {
+        student: 'anna', semester: 'current', target: 'CS401', institution: INSTITUTIONS.wien,
+        previous: course('Software Engineering 1', '194.020', 6, '2 (Gut)'),
+        submittedAt: daysAgo(14), note: '',
+        events: [
+            { ...rv('CS'), kind: 'decided', status: 'approved', at: hDecided, note: 'Credits and topics are close enough.' },
+            { actor: users.committeeCS, role: 'committee', kind: 'committee_changed', status: 'rejected', at: hCommittee, note: hNote },
+        ],
+        final: { status: 'rejected', reviewerNote: 'Credits and topics are close enough.', reviewedBy: reviewerOf('CS').id, reviewedAt: hDecided,
+            decidedBy: reviewerOf('CS').id, decidedByRole: 'reviewer', decidedAt: hDecided, rationale: 'Credits and topics are close enough.',
+            reviewerDecision: 'approved', reviewerGrade: 3, committeeState: 'changed', committeeBy: users.committeeCS.id, committeeAt: hCommittee, committeeNote: hNote },
     });
 
     const aRequested = daysAgo(7);
@@ -335,24 +365,36 @@ const seed = async (pool) => {
     // --- Civil Engineering ---
     const eDecided = daysAgo(4);
     const eReason = 'The completed course covers only statically determinate structures; CE210 also requires indeterminate structures and matrix methods.';
-    await add('rejected by the reviewer', {
+    const eCommittee = daysAgo(1);
+    const eNote = 'The Prague course also covered indeterminate structures in its second half (see the syllabus): approved.';
+    await add('changed by the committee: rejected -> approved, grade 3', {
         student: 'eszter', semester: 'current', target: 'CE210', institution: INSTITUTIONS.prague,
         previous: course('Structural Mechanics 1', '132SM01', 6, 'B'),
         submittedAt: daysAgo(12), note: 'Structural mechanics from my semester in Prague.',
-        events: [{ ...rv('CIVIL'), kind: 'decided', status: 'rejected', at: eDecided, note: eReason }],
-        final: { status: 'rejected', reviewerNote: eReason, reviewedBy: reviewerOf('CIVIL').id, reviewedAt: eDecided,
-            decidedBy: reviewerOf('CIVIL').id, decidedByRole: 'reviewer', decidedAt: eDecided, rationale: eReason },
+        events: [
+            { ...rv('CIVIL'), kind: 'decided', status: 'rejected', at: eDecided, note: eReason },
+            { actor: users.committeeBoth, role: 'committee', kind: 'committee_changed', status: 'approved', at: eCommittee, note: eNote },
+        ],
+        final: { status: 'approved', grade: 3, reviewerNote: eReason, reviewedBy: reviewerOf('CIVIL').id, reviewedAt: eDecided,
+            decidedBy: reviewerOf('CIVIL').id, decidedByRole: 'reviewer', decidedAt: eDecided, rationale: eReason,
+            reviewerDecision: 'rejected', committeeState: 'changed', committeeBy: users.committeeBoth.id, committeeAt: eCommittee, committeeNote: eNote },
     });
 
     const fDecided = daysAgo(2, 3);
     const fReason = 'The transcript is not an official document. Please apply again with the certified transcript.';
-    await add('rejected by the admin', {
+    const fCommittee = daysAgo(1, 5);
+    const fNote = 'The committee agrees: a certified transcript is needed.';
+    await add('rejected by the admin, kept by the committee', {
         student: 'ferenc', semester: 'current', target: 'CE230', institution: INSTITUTIONS.bratislava,
         previous: course('Soil Mechanics', 'B-GEO2', 5, 'B'),
         submittedAt: daysAgo(11), note: '',
-        events: [{ actor: users.admin, role: 'admin', kind: 'decided', status: 'rejected', at: fDecided, note: fReason }],
+        events: [
+            { actor: users.admin, role: 'admin', kind: 'decided', status: 'rejected', at: fDecided, note: fReason },
+            { actor: users.committeeBoth, role: 'committee', kind: 'committee_kept', status: 'rejected', at: fCommittee, note: fNote },
+        ],
         final: { status: 'rejected', reviewerNote: fReason, reviewedBy: users.admin.id, reviewedAt: fDecided,
-            decidedBy: users.admin.id, decidedByRole: 'admin', decidedAt: fDecided, rationale: fReason },
+            decidedBy: users.admin.id, decidedByRole: 'admin', decidedAt: fDecided, rationale: fReason,
+            reviewerDecision: 'rejected', committeeState: 'kept', committeeBy: users.committeeBoth.id, committeeAt: fCommittee, committeeNote: fNote },
     });
 
     await add('pending', {
@@ -405,7 +447,10 @@ const seed = async (pool) => {
         `SELECT to_char(($1::timestamptz AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_deadline,
                 to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date - 6, 'YYYY-MM-DD') AS week_before,
                 to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date, 'YYYY-MM-DD') AS day_before,
-                to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_review
+                to_char((review_ends_at AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_review,
+                to_char((now() AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS next_morning,
+                to_char((committee_ends_at AT TIME ZONE 'Europe/Budapest')::date - 6, 'YYYY-MM-DD') AS committee_week_before,
+                to_char((committee_ends_at AT TIME ZONE 'Europe/Budapest')::date + 1, 'YYYY-MM-DD') AS after_committee
          FROM semester_bounds WHERE id = $2`,
         [cDeadline, semesters.current]
     )).rows[0];
@@ -426,7 +471,8 @@ const main = async () => {
         made.forEach(([label, student, id]) => console.log(`  ${`#${id}`.padEnd(4)} ${student.padEnd(14)} ${label}`));
         console.log(`\nLogins (password for all: ${DEMO_PASSWORD}):`);
         const what = (a) => (a.staffRole ? `${a.staffRole === 'main' ? 'main reviewer' : `extra reviewer, ${a.canAssist ? 'assisting' : 'standby'}`} (${a.programme})`
-            : `${a.role || 'student'}${a.programme ? ` (${a.programme})` : ''}`);
+            : a.committee ? `committee member (${a.committee.join(', ')})`
+                : `${a.role || 'student'}${a.programme ? ` (${a.programme})` : ''}`);
         [...STAFF, ...STUDENTS].forEach((a) => console.log(`  ${a.email.padEnd(36)} ${what(a).padEnd(34)} ${users[a.key].name}`));
         console.log('\nStart the demo backend with: npm run demo:start');
         // A fake "now" changes the demo database for good (npm run demo:seed starts it over)
@@ -436,6 +482,9 @@ const main = async () => {
         console.log(`  7 days before the review deadline: ${run(moments.week_before)}`);
         console.log(`  1 day before the review deadline:  ${run(moments.day_before)}`);
         console.log(`  the review deadline has passed:    ${run(moments.after_review)}  (nothing rejected; the admins are emailed once)`);
+        console.log(`  the committee's daily summary:     ${run(moments.next_morning)}  (07:00 Budapest has passed: the members' summary)`);
+        console.log(`  7 days before the committee deadline: ${run(moments.committee_week_before)}`);
+        console.log(`  the committee deadline has passed: ${run(moments.after_committee)}  (nothing decided; the admins are emailed once)`);
         console.log('  closing the semester: the admin does it (Semester section), once everything is decided; not the job');
     } finally {
         await pool.end();

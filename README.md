@@ -2,7 +2,8 @@
 
 Students apply to have courses from another university recognised for a PTE course; the
 programme's reviewers decide (a main reviewer, and extra reviewers while allowed to assist); the
-admin manages semesters, access, domains and students.
+programme's committee then keeps or changes each decision, and the student learns the final result;
+the admin manages semesters, access, domains and students.
 `backend/` is the Express API (PostgreSQL, MinIO), `frontend/` the React app.
 More detail on the reviewer side: [backend/REVIEWER.md](backend/REVIEWER.md).
 
@@ -48,8 +49,13 @@ backend on them. Both refuse to run with `NODE_ENV=production`. Password for eve
 | Main reviewer, Civil Engineering | `demo.reviewer.civil@staff.example` (Dr. Péter Horváth) |
 | Extra reviewer, Computer Science (assisting: sees CS) | `demo.extra.cs@staff.example` (Dr. Gergely Balogh) |
 | Extra reviewer, Civil Engineering (standby: sees nothing) | `demo.extra.civil@staff.example` (Dr. Réka Fehér) |
+| Committee member, both programmes | `demo.committee@staff.example` (Prof. Judit Lakatos) |
+| Committee member, Computer Science | `demo.committee.cs@staff.example` (Prof. András Takács) |
 | Students, Computer Science | `demo.anna@`, `demo.bence@`, `demo.csilla@`, `demo.daniel@` … `students.example` |
 | Students, Civil Engineering | `demo.eszter@`, `demo.ferenc@`, `demo.gabor@` … `students.example` |
+
+The demo has applications awaiting the committee (Dániel), kept by it (Ferenc), changed from approved to
+rejected (Anna, CS401) and from rejected to approved with a grade (Eszter).
 
 The demo logins only work while the **demo** backend runs (`npm run demo:start`), not with `node server.js`.
 
@@ -64,6 +70,7 @@ there is no active admin yet, so an existing database keeps its accounts.
 |---|---|
 | Admin | `admin@staff.example` |
 | Reviewers | `reviewer.cs@staff.example`, `reviewer.civil@staff.example` |
+| Committee | `committee@staff.example` (both programmes), `committee.cs@staff.example` (Computer Science) |
 | Students | `student.cs@students.example`, `student.civil@students.example` |
 
 ## Email domains
@@ -99,7 +106,7 @@ fails when the two differ.
 ## The admin menu
 
 Admins land on `/admin` (Overview). Each area has its own address: `/admin/semesters`,
-`/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/analytics`, `/admin/reviewers`,
+`/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/analytics`, `/admin/reviewers`, `/admin/committee`,
 `/admin/students`, `/admin/admins`, `/admin/domains`.
 
 ## The semester timeline
@@ -113,4 +120,6 @@ rejected when it passes; reviewers are reminded before it and the admins are tol
 semester's last day is a label only. The admin closes a semester (Semester) once its application
 period is over, no late access runs and everything is decided; it is then read-only and listed under
 Past semesters. Reviewers get one daily summary email at 07:00 Budapest time instead of an email per
-application. More: [backend/REVIEWER.md](backend/REVIEWER.md).
+application. After a reviewer decides, the application **awaits the committee**; the committee has its
+own **committee deadline** (default: review deadline + 14 days, also a target), its own daily summary
+and reminders, and a semester closes only when nothing awaits it. More: [backend/REVIEWER.md](backend/REVIEWER.md), section 9.
