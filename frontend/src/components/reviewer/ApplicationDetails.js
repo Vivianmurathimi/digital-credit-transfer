@@ -11,6 +11,7 @@ import { gradeText } from '../../grades';
 import NotesConversation from './NotesConversation';
 import HistoryTable from './HistoryTable';
 import Chip, { STATUS_ICONS } from './Chip';
+import CommitteeOutcome from '../committee/CommitteeOutcome';
 import { respondByLevel, statusCue } from '../../reviewerList';
 
 // An opened row (reviewer Group 4): the student, the target course, every fulfilled course with
@@ -187,12 +188,18 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                     {/* An automatic rejection has only a reason code (reviewer Group 7), shown in the reader's language */}
                     {(details.decision.reason_code || details.decision.rationale) && (
                         <div style={{ marginTop: '6px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                            <strong>{t(details.status === 'approved' ? 'reviewer_decision_note_label' : 'reviewer_decision_reason_label')}</strong>{' '}
+                            <strong>{t((details.decision.reviewer_decision || details.status) === 'approved' ? 'reviewer_decision_note_label' : 'reviewer_decision_reason_label')}</strong>{' '}
                             {details.decision.reason_code
                                 ? t(`student_reason_${details.decision.reason_code}`, { defaultValue: details.decision.rationale || '' })
                                 : details.decision.rationale}
                         </div>
                     )}
+                    {/* What the committee did with it (round 2 Group 2); who acted only in the admin's views */}
+                    <CommitteeOutcome
+                        status={details.status} finalGrade={details.decision.final_grade} state={details.decision.committee_state}
+                        at={details.decision.committee_at} note={details.decision.committee_note}
+                        byRole={details.decision.committee_by_role} byName={details.decision.committee_by_name}
+                    />
                 </section>
             )}
 

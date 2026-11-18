@@ -149,6 +149,44 @@ const Analytics = () => {
                         </table>
                     </div>
 
+                    {/* The committee (round 2 Group 2): what happened to the decisions after the reviewers */}
+                    {sectionHead('analytics_committee_title', 'committee')}
+                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>{t('analytics_committee_hint')}</p>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '6px' }}>
+                            <thead>
+                                <tr>
+                                    <th style={th}>{t('staff_programme_label')}</th>
+                                    <th style={th}>{t('status_awaiting_committee')}</th>
+                                    <th style={th}>{t('analytics_committee_kept')}</th>
+                                    <th style={th}>{t('analytics_committee_changed')}</th>
+                                    <th style={th}>{t('analytics_committee_to_rejected')}</th>
+                                    <th style={th}>{t('analytics_committee_to_approved')}</th>
+                                    <th style={th}>{t('analytics_committee_new_grade')}</th>
+                                    <th style={th}>{t('analytics_committee_changed_percent')}</th>
+                                    <th style={th}>{t('analytics_average_column')}</th>
+                                    <th style={th}>{t('analytics_median_column')}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {[...a.committee.byProgramme, a.committee.overall].map((r) => (
+                                    <tr key={r.programme ? r.programme.code : 'all'} style={r.programme ? undefined : { fontWeight: 'bold' }}>
+                                        <td style={td}>{nameOf(r.programme)}</td>
+                                        <td style={td}>{r.awaiting}</td>
+                                        <td style={td}>{r.kept}</td>
+                                        <td style={td}>{r.changed}</td>
+                                        <td style={td}>{r.changedToRejected}</td>
+                                        <td style={td}>{r.changedToApproved}</td>
+                                        <td style={td}>{r.keptWithNewGrade}</td>
+                                        <td style={td}>{r.changedPercent === null ? '—' : t('analytics_percent', { value: r.changedPercent.toLocaleString(language, { maximumFractionDigits: 1 }) })}</td>
+                                        <td style={td}>{days(r.averageDays)}</td>
+                                        <td style={td}>{days(r.medianDays)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
                     {sectionHead('analytics_courses_title', 'courses')}
                     <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>{t('analytics_courses_hint')}</p>
                     <div style={{ overflowX: 'auto' }}>

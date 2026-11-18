@@ -210,6 +210,9 @@ router.get('/applications/student/:id/:applicationId', verifyToken, requireRole(
 // Group 1); "Admin" and "System" are shown without a name, and old rows without a record as "—".
 // programme_has_reviewer (admin round Group 2): false = nobody can review this programme now (no
 // main reviewer and no assisting extra one), so the admin decides its applications directly.
+// The committee (round 2 Group 2): committee_state, committee_at, committee_note for everyone who
+// sees the row; who in the committee acted (committee_by, committee_by_role, committee_by_name) only
+// for the admin, since the committee acts as a body.
 router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), async (req, res) => {
     try {
         const view = await resolveReviewerView(pool, req);
@@ -225,16 +228,20 @@ router.get('/applications', verifyToken, requireRole('reviewer', 'superadmin'), 
         const result = await pool.query(
             `SELECT a.*, u.name as student_name,
                     CASE WHEN a.decided_by_role = 'reviewer' THEN d.name END AS decided_by_name,
+                    CASE WHEN a.committee_by_role = 'committee' THEN cm.name END AS committee_by_name,
                     ${programmeHasReviewerSql('a.programme_id')} AS programme_has_reviewer
              FROM applications a JOIN users u ON a.student_id=u.id
              LEFT JOIN users d ON d.id = a.decided_by
+             LEFT JOIN users cm ON cm.id = a.committee_by
              WHERE ($1::int[] IS NULL OR a.programme_id = ANY($1::int[]))
                AND (NOT $2::boolean OR a.semester_id IN (SELECT id FROM semesters WHERE status = 'active'))
                AND ($3::int IS NULL OR a.semester_id = $3)
              ORDER BY a.created_at DESC`,
             [programmeIds, activeOnly, semesterFilter]
         );
-        res.json({ success: true, applications: result.rows });
+        const applications = view.all ? result.rows
+            : result.rows.map(({ committee_by: _by, committee_by_role: _role, committee_by_name: _name, ...row }) => row);
+        res.json({ success: true, applications });
     } catch (err) {
         console.error('❌ Fetch all apps error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');

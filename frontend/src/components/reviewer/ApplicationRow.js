@@ -5,6 +5,7 @@ import { respondByLevel, statusCue, targetCourse, waitingLevel } from '../../rev
 import { gradeText } from '../../grades';
 import ApplicationDetails from './ApplicationDetails';
 import Chip, { STATUS_ICONS } from './Chip';
+import CommitteeOutcome from '../committee/CommitteeOutcome';
 
 // One application: a summary line that opens into the details.
 // Colour cues (reviewer group L2): the status chip, "Resubmitted", the waiting time of a pending
@@ -70,10 +71,11 @@ const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, me
                 )}
                 {['approved', 'rejected', 'awaiting_committee'].includes(app.status) && (
                     <div style={{ marginTop: '4px', fontSize: '13px' }}>
-                        {/* Awaiting the committee (round 2 Group 2): the reviewer's own decision and grade */}
-                        {app.status === 'awaiting_committee' && <>{t('reviewer_your_decision', { decision: t(`status_${app.reviewer_decision}`) })}{' · '}</>}
+                        {/* In the committee flow (round 2 Group 2): the reviewer's decision and grade, then what the committee did */}
+                        {app.reviewer_decision && <>{t('committee_reviewer_label')} {t(`status_${app.reviewer_decision}`)}{' · '}</>}
                         {(app.reviewer_decision || app.status) === 'approved' && <>{t('reviewer_grade_line', { grade: gradeText(app.reviewer_grade ?? app.final_grade, t, language) })}{' · '}</>}
                         {t('reviewer_decided_line', { date: app.decided_at ? formatDate(app.decided_at, language) : '—', who: decidedBy })}
+                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} at={app.committee_at} note={app.committee_note} />
                     </div>
                 )}
             </button>

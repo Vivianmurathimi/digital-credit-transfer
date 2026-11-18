@@ -50,17 +50,28 @@ const findFilesNotOwnedBy = async (fileNames, userId) => {
 const isFileInProgramme = async (db, fileName, programmeIds) => findApplicationWithFile(db, fileName, programmeIds || []);
 
 /**
+ * The committee's rule (round 2 Group 2 Part D), next to the reviewer's: a committee member may
+ * open a file only when an application THEY CAN SEE names it (their current committee programmes,
+ * decided by a reviewer or admin: awaiting the committee or handled by it), in the same five places.
+ * Files of pending, needs-info, withdrawn or System-decided applications, other programmes and
+ * drafts stay refused.
+ */
+const isFileInCommitteeScope = async (db, fileName, committeeProgrammeIds) =>
+    findApplicationWithFile(db, fileName, committeeProgrammeIds || [], { committeeOnly: true });
+
+/**
  * Whether any submitted application (any status, any semester, any programme) uses the file
  * (reviewer group L3). Such a file can't be deleted, so past semesters keep their evidence.
  * Files that are only in a draft are not counted.
  */
 const isFileInUse = (db, fileName) => findApplicationWithFile(db, fileName, null);
 
-// programmeIds null: every programme; [] none
-const findApplicationWithFile = async (db, fileName, programmeIds) => {
+// programmeIds null: every programme; [] none. committeeOnly: only applications the committee sees
+const findApplicationWithFile = async (db, fileName, programmeIds, { committeeOnly = false } = {}) => {
     const { rows } = await db.query(
         `SELECT 1 FROM applications a
-         WHERE ($2::int[] IS NULL OR a.programme_id = ANY($2::int[])) AND (
+         WHERE ($2::int[] IS NULL OR a.programme_id = ANY($2::int[]))
+           AND (NOT $3::boolean OR a.committee_state IN ('awaiting', 'kept', 'changed')) AND (
                EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.fulfilled_courses_json) = 'array' THEN a.fulfilled_courses_json ELSE '[]'::jsonb END) c
                        WHERE c->>'file' = $1 OR c->>'syllabus_file' = $1)
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.institutions) = 'array' THEN a.institutions ELSE '[]'::jsonb END) i
@@ -69,7 +80,7 @@ const findApplicationWithFile = async (db, fileName, programmeIds) => {
             OR EXISTS (SELECT 1 FROM application_events e WHERE e.application_id = a.id AND $1 = ANY (e.files))
          )
          LIMIT 1`,
-        [fileName, programmeIds]
+        [fileName, programmeIds, committeeOnly]
     );
     return rows.length > 0;
 };
@@ -78,4 +89,4 @@ const findApplicationWithFile = async (db, fileName, programmeIds) => {
 const splitFileList = (value) =>
     String(value || '').split(',').map((name) => name.trim()).filter(Boolean);
 
-module.exports = { getFileOwner, findFilesNotOwnedBy, isFileInProgramme, isFileInUse, splitFileList };
+module.exports = { getFileOwner, findFilesNotOwnedBy, isFileInProgramme, isFileInCommitteeScope, isFileInUse, splitFileList };

@@ -13,7 +13,7 @@ import StatusChip from './StatusChip';
 import { formatDate } from '../dates';
 import { getUploadEndpoint, openSecureFile } from '../secureFiles';
 import { MAX_MB, ACCEPT, checkFile, tooLargeToUpload } from '../fileRules';
-import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode, statusKey,
+import { CREDIT_SYSTEMS, LIMITS, newInstitution, newCourseRow, allEcts, rowHasContent, rowsUsingInstitution, removeInstitution, countryOptions, buildSubmission, validateSubmission, formKeyForPath, syllabusReasons, syllabusReasonsWhileEditing, missingSyllabi, blockedCourseCodes, normalizeCourseCode, statusKey, isCommitteeDecision, committeeDecisionText,
     NOTE_MAX, noteLength, checkNote, DRAFT_VERSION, DRAFT_SAVE_DELAY_MS, draftFromForm, isEmptyDraft, formFromDraft, DRAFT_MAX_KB } from '../applicationForm';
 import { gradeText } from '../grades';
 
@@ -860,7 +860,9 @@ const StudentDashboard = ({ userId }) => {
                                 : app.pte_course_names || '';
                             // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters.
                             // A decision shows its own rationale (reviewer Group 6); an approval also its final grade.
-                            const note = app.status === 'needs_info'
+                            const byCommittee = isCommitteeDecision(app);
+                            const note = byCommittee ? committeeDecisionText(app)
+                                : app.status === 'needs_info'
                                 ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.reviewer_note || '' })
                                 : app.status === 'rejected'
                                     ? t(`student_reason_${app.decision_reason}`, { defaultValue: app.decision_rationale || app.reviewer_note || '' })
@@ -891,7 +893,7 @@ const StudentDashboard = ({ userId }) => {
                                     )}
                                     {note && (
                                         <p style={{ margin: '0 0 8px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                                            <strong>{t(app.status === 'withdrawn' ? 'reviewer_decision_reason_label' : 'student_reviewer_note')}</strong> {note}
+                                            <strong>{t(byCommittee ? 'student_committee_decision' : app.status === 'withdrawn' ? 'reviewer_decision_reason_label' : 'student_reviewer_note')}</strong> {note}
                                         </p>
                                     )}
                                     {app.status === 'needs_info' && !readOnly && <ReplyDeadline deadline={app.info_deadline} />}

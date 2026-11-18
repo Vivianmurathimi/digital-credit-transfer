@@ -4,7 +4,7 @@ import http from '../http';
 import i18n from '../i18n';
 import { openSecureFile } from '../secureFiles';
 import { getErrorMessage } from '../errorMessage';
-import { statusKey } from '../applicationForm';
+import { statusKey, isCommitteeDecision, committeeDecisionText } from '../applicationForm';
 import { formatDate, formatDateTime } from '../dates';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import { gradeText } from '../grades';
@@ -100,7 +100,8 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
 
     // A reason code (e.g. an automatic rejection) is shown translated; otherwise the note as written
     const eventNote = (e) => (e.reason_code && i18n.exists(`student_reason_${e.reason_code}`) ? t(`student_reason_${e.reason_code}`) : e.note);
-    const eventTitle = (e) => (e.kind === 'decided'
+    // The committee's step shows like a decision, by "Committee" (round 2 Group 2)
+    const eventTitle = (e) => (['decided', 'committee_kept', 'committee_changed'].includes(e.kind)
         ? t('student_event_decided', { status: statusLabel(e.status) })
         : t(`student_event_${e.kind}`, { defaultValue: statusLabel(e.status) }));
 
@@ -137,7 +138,13 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
                     {application.status === 'withdrawn' && application.decision_reason && (
                         <p style={{ margin: '4px 0' }}><strong>{t('reviewer_decision_reason_label')}</strong> {t(`student_reason_${application.decision_reason}`, { defaultValue: '' })}</p>
                     )}
-                    {['approved', 'rejected'].includes(application.status) && (application.decision_reason || application.decision_rationale) && (
+                    {/* The committee's final decision (round 2 Group 2): one heading for the reviewer's reason (on Keep) and the committee's note */}
+                    {isCommitteeDecision(application) && committeeDecisionText(application) && (
+                        <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                            <strong>{t('student_committee_decision')}</strong>{' '}{committeeDecisionText(application)}
+                        </p>
+                    )}
+                    {!isCommitteeDecision(application) && ['approved', 'rejected'].includes(application.status) && (application.decision_reason || application.decision_rationale) && (
                         <p style={{ margin: '4px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                             <strong>{t('student_reviewer_note')}</strong>{' '}
                             {t(`student_reason_${application.decision_reason}`, { defaultValue: application.decision_rationale || '' })}

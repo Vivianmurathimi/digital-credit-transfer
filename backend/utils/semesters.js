@@ -94,13 +94,26 @@ const semesterEndedSql = (table = 'applications') =>
 const REVIEW_DAYS_DEFAULT = 14;
 const REVIEW_WARNING_DAYS = 7;
 const REVIEW_MARGIN_DAYS = 7;
+// The committee deadline (round 2 Group 2):
+// - COMMITTEE_DAYS_DEFAULT: the default committee deadline, this many days after the review deadline.
+//   The database view semester_bounds works it out (migration 024); tests/committeeDeadline.test.js
+//   checks that both say the same. The admin may choose another one on the Semesters screen.
+// - COMMITTEE_WARNING_DAYS: how long before it applications awaiting the committee are pointed out:
+//   the members' first reminder email, and the admin's and members' "committee deadline soon"
+const COMMITTEE_DAYS_DEFAULT = 14;
+const COMMITTEE_WARNING_DAYS = 7;
 
 // SQL: "the review deadline is within REVIEW_WARNING_DAYS from $n" for semester_bounds alias sb,
 // on the Budapest wall clock (so a clock change never moves it by an hour)
 const reviewSoonSql = (sb, nowParam) =>
     `((${sb}.review_ends_at AT TIME ZONE 'Europe/Budapest') - make_interval(days => ${REVIEW_WARNING_DAYS})) AT TIME ZONE 'Europe/Budapest' <= ${nowParam}`;
 
+// SQL: "the committee deadline is within COMMITTEE_WARNING_DAYS from $n" (semester_bounds alias sb)
+const committeeSoonSql = (sb, nowParam) =>
+    `((${sb}.committee_ends_at AT TIME ZONE 'Europe/Budapest') - make_interval(days => ${COMMITTEE_WARNING_DAYS})) AT TIME ZONE 'Europe/Budapest' <= ${nowParam}`;
+
 module.exports = {
     REVIEW_DAYS_DEFAULT, REVIEW_WARNING_DAYS, REVIEW_MARGIN_DAYS, reviewSoonSql,
+    COMMITTEE_DAYS_DEFAULT, COMMITTEE_WARNING_DAYS, committeeSoonSql,
     semesterEndedSql, createSemester, adoptIntoSemester,
 };

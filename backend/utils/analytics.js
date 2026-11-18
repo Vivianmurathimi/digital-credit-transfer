@@ -10,6 +10,11 @@
 // - The 10 most-requested PTE courses: every application except withdrawn ones (auto-rejected ones
 //   count too: they still show which courses students asked for), by programme and course code.
 //
+// - The committee (round 2 Group 2), per programme and overall: how many decisions await the
+//   committee, were kept or changed (approve -> reject, reject -> approve), kept with another grade,
+//   the share changed (of those handled), and the committee's time: reviewer decision -> committee
+//   step, in days (average and median). Only applications that went to the committee count.
+//
 // Days are elapsed time (hours / 24), rounded to one decimal when sent.
 
 // awaiting_committee (round 2 Group 2): the reviewer decided, the committee hasn't yet
@@ -22,7 +27,7 @@ const names = (row) => ({ code: row.programme_code, name_en: row.name_en, name_h
 /**
  * @param {{ query: Function }} db
  * @param {number} semesterId
- * @returns {Promise<{ status, turnaround, topCourses }>}
+ * @returns {Promise<{ status, turnaround, topCourses, committee }>}
  */
 const semesterAnalytics = async (db, semesterId) => {
     // ---- applications by status ----
@@ -91,7 +96,37 @@ const semesterAnalytics = async (db, semesterId) => {
         [semesterId]
     )).rows.map((r) => ({ programme: names(r), courseCode: r.course_code, courseName: r.course_name, applications: r.applications }));
 
+    // ---- the committee ----
+    const committeeRows = (await db.query(
+        `SELECT a.programme_id, p.code AS programme_code, p.name_en, p.name_hu, p.name_de,
+                count(*) FILTER (WHERE a.committee_state = 'awaiting')::int AS awaiting,
+                count(*) FILTER (WHERE a.committee_state = 'kept')::int AS kept,
+                count(*) FILTER (WHERE a.committee_state = 'changed')::int AS changed,
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved')::int AS changed_to_rejected,
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'rejected')::int AS changed_to_approved,
+                count(*) FILTER (WHERE a.committee_state = 'kept' AND a.final_grade IS DISTINCT FROM a.reviewer_grade)::int AS kept_new_grade,
+                avg(GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0)) FILTER (WHERE a.committee_at IS NOT NULL) AS average_days,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0))
+                    FILTER (WHERE a.committee_at IS NOT NULL) AS median_days
+         FROM applications a JOIN programmes p ON p.id = a.programme_id
+         WHERE a.semester_id = $1 AND a.committee_state IN ('awaiting', 'kept', 'changed')
+         GROUP BY GROUPING SETS ((a.programme_id, p.code, p.name_en, p.name_hu, p.name_de), ())
+         ORDER BY a.programme_id IS NULL, p.code`,
+        [semesterId]
+    )).rows.map((r) => ({
+        programme: r.programme_id === null ? null : names(r),
+        awaiting: r.awaiting, kept: r.kept, changed: r.changed,
+        changedToRejected: r.changed_to_rejected, changedToApproved: r.changed_to_approved, keptWithNewGrade: r.kept_new_grade,
+        // of the decisions the committee handled, the share it changed (percent, one decimal); null: none handled
+        changedPercent: r.kept + r.changed > 0 ? round1((100 * r.changed) / (r.kept + r.changed)) : null,
+        averageDays: round1(r.average_days), medianDays: round1(r.median_days),
+    }));
+    const overallCommittee = committeeRows.find((r) => r.programme === null) || {
+        programme: null, awaiting: 0, kept: 0, changed: 0, changedToRejected: 0, changedToApproved: 0, keptWithNewGrade: 0, changedPercent: null, averageDays: null, medianDays: null,
+    };
+
     return {
+        committee: { overall: overallCommittee, byProgramme: committeeRows.filter((r) => r.programme !== null) },
         status: { overall, byProgramme: byProgramme.map((r) => ({ programme: names(r), ...Object.fromEntries([...STATUSES, 'total'].map((s) => [s, r[s]])) })) },
         turnaround: { overall: overallTurnaround, byProgramme: turnaround.filter((t) => t.programme !== null) },
         topCourses,

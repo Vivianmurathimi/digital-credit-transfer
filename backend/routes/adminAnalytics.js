@@ -14,7 +14,7 @@ const { sendCsv } = require('../utils/csv');
 // still in setup (it has no applications yet).
 
 const adminOnly = [verifyToken, requireRole('superadmin')];
-const TABLES = ['status', 'programmes', 'turnaround', 'courses'];
+const TABLES = ['status', 'programmes', 'turnaround', 'courses', 'committee'];
 
 // The semester to show: ?semester_id=, or the newest one in progress (several can be, round 2
 // Group 1). [error] or [null, semester]
@@ -62,12 +62,18 @@ const HEADERS = {
         hu: ['Szak', 'Elbírálva', 'Átlagos napok a döntésig', 'Napok mediánja a döntésig', 'Átlagos napok, a hallgatóra várás nélkül', 'Napok mediánja, a hallgatóra várás nélkül'],
         de: ['Studiengang', 'Entschieden', 'Tage bis zur Entscheidung (Mittelwert)', 'Tage bis zur Entscheidung (Median)', 'Tage ohne Warten auf Studierende (Mittelwert)', 'Tage ohne Warten auf Studierende (Median)'],
     },
+    // The committee (round 2 Group 2)
+    committee: {
+        en: ['Programme', 'Awaiting the committee', 'Kept', 'Changed', 'Changed: approved to rejected', 'Changed: rejected to approved', 'Kept with another grade', 'Changed (%)', 'Average days, reviewer decision to committee', 'Median days, reviewer decision to committee'],
+        hu: ['Szak', 'Bizottságra vár', 'Megtartva', 'Megváltoztatva', 'Megváltoztatva: elfogadásból elutasítás', 'Megváltoztatva: elutasításból elfogadás', 'Megtartva más jeggyel', 'Megváltoztatva (%)', 'Átlagos napok a bírálói döntéstől a bizottságig', 'Napok mediánja a bírálói döntéstől a bizottságig'],
+        de: ['Studiengang', 'Wartet auf den Ausschuss', 'Bestätigt', 'Geändert', 'Geändert: genehmigt zu abgelehnt', 'Geändert: abgelehnt zu genehmigt', 'Bestätigt mit anderer Note', 'Geändert (%)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Mittelwert)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Median)'],
+    },
     courses: { en: ['Programme', 'Course code', 'Course', 'Applications'], hu: ['Szak', 'Tárgykód', 'Kurzus', 'Kérelmek'], de: ['Studiengang', 'Kurscode', 'Kurs', 'Anträge'] },
 };
 const ALL = { en: 'All programmes', hu: 'Minden szak', de: 'Alle Studiengänge' };
 const programmeText = (programme, lang) => (programme ? `${programme.code} – ${programme[`name_${lang}`] || programme.name_en}` : ALL[lang]);
 
-// GET /api/admin/analytics/export.csv?semester_id=&table=status|programmes|turnaround|courses&lang=
+// GET /api/admin/analytics/export.csv?semester_id=&table=status|programmes|turnaround|courses|committee&lang=
 router.get('/admin/analytics/export.csv', ...adminOnly, async (req, res) => {
     const table = req.query.table;
     if (!TABLES.includes(table)) return sendError(res, 400, 'INVALID_TABLE', `table must be one of ${TABLES.join(', ')}`, { field: 'table' });
@@ -82,6 +88,12 @@ router.get('/admin/analytics/export.csv', ...adminOnly, async (req, res) => {
         if (table === 'turnaround') {
             rows = [...a.turnaround.byProgramme, a.turnaround.overall].map((r) => [
                 programmeText(r.programme, lang), r.decided, r.averageDays, r.medianDays, r.averageDaysWithoutWaiting, r.medianDaysWithoutWaiting,
+            ]);
+        }
+        if (table === 'committee') {
+            rows = [...a.committee.byProgramme, a.committee.overall].map((r) => [
+                programmeText(r.programme, lang), r.awaiting, r.kept, r.changed, r.changedToRejected, r.changedToApproved, r.keptWithNewGrade,
+                r.changedPercent, r.averageDays, r.medianDays,
             ]);
         }
         if (table === 'courses') rows = a.topCourses.map((c) => [programmeText(c.programme, lang), c.courseCode, c.courseName, c.applications]);

@@ -128,6 +128,24 @@ test('07:00 in summer time too (UTC+2: 05:00 UTC)', async () => {
     assert.ok(sent.every((s) => s.newApplications.length === 1));
 });
 
+test('decisions the committee changed are in it, with the final status; kept ones are not (round 2 Group 2)', async () => {
+    const changed = await application(10);
+    const kept = await application(11);
+    const step = (id, kind, status, iso) => pool.query(
+        "INSERT INTO application_events (application_id, kind, actor_role, status, created_at) VALUES ($1, $2, 'committee', $3, $4)",
+        [id, kind, status, at(iso)]
+    );
+    await step(changed, 'committee_changed', 'rejected', '2091-07-20T10:00:00Z');
+    await step(kept, 'committee_kept', 'approved', '2091-07-20T11:00:00Z');
+    const { sent, summarize } = recorder();
+    assert.equal(await summaries(at('2091-07-21T06:00:00Z'), summarize), 2, 'a changed decision alone is news');
+    for (const summary of sent) {
+        assert.deepEqual([summary.newApplications.length, summary.replies.length, summary.changed.length], [0, 0, 1], 'only the changed one');
+        assert.equal(summary.changed[0].status, 'rejected', 'with the final status');
+        assert.ok(summary.changed[0].course.startsWith('ZSUM'), 'and its course');
+    }
+});
+
 test('nobody who can see the programme: no summary (a standby extra reviewer, a deactivated main one)', async () => {
     const a7 = await application(7);
     await event(a7, 'submitted', '2091-08-01T10:00:00Z');

@@ -12,6 +12,7 @@ const { committeeProgrammes, reviewerProgrammes } = require('../utils/reviewers'
 const { loadApplicationDetails } = require('../utils/applicationDetails');
 const { COMMITTEE_VISIBLE_SQL, checkCommitteeStep, takeCommitteeStep } = require('../utils/committee');
 const { sendPdf, reviewerBook, applicationPdf } = require('../utils/pdfDownloads');
+const { committeeSoonSql } = require('../utils/semesters');
 const { sendValidationErrors } = sendError;
 
 // The committee (round 2 Group 2). After a reviewer (or an admin) decides, the programme's committee
@@ -34,13 +35,25 @@ router.get('/committee/me', verifyToken, requireCommittee, async (req, res) => {
         const me = (await pool.query('SELECT id, name FROM users WHERE id = $1', [req.user.id])).rows[0];
         const programmes = await committeeProgrammes(pool, req.user.id);
         const reviewerLinks = req.user.role === 'reviewer' ? await reviewerProgrammes(pool, req.user.id) : [];
+        // Each semester with the committee deadline in effect (Part F); soon / passed only while
+        // something of the member's programmes still awaits the committee there
         const semesters = (await pool.query(
-            `SELECT DISTINCT s.id, s.name, s.status, s.applications_open_at FROM semesters s
-             JOIN applications a ON a.semester_id = s.id
+            `SELECT sb.id, sb.name, sb.status, sb.opens_at, sb.committee_ends_at,
+                    count(*) FILTER (WHERE a.status = 'awaiting_committee')::int AS awaiting,
+                    sb.committee_ends_at <= now() AS passed,
+                    ${committeeSoonSql('sb', 'now()')} AND sb.committee_ends_at > now() AS soon
+             FROM semester_bounds sb
+             JOIN applications a ON a.semester_id = sb.id
              WHERE a.programme_id = ANY($1::int[]) AND ${COMMITTEE_VISIBLE_SQL('a')}
-             ORDER BY s.applications_open_at DESC`,
+             GROUP BY sb.id, sb.name, sb.status, sb.opens_at, sb.committee_ends_at
+             ORDER BY sb.opens_at DESC`,
             [req.user.committeeProgrammeIds || []]
-        )).rows.map(({ id, name, status }) => ({ id, name, status }));
+        )).rows.map((s) => ({
+            id: s.id, name: s.name, status: s.status, awaiting: s.awaiting,
+            committeeEndsAt: s.status === 'closed' ? null : s.committee_ends_at,
+            committeeSoon: s.status === 'active' && s.soon && s.awaiting > 0,
+            committeePassed: s.status === 'active' && s.passed && s.awaiting > 0,
+        }));
         res.json({
             success: true,
             member: { id: me.id, name: me.name },
@@ -100,8 +113,6 @@ router.get('/committee/applications/:id', verifyToken, requireCommittee, require
     try {
         const application = await loadApplicationDetails(pool, req.ids.id, { programmeIds: req.user.committeeProgrammeIds || [], committeeOnly: true });
         if (!application) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
-        // The committee acts as a body: whether a member or the admin took the step is the admin's to see
-        application.decision.committee_by_role = null;
         application.decided_by_me = (await pool.query('SELECT decided_by = $2 AS mine FROM applications WHERE id = $1', [req.ids.id, req.user.id])).rows[0].mine === true;
         res.json({ success: true, application, read_only: true });
     } catch (err) {
@@ -121,7 +132,7 @@ const answerStep = async (req, res, programmeIds) => {
         if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2], { field: result.error[3] });
         res.json({ success: true, status: result.done.status, final_grade: result.done.finalGrade });
         // The student learns the final result now (not at the reviewer's decision)
-        notifyStudent(result.done.studentId, 'statusUpdate', { status: result.done.status, note: result.done.emailNote, finalGrade: result.done.finalGrade });
+        notifyStudent(result.done.studentId, 'statusUpdate', { status: result.done.status, note: result.done.emailNote, finalGrade: result.done.finalGrade, byCommittee: true });
         return undefined;
     } catch (err) {
         console.error('❌ Committee step error:', err.message);

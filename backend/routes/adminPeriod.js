@@ -12,7 +12,7 @@ const { FRONTEND_URL } = require('../config/urls');
 const { normalizeEmail } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
 const { isValidInviteEmail } = require('../utils/staffInvites');
-const { REVIEW_MARGIN_DAYS, reviewSoonSql } = require('../utils/semesters');
+const { REVIEW_MARGIN_DAYS, reviewSoonSql, committeeSoonSql } = require('../utils/semesters');
 const { periodFor } = require('../utils/applicationPeriod');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 
@@ -85,8 +85,10 @@ router.post('/admin/semesters/:id/close-now', ...adminOnly, requireIdParam('id')
             if (!s) return { error: [404, 'SEMESTER_NOT_FOUND', 'Semester not found'] };
             if (s.status !== 'active') return { error: [409, 'SEMESTER_NOT_ACTIVE', 'Only a semester in progress has an application period to close'] };
             if (!s.started || s.period_over) return { error: [409, 'PERIOD_NOT_OPEN', 'The application period is not open right now'] };
-            // close_reason: '' = closed by the admin without a reason (NULL = closed by its dates)
-            await client.query('UPDATE semesters SET applications_close_at = now(), close_reason = $2 WHERE id = $1', [s.id, reason]);
+            // close_reason: '' = closed by the admin without a reason (NULL = closed by its dates).
+            // The earlier of the database's clock and the server's: the period is judged by the server's
+            // clock (utils/applicationPeriod.js), so a database clock a few ms ahead must not keep it open.
+            await client.query('UPDATE semesters SET applications_close_at = LEAST(now(), $3::timestamptz), close_reason = $2 WHERE id = $1', [s.id, reason, new Date()]);
             return {};
         });
         if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2]);
@@ -280,7 +282,9 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
         const period = await periodFor(pool);
         const catalogueSemester = period.semester ? period.semester.id : null;
         const semesters = (await pool.query(
-            `SELECT sb.id, sb.name, sb.opens_at, sb.closes_at, sb.review_ends_at,
+            `SELECT sb.id, sb.name, sb.opens_at, sb.closes_at, sb.review_ends_at, sb.committee_ends_at,
+                    sb.committee_ends_at <= now() AS committee_passed,
+                    ${committeeSoonSql('sb', 'now()')} AND sb.committee_ends_at > now() AS committee_soon,
                     sb.opens_at <= now() AND sb.closes_at > now() AS period_open,
                     sb.closes_at <= now() AS period_over,
                     sb.review_ends_at <= now() AS review_passed,
@@ -295,7 +299,13 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                                count(*) FILTER (WHERE a.status = 'needs_info')::int AS needs_info
                         FROM applications a JOIN programmes p ON p.id = a.programme_id
                         WHERE a.semester_id = sb.id AND a.status IN ('pending', 'needs_info')
-                        GROUP BY p.id) x), '[]') AS undecided_by_programme
+                        GROUP BY p.id) x), '[]') AS undecided_by_programme,
+                    -- awaiting the committee, per programme (round 2 Group 2)
+                    COALESCE((SELECT json_agg(x ORDER BY x.code) FROM (
+                        SELECT p.code, p.name_en, p.name_hu, p.name_de, count(*)::int AS awaiting
+                        FROM applications a JOIN programmes p ON p.id = a.programme_id
+                        WHERE a.semester_id = sb.id AND a.status = 'awaiting_committee'
+                        GROUP BY p.id) x), '[]') AS awaiting_by_programme
              FROM semester_bounds sb WHERE sb.status = 'active'
              ORDER BY sb.opens_at`
         )).rows.map((r) => {
@@ -306,6 +316,11 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                 reviewSoon: r.review_soon && undecided > 0,
                 reviewPassed: r.review_passed && undecided > 0,
                 undecidedByProgramme: r.review_passed ? r.undecided_by_programme : [],
+                awaitingByProgramme: r.awaiting_by_programme,
+                // The committee deadline (round 2 Group 2): soon / passed only while something awaits the committee
+                committeeEndsAt: r.committee_ends_at,
+                committeeSoon: r.committee_soon && r.awaiting_committee > 0,
+                committeePassed: r.committee_passed && r.awaiting_committee > 0,
                 // nothing undecided and nothing awaiting the committee (round 2 Group 2)
                 canClose: r.period_over && r.late_access === 0 && undecided === 0 && r.awaiting_committee === 0,
             };

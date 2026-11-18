@@ -46,11 +46,21 @@ const contentWidth = (doc) => doc.page.width - 2 * MARGIN;
 // The compact decision line in the footer of every page of an application (admin round Group 7):
 // status (or "Not reviewed before semester close"), final grade, who decided (reviewer name, Admin
 // or System) and when. The same values as the Decision block of the application page.
+// Round 2 Group 2: what the committee did, in a few words (shared by the line and the Decision block)
+const COMMITTEE_STATES = { awaiting: 'Awaiting the committee', kept: 'Kept by the committee', changed: 'Changed by the committee' };
+const committeeText = (committee) => {
+    if (!committee) return null;
+    const parts = [COMMITTEE_STATES[committee.state]];
+    if (committee.at) parts.push(formatDateTime(committee.at));
+    if (committee.by) parts.push(`by ${committee.by}`);
+    return parts.join(', ');
+};
 const decisionLine = (app) => {
     const d = app.decision;
     return [
         `Application #${app.id}`,
         appStatusLabel(app),
+        ...(d && d.committee ? [`Committee: ${COMMITTEE_STATES[d.committee.state]}`] : []),
         `Final grade: ${d && d.finalGrade ? gradeLabel(d.finalGrade, 'en') : '—'}`,
         `Decided by: ${d && d.decidedBy ? d.decidedBy : '—'}`,
         `Decided on: ${d ? formatDateTime(d.decidedAt) : '—'}`,
@@ -196,12 +206,23 @@ const drawApplication = (doc, app, evidenceResults) => {
         ['Decided by', decision && decision.decidedBy ? decision.decidedBy : '—'],
         ['Decided on', decision ? formatDateTime(decision.decidedAt) : '—'],
         ['Last change by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email}), ${formatDateTime(app.reviewedAt)}` : '—'],
+        // The committee (round 2 Group 2): the reviewer's own decision, then the committee's step
+        ...(decision && decision.reviewerDecision ? [[
+            'Reviewer decision',
+            `${statusLabel(decision.reviewerDecision)}${decision.reviewerGrade ? `, ${gradeLabel(decision.reviewerGrade, 'en')}` : ''}`,
+        ]] : []),
+        ...(decision && decision.committee ? [['Committee', committeeText(decision.committee)]] : []),
     ]);
     // An automatic rejection stores only its reason code: written here in English, like the whole book
     const reasonText = decision && ((decision.reasonCode && reasons.en[decision.reasonCode]) || decision.rationale);
     if (reasonText) {
         doc.font('Bold').fontSize(9).fillColor(COLORS.muted).text('Reason / note', MARGIN);
         doc.font('Body').fontSize(10).fillColor(COLORS.text).text(reasonText, MARGIN, doc.y, { width: doc.page.width - 2 * MARGIN });
+        doc.moveDown(0.3);
+    }
+    if (decision && decision.committee && decision.committee.note) {
+        doc.font('Bold').fontSize(9).fillColor(COLORS.muted).text('Committee note', MARGIN);
+        doc.font('Body').fontSize(10).fillColor(COLORS.text).text(decision.committee.note, MARGIN, doc.y, { width: doc.page.width - 2 * MARGIN });
         doc.moveDown(0.3);
     }
 

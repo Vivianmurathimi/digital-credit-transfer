@@ -32,6 +32,7 @@ const pool = require('../db');
 const minioClient = require('../minio');
 const { EVIDENCE_BUCKET, ARCHIVE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
+const { getApplicationTermData } = require('../utils/getTermData');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
 const BASE = (process.env.SECURITY_CHECK_URL || `http://localhost:${process.env.PORT || 5050}`).replace(/\/+$/, '');
@@ -1827,7 +1828,7 @@ const run = async () => {
         await expect('The new admin reads the staff list', call('GET', 'users/staff', { token: N }), 200);
         const staffList = await call('GET', 'users/staff', { token: S });
         const self = (staffList.body?.staff || []).find((p) => p.id === d.admin.id);
-        report(self?.is_self === true && (staffList.body?.staff || []).every((p) => ['reviewer', 'superadmin'].includes(p.role)), 'The staff list has reviewers and admins only, and marks yourself');
+        report(self?.is_self === true && (staffList.body?.staff || []).every((p) => ['reviewer', 'committee', 'superadmin'].includes(p.role)), 'The staff list has staff only (reviewers, committee members, admins; never students), and marks yourself');
         await expect('A reviewer cannot remove themselves', call('PUT', `users/${d.reviewer.id}/remove-reviewer`, { token: R }), 403, 'FORBIDDEN_ROLE');
 
         // Deactivating admins
@@ -3179,6 +3180,200 @@ const run = async () => {
             const removed = await removeSharingProgramme();
             console.log(`(removed the temporary committee programme (${removed}) with its people and applications)`);
         }
+    }
+
+    section('4x. Committee members and files (round 2 Group 2 Part D): only files of applications their committee can see');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}F${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Files', 'Security Check Files', 'Security Check Files') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, linkRole) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role",
+                    [`Files ${key}`, `${STAFF_TEST_PREFIX}cx-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, $3)', [user.id, programmeId, linkRole]);
+                return user;
+            };
+            const main = await person('main', 'reviewer', 'main');
+            const member = await person('member', 'committee', 'committee');
+            const [TM, TC] = [tokenFor(main), tokenFor(member)];
+            const file = (name) => call('GET', `uploads/${encodeURIComponent(name)}`, { token: TC });
+            // A temporary application of student A in this programme naming one file, in the given state
+            const app = async (n, fileName, status, extra = {}) => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                     info_requested_at, info_deadline, decided_by_role, decided_at, committee_state)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END,
+                         $8, $9, $10) RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify(extra.institutions || []), JSON.stringify(extra.courses || [{ course_name: 'File check', file: fileName }]),
+                    JSON.stringify([{ course_code: `CX${n}`, course_name: 'File check' }]), `CX${n}${stamp}`.slice(0, 20), status,
+                    extra.by || null, extra.by ? new Date() : null, extra.state || null]
+            )).rows[0].id;
+
+            const fileB = d.fileOfB; // a real file of student B, named by applications of another programme only
+            const fileA = d.fileOfA;
+            const before = await file(fileB);
+            report(before.status === 404 && before.code === 'FILE_NOT_FOUND', "A member can't open another programme's file", `${before.status}`);
+            await expect('A member: no token', call('GET', `uploads/${encodeURIComponent(fileB)}`), 401, 'NO_TOKEN');
+
+            // Named in a pending application of the member's programme: still refused
+            const pending = await app(1, fileB, 'pending');
+            report((await file(fileB)).status === 404, "A pending application's file (transcript): refused");
+            await pool.query("UPDATE applications SET status = 'needs_info', info_requested_at = now(), info_deadline = now() + interval '2 days' WHERE id = $1", [pending]);
+            report((await file(fileB)).status === 404, "A needs-info application's file: refused");
+            // A withdrawn one, and a System decision, naming the other file (as a grading document)
+            await app(2, null, 'withdrawn', { courses: [], institutions: [{ name: 'X', country: 'AT', grading_file: fileA }] });
+            await app(3, null, 'rejected', { courses: [], institutions: [{ name: 'X', country: 'AT', grading_file: fileA }], by: 'system', state: 'not_needed' });
+            report((await file(fileA)).status === 404, 'Files of withdrawn and System-decided applications: refused');
+
+            // The reviewer decides: now it is the committee's, and so is its file
+            await pool.query("UPDATE applications SET status = 'pending', info_requested_at = NULL, info_deadline = NULL WHERE id = $1", [pending]);
+            await expect('The reviewer approves it', call('PUT', `applications/${pending}/status`, { token: TM, json: { status: 'approved', final_grade: 4 } }), 200);
+            const allowed = await call('GET', `uploads/${encodeURIComponent(fileB)}`, { token: TC });
+            report(allowed.status === 200, "Awaiting the committee: the member opens the application's file", `${allowed.status} ${allowed.code || ''}`);
+            report((await file(fileA)).status === 404, 'Still not the file named only by the withdrawn and System-decided ones');
+            // Handled by the committee: still theirs to see (read-only)
+            await expect('The member keeps the decision', call('PUT', `committee/applications/${pending}/decision`, { token: TC, json: { action: 'keep' } }), 200);
+            report((await file(fileB)).status === 200, 'Handled by the committee: the file still opens');
+
+            // The link ends, or the member is removed: refused from the next request on
+            await pool.query("UPDATE staff_programmes SET ended_at = now() WHERE user_id = $1 AND role = 'committee'", [member.id]);
+            report((await file(fileB)).status === 404, 'The committee link ended: the file is refused at once');
+            await pool.query("UPDATE staff_programmes SET ended_at = NULL WHERE user_id = $1 AND role = 'committee'", [member.id]);
+            await pool.query('UPDATE users SET deactivated_at = now() WHERE id = $1', [member.id]);
+            const removed = await file(fileB);
+            report(removed.status === 401, 'A removed member is refused', `${removed.status} ${removed.code || ''}`);
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary files programme (${removed}) with its people and applications)`);
+        }
+    }
+
+    section('4y. Who sees what of the committee (round 2 Group 2 Part E): the student, the reviewer, the member, the admin');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}E${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Views', 'Security Check Views', 'Security Check Views') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, linkRole) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role, name",
+                    [`Views ${key}`, `${STAFF_TEST_PREFIX}cy-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role) VALUES ($1, $2, $3)', [user.id, programmeId, linkRole]);
+                return user;
+            };
+            const main = await person('main', 'reviewer', 'main');
+            const member = await person('member', 'committee', 'committee');
+            const [TM, TC] = [tokenFor(main), tokenFor(member)];
+            const activeSemester = (await pool.query("SELECT id FROM semesters WHERE status = 'active' ORDER BY id LIMIT 1")).rows[0]?.id || null;
+            const app = async (n) => (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5) RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify([{ course_code: `CY${n}`, course_name: 'Views check' }]), `CY${n}${stamp}`.slice(0, 20), activeSemester]
+            )).rows[0].id;
+            const changed = await app(1);
+            const waiting = await app(2);
+            await expect('The reviewer approves (grade 4, with a note)', call('PUT', `applications/${changed}/status`, { token: TM, json: { status: 'approved', final_grade: 4, note: 'Reviewer reason CY' } }), 200);
+            await expect('The reviewer approves the second one', call('PUT', `applications/${waiting}/status`, { token: TM, json: { status: 'approved', final_grade: 3 } }), 200);
+            await expect('The member changes it to rejected', call('PUT', `committee/applications/${changed}/decision`, { token: TC, json: { action: 'change', note: 'Committee note CY' } }), 200);
+
+            // The student: the final result only, by "committee"; on Change only the committee's note
+            const mine = (await call('GET', `applications/mine/${changed}`, { token: A })).body?.application || {};
+            report(mine.status === 'rejected' && mine.decided_by === 'committee', 'The student: final status, decided by the committee', `${mine.status} ${mine.decided_by}`);
+            report(mine.committee_note === 'Committee note CY' && !mine.decision_rationale && mine.final_grade == null, "The student: the committee's note only, no reviewer reason or grade");
+            report(!JSON.stringify(mine).includes('Reviewer reason CY') && !(mine.events || []).some((e) => e.kind === 'decided'), "The student never gets the reviewer's reason or decided step");
+            report(!('committee_by' in mine) && !('reviewer_decision' in mine) && !('reviewer_grade' in mine), "The student: nothing of who acted or the reviewer's decision");
+
+            // The reviewer: Kept/Changed and the final result, never who in the committee acted
+            const reviewerRow = ((await call('GET', 'applications', { token: TM })).body?.applications || []).find((a) => a.id === changed) || {};
+            report(reviewerRow.committee_state === 'changed' && reviewerRow.committee_note === 'Committee note CY', 'The reviewer list: changed, with the note');
+            report(!('committee_by' in reviewerRow) && !('committee_by_role' in reviewerRow) && !('committee_by_name' in reviewerRow), "The reviewer list: not who in the committee acted");
+            const reviewerDetails = (await call('GET', `reviewer/applications/${changed}`, { token: TM })).body?.application || {};
+            report(reviewerDetails.decision?.committee_state === 'changed' && reviewerDetails.decision?.reviewer_decision === 'approved' && reviewerDetails.decision?.reviewer_grade === 4,
+                'The reviewer details: their decision and grade kept, changed by the committee');
+            report(reviewerDetails.decision?.committee_by_role === null && reviewerDetails.decision?.committee_by_name === null, 'The reviewer details: not who acted');
+            const step = (reviewerDetails.events || []).find((e) => e.kind === 'committee_changed') || {};
+            report(step.actor_role === 'committee' && step.actor_name === null, 'The reviewer history: "Committee", no name', `${step.actor_role} ${step.actor_name}`);
+            const memberDetails = (await call('GET', `committee/applications/${changed}`, { token: TC })).body?.application || {};
+            report(memberDetails.decision?.committee_by_role === null && memberDetails.decision?.committee_by_name === null, 'The member details: not who acted either');
+
+            // The admin: who acted, by name
+            const adminRow = ((await call('GET', 'applications', { token: S })).body?.applications || []).find((a) => a.id === changed) || {};
+            report(adminRow.committee_by_role === 'committee' && adminRow.committee_by_name === member.name, 'The admin list: the member who acted, by name', `${adminRow.committee_by_role} ${adminRow.committee_by_name}`);
+            const adminWaiting = ((await call('GET', 'applications', { token: S })).body?.applications || []).find((a) => a.id === waiting) || {};
+            report(adminWaiting.committee_state === 'awaiting' && adminWaiting.status === 'awaiting_committee', 'The admin list: the other one awaits the committee');
+            // PDFs (Part G): everyone's PDF has the committee's step; only the admin's says who acted
+            const pdfOf = async (path, token) => {
+                const res = await fetch(`${API}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+                return { status: res.status, type: res.headers.get('content-type') || '' };
+            };
+            for (const [who, path, token] of [['the reviewer', `reviewer/applications/${changed}/pdf`, TM], ['the member', `committee/applications/${changed}/pdf`, TC], ['the admin', `admin/applications/${changed}/pdf`, S]]) {
+                const pdf = await pdfOf(path, token);
+                report(pdf.status === 200 && pdf.type.includes('application/pdf'), `The application PDF for ${who}`, `${pdf.status}`);
+            }
+            const plain = (await getApplicationTermData(changed)).applications[0].decision;
+            const forAdmin = (await getApplicationTermData(changed, { showCommitteeMember: true })).applications[0].decision;
+            report(plain.reviewerDecision === 'approved' && plain.reviewerGrade === 4 && plain.committee?.state === 'changed' && plain.committee?.note === 'Committee note CY',
+                "The PDF has the reviewer's decision and the committee's step and note");
+            report(plain.committee?.by === null && forAdmin.committee?.by === member.name, "Who acted: only in the admin's PDF", `${plain.committee?.by} / ${forAdmin.committee?.by}`);
+
+            if (activeSemester) {
+                // Analytics (Part G): the committee's numbers, for the admin only
+                const analytics = (await call('GET', `admin/analytics?semester_id=${activeSemester}`, { token: S })).body?.analytics;
+                report(analytics?.committee?.overall?.changed >= 1 && analytics?.committee?.overall?.awaiting >= 1, 'Analytics count the committee (changed, awaiting)');
+                const csv = await fetch(`${API}/admin/analytics/export.csv?semester_id=${activeSemester}&table=committee&lang=en`, { headers: { Authorization: `Bearer ${S}` } });
+                const text = csv.status === 200 ? await csv.text() : '';
+                report(csv.status === 200 && text.includes('Awaiting the committee') && text.includes(code), 'The committee CSV for the admin', `${csv.status}`);
+                for (const [who, token] of [['the member', TC], ['the reviewer', TM]]) {
+                    const refused = await call('GET', `admin/analytics/export.csv?semester_id=${activeSemester}&table=committee`, { token });
+                    report(refused.status === 403, `Not for ${who}`, `${refused.status}`);
+                }
+                const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+                const row = (summary.semesters || []).find((x) => x.id === activeSemester)?.awaitingByProgramme?.find((p) => p.code === code);
+                report(row?.awaiting === 1, 'The admin overview: awaiting the committee per programme', JSON.stringify(row));
+            } else {
+                skip('The admin overview: awaiting per programme', 'no semester in progress');
+            }
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary views programme (${removed}) with its people and applications)`);
+        }
+    }
+
+    section('4z. The committee deadline (round 2 Group 2 Part F): only the admin sets it; never before the review deadline');
+    {
+        // A temporary semester in setup, far in the future (deleted at the end, also after a crash)
+        const base = { name: `Security check committee ${Date.now()}`, opens_at: '2097-02-01T08:00', closes_at: '2097-02-28T23:59', review_end_at: '2097-03-14T23:59', end_date: '2097-06-30', last_days: 3 };
+        const created = await call('POST', 'admin/semesters', { token: S, json: base });
+        report(created.status === 201, 'The admin creates a semester without a committee deadline', `${created.status} ${created.code || ''}`);
+        const semester = created.body?.semester;
+        if (semester) {
+            tempSemesterIds.push(semester.id);
+            report(semester.committee_end_default === true && new Date(semester.committee_end_at).toISOString() === '2097-03-28T22:59:00.000Z',
+                'The default: the review deadline + 14 days, 23:59 Budapest', `${semester.committee_end_at}`);
+            await expect('A committee deadline before the review deadline', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: '2097-03-10T23:59' } }), 400, 'COMMITTEE_BEFORE_REVIEW');
+            await expect('Not a date and time', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: 'soon' } }), 400, 'INVALID_TIME');
+            const { review_end_at: _review, ...withoutReview } = base;
+            await expect('Before the saved review deadline (checked by the database too)', call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...withoutReview, committee_end_at: '2097-03-12T23:59' } }), 400, 'COMMITTEE_BEFORE_REVIEW');
+            const chosen = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: '2097-04-15T12:00' } });
+            report(chosen.status === 200 && chosen.body?.semester?.committee_end_default === false, 'The admin chooses one');
+            const kept = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...withoutReview } });
+            report(kept.body?.semester?.committee_end_default === false, 'An edit without it keeps the chosen one');
+            const back = await call('PUT', `admin/semesters/${semester.id}`, { token: S, json: { ...base, committee_end_at: null } });
+            report(back.body?.semester?.committee_end_default === true, 'null: back to the default');
+            for (const [who, token] of [['A reviewer', R], ['A student', A]]) {
+                const refused = await call('PUT', `admin/semesters/${semester.id}`, { token, json: { ...base, committee_end_at: '2097-04-15T12:00' } });
+                report(refused.status === 403, `${who} can't set the committee deadline`, `${refused.status}`);
+            }
+        }
+        const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+        report((summary.semesters || []).every((x) => 'committeeEndsAt' in x && 'committeeSoon' in x && 'committeePassed' in x), 'The admin overview has the committee deadline of each semester in progress');
     }
 
     section('5. Allowed reads still work -> 200');

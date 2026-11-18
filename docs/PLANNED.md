@@ -74,4 +74,14 @@ Things deliberately left for later, with the reason and the round they belong to
 - ~~The timeline: review deadline, several semesters in progress, closing when everything is decided~~ **(done, Part D, migration 020).**
 - ~~Reviewer emails: daily summary instead of an email per event~~ **(done, Part E, migration 021).**
 - ~~PDFs for reviewers and single-application PDFs~~ **(done, Part F).**
-- **Group 2:** committee members (a `committee` role in `staff_programmes`, one CHECK widened) with access to the reviewer's book and the single-application PDF; "and the committee is done" as a close condition.
+
+## Round 2 Group 2 (done): the committee
+
+- ~~The committee role and accounts~~ **(done, Part A, migration 022):** committee links per programme, invites, a reviewer may also sit on a committee, the Reviewer / Committee switch.
+- ~~The data model~~ **(done, Part B, migration 023):** status `awaiting_committee`, the reviewer's decision kept for good, the final result after the committee.
+- ~~The dashboard, Keep / Change~~ **(done, Part C).**
+- ~~Files for committee members~~ **(done, Part D).**
+- ~~What students, reviewers and the admin see; emails~~ **(done, Part E).**
+- ~~The committee deadline, its summary, reminders and alert; the close blocker~~ **(done, Part F, migration 024).**
+- ~~PDFs, analytics, seed and demo, docs~~ **(done, Part G).**
+- **Later:** a committee member can't reopen a step (by design); if that's ever needed, an admin override with its own history kind.
