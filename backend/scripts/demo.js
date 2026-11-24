@@ -240,12 +240,14 @@ const seed = async (pool) => {
                  system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id, created_at,
                  reviewer_note, student_resubmit_note, supplemental_files, reviewed_by, reviewed_at,
                  info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale,
-                 reviewer_decision, reviewer_grade, committee_state, committee_by, committee_by_role, committee_at, committee_note)
+                 reviewer_decision, reviewer_grade, committee_state, committee_by, committee_by_role, committee_at, committee_note, committee_grade)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::timestamptz AT TIME ZONE 'UTC',
                      $15, $16, $17, $18, $19::timestamptz AT TIME ZONE 'UTC',
                      $20, info_reply_deadline($20), $21, $22, $23, $24, $25,
                      $26, $27, COALESCE($28, CASE WHEN ($11)::varchar IN ('approved', 'rejected') THEN 'before_committee' END),
-                     $29, CASE WHEN $29::int IS NOT NULL THEN 'committee' END, $30, $31)
+                     $29, CASE WHEN $29::int IS NOT NULL THEN 'committee' END, $30, $31,
+                     -- the committee's own grade (migration 027): a change that ends approved
+                     CASE WHEN $28::varchar = 'changed' AND ($11)::varchar = 'approved' THEN $21::smallint END)
              RETURNING id`,
             [
                 student.id, programmes[student.programme],

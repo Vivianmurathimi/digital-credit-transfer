@@ -54,7 +54,7 @@ Every request re-reads the role, the deactivation and the reviewer's visible pro
 |---|---|---|---|
 | pending | awaiting the committee (reviewer: approved) | reviewer / admin | a **grade 2–5**; a note is optional |
 | pending | awaiting the committee (reviewer: rejected) | reviewer / admin | a **reason** |
-| awaiting the committee | approved / rejected | the **committee** (or the admin, as committee) | Keep or Change (section 9) |
+| awaiting the committee | approved / rejected | the **committee** (or the admin, as committee) | Keep, Change the grade or Change (section 9) |
 | pending | needs info | reviewer / admin | a **message** |
 | needs info | pending | the **student**, by replying | before the reply deadline |
 | pending / needs info | withdrawn | the **student** | — |
@@ -109,15 +109,16 @@ After a reviewer (or the admin) approves or rejects, the programme's **committee
 
 - **Who.** Links in `staff_programmes` with role `committee` (one current link per person, programme and side: a person may be a programme's reviewer AND on its committee). A committee-only person has the account role `committee`; a reviewer joins a committee through "Add programme" on the Committee screen, or an invite. Permissions come from the **current** links, read on every request (`middleware/requireCommittee.js`). Deactivating the account stops both sides; the admin can end only the committee links or only the reviewer links. Someone with both gets a Reviewer / Committee switch.
 - **What a member sees.** Only their committee programmes' applications that a reviewer or admin decided: **Waiting** (awaiting the committee) and **Handled** (kept or changed). Never pending, needs info, withdrawn, drafts or System decisions (404, like something that doesn't exist). Details read-only, the files of those applications (`utils/fileOwner.js` `isFileInCommitteeScope`), the PDF of one application and the book of their programmes.
-- **The step: Keep or Change.**
+- **The step: Keep, Change the grade, or Change** (fixes Part A, migration 027).
 
-| The reviewer decided | Keep | Change |
-|---|---|---|
-| approved, grade *g* | approved, grade *g* (or another grade the committee chooses) | rejected, no grade |
-| rejected | rejected | approved, a grade is **required** |
+| The reviewer decided | Keep the decision | Change the grade | Change |
+|---|---|---|---|
+| approved, grade *g* | approved, grade *g* (no other grade: `GRADE_NOT_ON_KEEP`) | approved, another grade, **required** and not *g* (`GRADE_UNCHANGED`) | rejected, no grade |
+| rejected | rejected | not offered (`NOT_APPROVED`) | approved, a grade is **required** |
 
-  The note is optional on Keep, **required on Change** (`COMMITTEE_NOTE_REQUIRED`). **One step only:** one conditional update ("while awaiting"); of two members at once one succeeds, the other gets 409 `ALREADY_DECIDED`; no reopening. **Never one's own decision:** whoever made the reviewer decision (`decided_by`) gets 409 `OWN_DECISION`, whatever their links. The admin takes the step from Applications or by acting as a member; recorded as "Admin, as committee".
-- **What the student sees** (enforced in the API, `utils/applicationEvents.js`): while awaiting, "Under committee review" and nothing of the reviewer's decision (no outcome, grade, reason or history step). After the step, only the **final** result and grade, "Decided by: Committee" with the date, and under one heading "Decision of the committee": on Keep the reviewer's reason plus the committee's note, on Change only the committee's note. The email says the same.
+  The committee's grade is stored on its own (`committee_grade`); the final grade (`final_grade`) is the committee's if set, otherwise the reviewer's (also a database rule). A grade change counts as **changed** (`committee_state = 'changed'` with the decision still approved), also in analytics ("Grade changed"). The note is optional on Keep and Change the grade, **required on Change**, when the decision itself flips (`COMMITTEE_NOTE_REQUIRED`). Reviewers, members and the admin see both steps ("Reviewer: approved, 4 · Committee: grade changed to 3"); the student only the final result. **One step only:** one conditional update ("while awaiting"); of two members at once one succeeds, the other gets 409 `ALREADY_DECIDED`; no reopening. **Never one's own decision:** whoever made the reviewer decision (`decided_by`) gets 409 `OWN_DECISION`, whatever their links. The admin takes the step from Applications or by acting as a member; recorded as "Admin, as committee".
+- **What the student sees** (enforced in the API, `utils/applicationEvents.js`): while awaiting, "Under committee review" and nothing of the reviewer's decision (no outcome, grade, reason or history step). After the step, only the **final** result and grade, "Decided by: Committee" with the date, and under one heading "Decision of the committee": on Keep and Change the grade the reviewer's reason plus the committee's note, on Change only the committee's note. The email says the same.
+- **The student's own PDF** (fixes 4a, `GET /api/applications/mine/:id/pdf`, "Download PDF" in My Status and in the application's details): `application-<id>.pdf`, built from the same rules (`utils/getTermData.js`, `studentId`): the application, courses, files, their notes, and the final result as above. Never the reviewer's name or internal note, the reviewer's own decision, or who in the committee acted. Another student's application: 404; staff tokens: 403.
 - **Who acted** (`committee_by`, `committee_by_role`): shown only to the admin (Applications, Past semesters, the admin's PDFs). Reviewers and members see "Committee".
 - **The committee deadline** (migration 024, `semester_bounds.committee_ends_at`): default the review deadline + 14 days, 23:59 Budapest; the admin may choose another (never before the review deadline; if the review deadline moves past a chosen one, it goes back to the default). Nothing is decided when it passes.
 - **Emails** (`jobs/applicationJobs.js`): the members' **daily summary** at 07:00 Budapest (decisions newly awaiting in their programmes, not their own; nothing new: no email); **reminders 7 days and 1 day before** the committee deadline per programme with something awaiting; the **admins' email** once per semester when it passes with decisions awaiting. Someone with both kinds of link gets the reviewer summary and the committee summary separately, each recorded once per person, kind and day. The reviewers' deadline alert and reminders count only pending and needs info.
@@ -125,6 +126,6 @@ After a reviewer (or the admin) approves or rejects, the programme's **committee
 ## Where to check that it all holds
 
 - `npm test` (backend): the jobs with a fake clock (daily summary, reminders, review deadline alert, the lock; the committee's summary, reminders and deadline), the period rule with several semesters, the close, the PDFs, emails in every language.
-- `npm run security-check` (backend, with the backend running): access by role, programme scoping (also files and PDFs), standby and assisting extra reviewers, one main reviewer per programme, two decisions at once, invites, sharing, the close refused while anything is undecided, no rejection at the review deadline, overlapping application periods refused; the committee (sections 4u–4z: access from current links, the step, files, who sees what, the deadline).
+- `npm run security-check` (backend, with the backend running): access by role, programme scoping (also files and PDFs), standby and assisting extra reviewers, one main reviewer per programme, two decisions at once, invites, sharing, the close refused while anything is undecided, no rejection at the review deadline, overlapping application periods refused; the committee (sections 4u–4z: access from current links, the step, files, who sees what, the deadline; 4ad: Change the grade and the student's own PDF).
 - `npm run check:translations`, `npm run check:missing-keys`, `npm run check:reviewer-list`, `CI=true npm test` (frontend).
 - The browser checklist: `docs/REVIEWER_CHECKLIST.md`.

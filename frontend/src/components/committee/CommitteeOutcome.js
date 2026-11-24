@@ -9,8 +9,12 @@ import Chip from '../reviewer/Chip';
 // acted (member name, or "Admin, as committee") only when the server sends it: the admin's views.
 // Nothing for decisions that never went to the committee, or that still await it.
 export const committeeHandled = (state) => state === 'kept' || state === 'changed';
+// The label of what the committee did (fixes Part A): a change that left the decision approved
+// changed only the grade ("Grade changed by the committee")
+export const committeeStateKey = (state, status, reviewerDecision) => (
+    state === 'changed' && reviewerDecision && status === reviewerDecision ? 'committee_state_grade_changed' : `committee_state_${state}`);
 
-const CommitteeOutcome = ({ status, finalGrade, state, at, note, byRole = null, byName = null, compact = false }) => {
+const CommitteeOutcome = ({ status, finalGrade, state, at, note, reviewerDecision = null, byRole = null, byName = null, compact = false }) => {
     const { t, i18n } = useTranslation();
     const language = i18n.resolvedLanguage || i18n.language;
     if (!committeeHandled(state)) return null;
@@ -18,7 +22,7 @@ const CommitteeOutcome = ({ status, finalGrade, state, at, note, byRole = null, 
     return (
         <div style={{ marginTop: compact ? '4px' : '8px', fontSize: compact ? '13px' : undefined }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
-                <Chip cue={state === 'kept' ? 'approved' : 'needs-info'}>{t(`committee_state_${state}`)}</Chip>
+                <Chip cue={state === 'kept' ? 'approved' : 'needs-info'}>{t(committeeStateKey(state, status, reviewerDecision))}</Chip>
                 <span>
                     {t('committee_final_line', {
                         status: t(`status_${status}`),

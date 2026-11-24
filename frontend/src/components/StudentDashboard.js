@@ -7,6 +7,7 @@ import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
+import StudentPdfButton from './StudentPdfButton';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import SubmissionBanner, { CLOSED_CODES } from './SubmissionBanner';
 import StatusChip from './StatusChip';
@@ -905,6 +906,7 @@ const StudentDashboard = ({ userId }) => {
                                     <button type="button" onClick={(e) => openDetail(app.id, e, readOnly)} aria-label={t('student_view_details_label', { course })} style={{ padding: '6px 12px', backgroundColor: 'var(--surface-accent)', color: 'var(--link)', border: '1px solid var(--link)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
                                         {t('student_view_details')}
                                     </button>
+                                    <div style={{ marginTop: '6px' }}><StudentPdfButton applicationId={app.id} course={course} /></div>
                                 </td>
                             </tr>
                         )})}

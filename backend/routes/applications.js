@@ -13,6 +13,7 @@ const { periodFor, refuseUnlessSubmitting } = require('../utils/applicationPerio
 const { actorRoleOf, addEvent, listStudentApplications, getStudentApplication } = require('../utils/applicationEvents');
 const { programmeScopeOf, programmeHasReviewerSql, resolveReviewerView } = require('../utils/reviewers');
 const { DECIDABLE_STATUS, checkDecision, refusalFor } = require('../utils/decisions');
+const { sendPdf, applicationPdf } = require('../utils/pdfDownloads');
 const { sendValidationErrors } = sendError;
 const {
     validateApplicationForm, filesWithPaths, syllabusReasons, syllabusNote, missingSyllabi, BLOCKING_STATUSES, normalizeCourseCode,
@@ -171,6 +172,22 @@ router.get('/applications/mine/:id', verifyToken, requireRole('student'), async 
     } catch (err) {
         console.error('❌ Fetch my application error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// GET /api/applications/mine/:id/pdf (fixes 4a): the student's own application as a PDF
+// (application-<id>.pdf), with only what the student may see (utils/getTermData.js, studentId).
+// Another student's application and an id that doesn't exist get the same 404.
+router.get('/applications/mine/:id/pdf', verifyToken, requireRole('student'), async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+    try {
+        const pdf = await applicationPdf(id, { studentId: req.user.id });
+        if (!pdf) return sendError(res, 404, 'APPLICATION_NOT_FOUND', 'Application not found');
+        return sendPdf(res, pdf.fileName, pdf.buffer);
+    } catch (err) {
+        console.error('❌ Student application PDF error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not make the PDF');
     }
 });
 

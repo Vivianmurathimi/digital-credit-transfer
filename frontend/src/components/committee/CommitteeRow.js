@@ -5,6 +5,8 @@ import { gradeText } from '../../grades';
 import { targetCourse, statusCue } from '../../reviewerList';
 import Chip, { STATUS_ICONS } from '../reviewer/Chip';
 import ApplicationDetails from '../reviewer/ApplicationDetails';
+import CommitteeActions from './CommitteeActions';
+import { committeeStateKey } from './CommitteeOutcome';
 
 // One application in the committee's list (round 2 Group 2): the reviewer's decision at a glance
 // and, once handled, the committee's (Kept / Changed, the final result). Opened: the reviewer's
@@ -33,7 +35,7 @@ const CommitteeRow = ({ app, open, onToggle, onAct }) => {
                     <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '6px' }}>
                         {waiting
                             ? <Chip cue="awaiting">{t('status_awaiting_committee')}</Chip>
-                            : <Chip cue={app.committee_state === 'kept' ? 'approved' : 'needs-info'}>{t(`committee_state_${app.committee_state}`)}</Chip>}
+                            : <Chip cue={app.committee_state === 'kept' ? 'approved' : 'needs-info'}>{t(committeeStateKey(app.committee_state, app.status, app.reviewer_decision))}</Chip>}
                     </span>
                 </div>
                 <div style={{ marginTop: '4px' }}>{app.student_name}{app.neptun_code ? ` · ${app.neptun_code}` : ''} · {app.programme_code}</div>
@@ -61,14 +63,7 @@ const CommitteeRow = ({ app, open, onToggle, onAct }) => {
                             {app.decided_by_me ? (
                                 <p role="note" style={{ margin: 0, color: 'var(--cue-system-text)' }}>{t('committee_own_decision')}</p>
                             ) : (
-                                <>
-                                    <button type="button" onClick={() => onAct('keep')} style={{ padding: '8px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', backgroundColor: 'var(--cue-btn-approve)', color: 'var(--cue-btn-approve-text)' }}>
-                                        {t('committee_keep_button')}
-                                    </button>
-                                    <button type="button" onClick={() => onAct('change')} style={{ padding: '8px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)' }}>
-                                        {t('committee_change_button')}
-                                    </button>
-                                </>
+                                <CommitteeActions reviewerDecision={app.reviewer_decision} onAct={onAct} />
                             )}
                         </div>
                     )}

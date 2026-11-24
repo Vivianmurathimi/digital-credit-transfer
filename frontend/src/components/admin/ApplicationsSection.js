@@ -7,6 +7,7 @@ import downloadPdf from '../../downloadPdf';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import CommitteeDecisionModal from '../committee/CommitteeDecisionModal';
+import CommitteeActions from '../committee/CommitteeActions';
 import CommitteeOutcome from '../committee/CommitteeOutcome';
 import Chip from '../reviewer/Chip';
 import StatusChip from '../StatusChip';
@@ -153,7 +154,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                                 : app.committee_state === 'kept' || app.committee_state === 'changed' ? (
                                                     <>
                                                         {app.reviewer_decision && <div>{t('committee_reviewer_label')} {t(`status_${app.reviewer_decision}`)}</div>}
-                                                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} at={app.committee_at}
+                                                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} reviewerDecision={app.reviewer_decision} at={app.committee_at}
                                                             note={app.committee_note} byRole={app.committee_by_role} byName={app.committee_by_name} />
                                                     </>
                                                 ) : '—'}
@@ -173,14 +174,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                             {/* Awaiting the committee: the admin can take the committee step directly, recorded as "Admin, as committee" */}
                                             {app.status === 'awaiting_committee' && (
                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', marginBottom: '8px' }}>
-                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'keep' }); }}
-                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-approve)', color: 'var(--cue-btn-approve-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
-                                                        {t('committee_keep_button')}
-                                                    </button>
-                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'change' }); }}
-                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
-                                                        {t('committee_change_button')}
-                                                    </button>
+                                                    <CommitteeActions compact reviewerDecision={app.reviewer_decision} onAct={(action) => { setNotice(''); setCommitteeStep({ app, action }); }} />
                                                 </div>
                                             )}
                                             {/* Reset and force approve break the decision rules (approvals need a grade, decided

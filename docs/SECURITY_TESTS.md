@@ -294,7 +294,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | The student's API while awaiting | "awaiting_committee", no outcome, grade, reason or decided step |
 | | | Withdrawing while awaiting; closing the semester while anything awaits | `409 AWAITING_COMMITTEE`; refused with the `AWAITING_COMMITTEE` blocker |
 | 4w | **Keep / Change (Part C)**, a temporary programme | What a member lists and opens: decided ones of their programmes only; pending, needs info, withdrawn, System, another programme's | listed / `404` |
-| | | Keep and Change in each direction; Change without a note; a rejection changed without a grade; a grade with a rejection | final status and grade as in the table (REVIEWER.md §9); `400 COMMITTEE_NOTE_REQUIRED`; `400 GRADE_REQUIRED`; `400 GRADE_ONLY_ON_APPROVE` |
+| | | Keep an approval with another grade; Change the grade; Change in each direction; Change without a note; a rejection changed without a grade; Keep a rejection with a grade | `400 GRADE_NOT_ON_KEEP`; final status and grade as in the table (REVIEWER.md §9); `400 COMMITTEE_NOTE_REQUIRED`; `400 GRADE_REQUIRED`; `400 GRADE_NOT_ON_KEEP` |
 | | | Two members at once; a second step; the member who made the reviewer decision | one `200`, one `409 ALREADY_DECIDED`; `409 ALREADY_DECIDED`; `409 OWN_DECISION` |
 | | | The admin's direct step; its PDF routes | recorded as "Admin, as committee"; PDF for visible, `404` otherwise |
 | 4x | **Files (Part D)** | A member opens files of another programme, of pending / needs-info / withdrawn / System-decided applications | `404 FILE_NOT_FOUND` |
@@ -323,6 +323,9 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Import with "Treat as the same programme"; preview again with that code; the Programmes table | all rows saved into the chosen programme, the code saved, no second programme; matched by itself; the other code shown |
 | | | Rows with another programme's code treated as the same; a new programme with that code | `409 ALIAS_TAKEN`, nothing saved (not even the new programme); `409 PROGRAMME_CODE_TAKEN` |
 | 4ac | **Overview: programmes with students but no courses this semester (fixes)**, a temporary programme in the semester students apply to | No courses and nobody using it; a registered student; the student moved to another programme; their application of this programme in that semester; an active course; the course hidden; the programme hidden | not counted (the Programmes table marks it "No courses this semester"); counted; not counted; counted; not counted (no mark); counted; not counted |
+| 4ad | **Change the grade (fixes Part A); the student's own PDF (fixes 4a)**, a temporary programme | Change the grade: without a grade; to the reviewer's grade; to 9; to 3 without a note; again; on a rejection; by the admin as committee | `400 GRADE_REQUIRED`; `400 GRADE_UNCHANGED`; `400 INVALID_FINAL_GRADE`; `200`, still approved, final 3, the reviewer's 4 kept, changed; `409 ALREADY_DECIDED`; `400 NOT_APPROVED`; `200`, recorded as the admin |
+| | | What the student sees after a grade change | approved, final grade 3, the reviewer's reason, no reviewer grade |
+| | | `GET /api/applications/mine/:id/pdf`: own; another student's; an unknown id; not a number; a reviewer; the admin; no token | `200` PDF `application-<id>.pdf`; `404`; `404`; `404`; `403`; `403`; `401` (what the PDF holds: `npm test`, committeeGrade) |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -367,6 +370,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-24 | throwaway copy with migration 027, the committee's grade change and the student's own PDF (sections 4w, 4ad) | **1057 passed, 0 failed, 2 skipped** (1059 checks); the same two skips. Temporary programmes, people and applications removed |
 | 2026-11-24 | throwaway copy, fixes 3a and the Overview's no-courses count (section 4ac) | **1038 passed, 0 failed, 2 skipped** (1040 checks); the same two skips. Temporary programme, student, application and course removed |
 | 2026-11-24 | throwaway copy with migration 026, fixes 1b (one programme per import, section 4ab; section 4n imports with the programme chosen first) | **1029 passed, 0 failed, 2 skipped** (1031 checks); the same two skips. Temporary programmes, courses and semester removed |
 | 2026-11-24 | throwaway copy with migration 025, fixes 1a: deleting an invited account without history (its accepted invite goes with it) | **997 passed, 0 failed, 2 skipped** (999 checks); the same two skips as below |

@@ -141,7 +141,7 @@ const answerStep = async (req, res, programmeIds) => {
 };
 
 /**
- * PUT /api/committee/applications/:id/decision { action: keep|change, final_grade?, note? }:
+ * PUT /api/committee/applications/:id/decision { action: keep|change_grade|change, final_grade?, note? }:
  * the committee's step (rules: utils/committee.js). Only on the member's committee programmes.
  */
 router.put('/committee/applications/:id/decision', verifyToken, requireCommittee, requireIdParam('id'),

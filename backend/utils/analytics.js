@@ -102,9 +102,10 @@ const semesterAnalytics = async (db, semesterId) => {
                 count(*) FILTER (WHERE a.committee_state = 'awaiting')::int AS awaiting,
                 count(*) FILTER (WHERE a.committee_state = 'kept')::int AS kept,
                 count(*) FILTER (WHERE a.committee_state = 'changed')::int AS changed,
-                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved')::int AS changed_to_rejected,
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved' AND a.status = 'rejected')::int AS changed_to_rejected,
                 count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'rejected')::int AS changed_to_approved,
-                count(*) FILTER (WHERE a.committee_state = 'kept' AND a.final_grade IS DISTINCT FROM a.reviewer_grade)::int AS kept_new_grade,
+                -- fixes Part A: still approved, with the committee's grade (counted as changed)
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved' AND a.status = 'approved')::int AS grade_changed,
                 avg(GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0)) FILTER (WHERE a.committee_at IS NOT NULL) AS average_days,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0))
                     FILTER (WHERE a.committee_at IS NOT NULL) AS median_days
@@ -116,13 +117,13 @@ const semesterAnalytics = async (db, semesterId) => {
     )).rows.map((r) => ({
         programme: r.programme_id === null ? null : names(r),
         awaiting: r.awaiting, kept: r.kept, changed: r.changed,
-        changedToRejected: r.changed_to_rejected, changedToApproved: r.changed_to_approved, keptWithNewGrade: r.kept_new_grade,
+        changedToRejected: r.changed_to_rejected, changedToApproved: r.changed_to_approved, gradeChanged: r.grade_changed,
         // of the decisions the committee handled, the share it changed (percent, one decimal); null: none handled
         changedPercent: r.kept + r.changed > 0 ? round1((100 * r.changed) / (r.kept + r.changed)) : null,
         averageDays: round1(r.average_days), medianDays: round1(r.median_days),
     }));
     const overallCommittee = committeeRows.find((r) => r.programme === null) || {
-        programme: null, awaiting: 0, kept: 0, changed: 0, changedToRejected: 0, changedToApproved: 0, keptWithNewGrade: 0, changedPercent: null, averageDays: null, medianDays: null,
+        programme: null, awaiting: 0, kept: 0, changed: 0, changedToRejected: 0, changedToApproved: 0, gradeChanged: 0, changedPercent: null, averageDays: null, medianDays: null,
     };
 
     return {

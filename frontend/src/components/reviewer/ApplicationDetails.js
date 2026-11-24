@@ -196,7 +196,7 @@ const ApplicationDetails = ({ appId, onDecide, readOnly = false, url = null, pdf
                     )}
                     {/* What the committee did with it (round 2 Group 2); who acted only in the admin's views */}
                     <CommitteeOutcome
-                        status={details.status} finalGrade={details.decision.final_grade} state={details.decision.committee_state}
+                        status={details.status} finalGrade={details.decision.final_grade} state={details.decision.committee_state} reviewerDecision={details.decision.reviewer_decision}
                         at={details.decision.committee_at} note={details.decision.committee_note}
                         byRole={details.decision.committee_by_role} byName={details.decision.committee_by_name}
                     />
