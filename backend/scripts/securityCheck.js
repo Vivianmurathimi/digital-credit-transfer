@@ -32,6 +32,7 @@ const pool = require('../db');
 const minioClient = require('../minio');
 const { EVIDENCE_BUCKET, ARCHIVE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
+const bcrypt = require('bcryptjs');
 const { getApplicationTermData } = require('../utils/getTermData');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
@@ -141,7 +142,10 @@ const restoreReviewerAccess = async () => {
     await pool.query("UPDATE users SET deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
     await pool.query('DELETE FROM staff_programmes WHERE user_id = ANY($1)', [testUsers]);
     await pool.query('DELETE FROM staff_programmes WHERE user_id = $1 AND NOT (id = ANY($2))', [b.reviewerId, b.links.map((l) => l.id)]);
-    for (const link of b.links) await pool.query('UPDATE staff_programmes SET ended_at = $2 WHERE id = $1', [link.id, link.ended_at]);
+    // A link put back as current is no longer "ended by deactivation" (migration 025: a rule)
+    for (const link of b.links) {
+        await pool.query('UPDATE staff_programmes SET ended_at = $2, ended_by_deactivation = (ended_by_deactivation AND $2::timestamptz IS NOT NULL) WHERE id = $1', [link.id, link.ended_at]);
+    }
     await pool.query('UPDATE users SET deactivated_at = $2 WHERE id = $1', [b.reviewerId, b.deactivatedAt]);
     for (const a of b.assignments) await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [a.id, a.assigned]);
     await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1)', [testUsers]);
@@ -2526,7 +2530,8 @@ const run = async () => {
             const truth = (await pool.query(
                 `SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'approved')::int AS approved,
                         count(*)::int AS total,
-                        count(*) FILTER (WHERE status IN ('approved', 'rejected') AND decided_by_role IN ('reviewer', 'admin'))::int AS decided
+                        -- decided by a reviewer or admin, also while it awaits the committee (round 2 Group 2)
+                        count(*) FILTER (WHERE status IN ('approved', 'rejected', 'awaiting_committee') AND decided_by_role IN ('reviewer', 'admin'))::int AS decided
                  FROM applications WHERE semester_id = $1`, [sid]
             )).rows[0];
             const a = active.body.analytics;
@@ -3374,6 +3379,118 @@ const run = async () => {
         }
         const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
         report((summary.semesters || []).every((x) => 'committeeEndsAt' in x && 'committeeSoon' in x && 'committeePassed' in x), 'The admin overview has the committee deadline of each semester in progress');
+    }
+
+    section('4aa. Activate and delete staff accounts (fixes 1a): the same account back; deleted for real, or hidden with its history');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}A${stamp}`.slice(0, 20);
+        const NAME = `Security check 4aa ${stamp}`; // hidden accounts lose their test address: found by this name
+        const made = [];
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Accounts', 'Security Check Accounts', 'Security Check Accounts') RETURNING id", [code]
+            )).rows[0].id;
+            const passwordHash = await bcrypt.hash('Check1234!', 4);
+            const person = async (key, role, links = []) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, $4, true) RETURNING id, role, name, email",
+                    [`${NAME} ${key}`, `${STAFF_TEST_PREFIX}aa-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, passwordHash, role]
+                )).rows[0];
+                for (const [linkRole, canAssist = false] of links) {
+                    await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)', [user.id, programmeId, linkRole, canAssist]);
+                }
+                made.push(user.id);
+                return user;
+            };
+            const logIn = (email) => call('POST', 'login', { json: { email, password: 'Check1234!' } });
+            const linksOf = async (id) => (await pool.query(
+                "SELECT role || CASE WHEN role = 'extra' THEN CASE WHEN can_assist THEN '+assist' ELSE '+standby' END ELSE '' END AS l FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL ORDER BY role", [id]
+            )).rows.map((r) => r.l).join(',');
+
+            // Who may: the superadmin only
+            const target = await person('target', 'reviewer', [['main']]);
+            for (const [who, token] of [['no token', null], ['a student', A], ['a reviewer', R]]) {
+                const activate = await call('PUT', `users/${target.id}/activate`, { token });
+                const remove = await call('DELETE', `users/${target.id}`, { token });
+                report(activate.status === (token ? 403 : 401) && remove.status === (token ? 403 : 401), `Activate and Delete refused: ${who}`, `${activate.status} / ${remove.status}`);
+            }
+
+            // A reviewer who also sits on the committee: removed, still refused, then Activate gives both sides back
+            const dual = await person('dual', 'reviewer', [['extra', true], ['committee']]);
+            const before = await linksOf(dual.id);
+            await expect('Remove the reviewer who is also on the committee', call('PUT', `users/${dual.id}/remove-reviewer`, { token: S }), 200);
+            await expect('A deactivated person still cannot log in', logIn(dual.email), 403, 'REVIEWER_REMOVED');
+            const activated = await call('PUT', `users/${dual.id}/activate`, { token: S });
+            report(activated.status === 200 && (activated.body?.restored || []).length === 2 && (await linksOf(dual.id)) === before,
+                'Activate: the same links back, both sides, assisting kept', `${before} -> ${await linksOf(dual.id)}`);
+            const back = await logIn(dual.email);
+            report(back.status === 200, 'Activated: logs in with the OLD password', `${back.status} ${back.body?.code || ''}`);
+            const mine = await call('GET', 'committee/me', { token: back.body?.token });
+            report(mine.status === 200 && (mine.body?.programmes || []).some((p) => p.code === code), 'Activated: sees their committee programme again');
+            report((await call('PUT', `users/${dual.id}/activate`, { token: S })).body?.alreadyActive === true, 'Activate an active account: nothing changes');
+
+            // A main reviewer removed while someone else becomes main: back as a standby extra
+            await expect('Remove the main reviewer', call('PUT', `users/${target.id}/remove-reviewer`, { token: S }), 200);
+            await person('newmain', 'reviewer', [['main']]);
+            const swapped = await call('PUT', `users/${target.id}/activate`, { token: S });
+            report(swapped.status === 200 && (swapped.body?.becameExtra || []).includes(code) && (await linksOf(target.id)) === 'extra+standby',
+                'One main reviewer per programme: the old main one comes back as a standby extra', JSON.stringify(swapped.body?.becameExtra));
+
+            // Delete without history: gone for good
+            const fresh = await person('fresh', 'committee', [['committee']]);
+            const gone = await call('DELETE', `users/${fresh.id}`, { token: S });
+            report(gone.body?.outcome === 'deleted' && (await pool.query('SELECT 1 FROM users WHERE id = $1', [fresh.id])).rows.length === 0, 'Delete without history: the account is gone');
+
+            // Delete with history: hidden, the name stays, the address is free again
+            const hist = await person('hist', 'reviewer', [['extra', true]]);
+            const appId = (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending') RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify([{ course_code: 'AA1', course_name: 'Accounts check' }]), `AA1${stamp}`.slice(0, 20)]
+            )).rows[0].id;
+            await pool.query("INSERT INTO application_events (application_id, kind, actor_role, actor_id, status, note) VALUES ($1, 'info_requested', 'reviewer', $2, 'needs_info', 'x')", [appId, hist.id]);
+            const hidden = await call('DELETE', `users/${hist.id}`, { token: S });
+            const row = (await pool.query('SELECT name, email, deleted_at, deactivated_at FROM users WHERE id = $1', [hist.id])).rows[0];
+            report(hidden.body?.outcome === 'hidden' && row?.name === hist.name && row?.email === `deleted-${hist.id}@invalid` && row.deleted_at && row.deactivated_at,
+                'Delete with history: kept with its name, the address replaced', row?.email);
+            const who = (await pool.query('SELECT u.name FROM application_events e JOIN users u ON u.id = e.actor_id WHERE e.application_id = $1', [appId])).rows[0];
+            report(who?.name === hist.name, 'The name stays on their history entry');
+            await expect('A deleted account cannot log in with its old address', logIn(hist.email), 401, 'INVALID_CREDENTIALS');
+            await expect('Nor with the placeholder', call('POST', 'login', { json: { email: `deleted-${hist.id}@invalid`, password: 'Check1234!' } }), 401, 'INVALID_CREDENTIALS');
+            const staffList = (await call('GET', 'users/staff', { token: S })).body?.staff || [];
+            report(!staffList.some((p) => p.id === hist.id), 'A deleted account is in no list');
+            const reinvite = await call('POST', 'users/invites', { token: S, json: { email: hist.email, role: 'reviewer', language: 'en', programmes: [{ code, role: 'extra' }] } });
+            report(reinvite.status === 201, 'Its address can be invited again as a new account', `${reinvite.status} ${reinvite.code || ''}`);
+            await expect('A deleted account cannot be activated', call('PUT', `users/${hist.id}/activate`, { token: S }), 404, 'USER_NOT_FOUND');
+            await expect('Nor deleted twice', call('DELETE', `users/${hist.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+
+            // Admins: never yourself; a student is never deleted here; a deactivated admin comes back
+            await expect('You cannot delete yourself', call('DELETE', `users/${d.admin.id}`, { token: S }), 400, 'CANNOT_DELETE_SELF');
+            await expect('A student is not deleted here', call('DELETE', `users/${d.studentB.id}`, { token: S }), 400, 'NOT_STAFF');
+            const admin2 = (await pool.query(
+                "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, 'superadmin', true) RETURNING id, email",
+                [`${NAME} admin`, `aa-admin-${stamp.toLowerCase()}${TEST_DOMAIN}`, passwordHash]
+            )).rows[0];
+            made.push(admin2.id);
+            await expect('Deactivate the second admin', call('PUT', `users/${admin2.id}/deactivate-admin`, { token: S }), 200);
+            await expect('A deactivated admin cannot log in', logIn(admin2.email), 403, 'ACCOUNT_DEACTIVATED');
+            await expect('Activate the admin', call('PUT', `users/${admin2.id}/activate`, { token: S }), 200);
+            await expect('Activated admin: logs in with the old password', logIn(admin2.email), 200);
+            const adminGone = await call('DELETE', `users/${admin2.id}`, { token: S });
+            report(adminGone.body?.outcome === 'deleted', 'Delete an admin without history while another stays', adminGone.body?.outcome || adminGone.code);
+        } finally {
+            // The temporary programme first: its applications take their (append-only) history with them.
+            // Hidden accounts no longer have their test address: found by name.
+            const removed = await removeSharingProgramme();
+            const left = (await pool.query('SELECT id FROM users WHERE name LIKE $1', [`${NAME}%`])).rows.map((r) => r.id);
+            if (left.length) {
+                await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1) OR admin_id = ANY($1)', [left]);
+                await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [left]);
+                await pool.query('DELETE FROM users WHERE id = ANY($1)', [left]);
+            }
+            console.log(`(removed the temporary accounts programme (${removed}) and ${left.length} temporary account(s))`);
+        }
     }
 
     section('5. Allowed reads still work -> 200');

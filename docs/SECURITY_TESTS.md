@@ -309,6 +309,12 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Before the review deadline (in the request, or the saved one); not a date | `400 COMMITTEE_BEFORE_REVIEW`; `400 INVALID_TIME` |
 | | | Choose one; edit without it; `null` | chosen; kept; back to the default |
 | | | As a reviewer / a student | `403` |
+| 4aa | **Activate and delete staff (fixes 1a)**, a temporary programme and accounts | Activate / Delete without a token, as a student, as a reviewer | `401` / `403` / `403` |
+| | | A removed reviewer who is also on the committee: log in; Activate; log in with the old password; their committee page; Activate again | `403 REVIEWER_REMOVED`; both sides' links back, assisting kept; `200`; their programme listed; nothing changes |
+| | | A removed main reviewer whose programme got a new main reviewer: Activate | back as a standby extra reviewer (`becameExtra`) |
+| | | Delete without history; with a history entry | the account gone; kept with its name, email `deleted-<id>@invalid`, the name still on the history entry |
+| | | The deleted account: log in (old address, placeholder); the staff list; invite the old address; Activate; Delete again | `401`; not listed; `201`; `404`; `404` |
+| | | Delete yourself; a student; a second admin deactivated, Activate, log in, Delete | `400 CANNOT_DELETE_SELF`; `400 NOT_STAFF`; `403 ACCOUNT_DEACTIVATED`, `200`, `200`, deleted |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -353,6 +359,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-18 | throwaway copy with migration 025, fixes 1a (activate and delete staff, section 4aa) | **993 passed, 0 failed, 2 skipped** (995 checks); the duplicate check (student B has no open application) and "two admins deactivating each other" (the development data has only one other active admin). Temporary programme and accounts removed, also the hidden one |
 | 2026-11-13 | throwaway copy with migrations 022–024, round 2 Group 2 (the committee: role and links, the step, files, who sees what, the deadline, PDFs and analytics) | **966 passed, 0 failed, 1 skipped** (967 checks); the same skip as before. Temporary programmes, committee members, reviewers, students, applications and semesters removed |
 | 2026-11-12 | throwaway copy with migrations 019–021, round 2 Group 1 (staff and programmes, sharing, the timeline, reviewer emails, PDFs) | **840 passed, 0 failed, 1 skipped** (841 checks); the skip is the duplicate check (student B has no open application). Temporary programmes, reviewers, students, applications and semesters removed |
 | 2026-10-28 | local development backend | **62 passed, 0 failed, 0 skipped**; 0 emails sent |
