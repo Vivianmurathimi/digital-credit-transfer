@@ -138,6 +138,20 @@ courses; hiding is always possible. Next to the pointer, the application keeps w
 called at submission (`target_courses`: code, name, credits), so PDFs and the history show what the
 student applied for even after a later import renames the course. The fulfilled courses from the
 student's earlier university are only kept as written, since they are not in this catalogue.
+Every course in the catalogue is a PTE course: one course code per programme and semester
+(`courses_programme_semester_code_key`; there is no universities table since migration 030).
+
+To try the demo seed without touching the real demo, give it a throwaway database and buckets:
+`DEMO_DB_NAME=credit_demo_check DEMO_BUCKET_PREFIX=democheck- npm run demo:seed` (in `backend/`).
+
+## Deleting a programme
+
+A programme can be deleted only when nothing uses it: no students, no staff link (current or ended),
+no applications, invitations, programme changes or courses in other semesters. The database enforces
+it too (migration 029): nothing is deleted along with a programme any more, so a staff link, an
+invite line, another code or a reminder record keeps it. The delete removes its other codes, its
+reminder records and its unused courses explicitly, then the programme, in one transaction; if the
+database still refuses, the answer is the usual "in use".
 
 ## The semester timeline
 

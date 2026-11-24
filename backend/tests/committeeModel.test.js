@@ -29,7 +29,7 @@ const insert = async (fields, suffix = '') => {
     return pool.query(
         `WITH fixture_course AS (
              INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, NULL, $5, ${nameParam}, 3, 'hidden')
-             ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id)
+             ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id)
          INSERT INTO applications (${columns.join(', ')}, target_course_id)
          VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')}, (SELECT id FROM fixture_course)) RETURNING id`,
         [...values, FIXTURE_COURSE_NAME]

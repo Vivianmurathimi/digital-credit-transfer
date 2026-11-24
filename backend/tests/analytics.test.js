@@ -37,7 +37,7 @@ const add = async ({ status, programme, course, decidedAfter = null, by = null }
     )).rows[0];
     students.push(student.id);
     const { rows } = await pool.query(
-        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
              created_at, final_grade, decided_by_role, decided_at, committee_state, target_course_id)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC',
                  CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
@@ -162,7 +162,7 @@ test('the committee (round 2 Group 2): awaiting, kept, changed both ways, kept w
         )).rows[0];
         students.push(student.id);
         const id = (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
                  reviewer_decision, reviewer_grade, final_grade, decided_by_role, decided_at, committee_state, committee_at, committee_by_role, committee_note, committee_grade, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, $5, $6, $7, $8, $9, 'reviewer', $10, $11, $12, CASE WHEN $12::timestamptz IS NOT NULL THEN 'committee' END, $13, $14, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [student.id, programme.id, JSON.stringify([{ course_code: `K${n}`, course_name: `Committee ${n}`, credits: 3 }]), `K${n}`, status, semester,

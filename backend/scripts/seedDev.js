@@ -113,11 +113,6 @@ const seed = async () => {
         (await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id])
     );
 
-    await pool.query(
-        "INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary') ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id"
-    );
-
-
     const semesterId = await ensureDevSemester();
     // The catalogue from the fixture file; nothing already there is hidden or deleted
     const imported = semesterId ? await importFixture(pool, semesterId) : { coursesAdded: 0 };

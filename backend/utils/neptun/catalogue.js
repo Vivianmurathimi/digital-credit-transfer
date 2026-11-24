@@ -119,6 +119,45 @@ const courseUsageSql = `
     (SELECT count(*)::int FROM application_drafts d WHERE d.data->>'target_course_id' = c.id::text) AS drafts,
     COALESCE(sb.status = 'closed', false) AS semester_closed`;
 
+/**
+ * Deletes a programme whose "in use" check passed (call inside the caller's transaction), and what
+ * may go with it, explicitly (DB cleanup 2, migration 029: the database deletes nothing along with
+ * a programme any more): its other codes, its email-reminder records (a deletable programme has no
+ * applications and never had a staff link, so they belong to nothing else), its unused courses,
+ * then the programme. If the database still refuses (a link the check did not see, e.g. one made
+ * at the same moment), everything is undone back to the savepoint and DELETE_IN_USE is returned.
+ * @returns {Promise<{ error?: [status, code, message], blockedBy?: string[], deleted?: true }>}
+ */
+// The reason shown for a link the database refused (the same reasons as programmeBlockers)
+const REFUSED_BY = {
+    staff_programmes_programme_id_fkey: 'HAS_PEOPLE',
+    users_programme_id_fkey: 'HAS_PEOPLE',
+    applications_programme_id_fkey: 'HAS_APPLICATIONS',
+    applications_target_course_id_fkey: 'COURSES_IN_USE',
+    staff_invite_programmes_programme_id_fkey: 'HAS_RECORDS',
+    student_programme_changes_old_programme_id_fkey: 'HAS_RECORDS',
+    student_programme_changes_new_programme_id_fkey: 'HAS_RECORDS',
+};
+
+const removeProgramme = async (client, programmeId) => {
+    await client.query('SAVEPOINT remove_programme');
+    try {
+        await client.query('DELETE FROM programme_aliases WHERE programme_id = $1', [programmeId]);
+        await client.query('DELETE FROM reviewer_reminders WHERE programme_id = $1', [programmeId]);
+        await client.query('DELETE FROM committee_reminders WHERE programme_id = $1', [programmeId]);
+        await client.query('DELETE FROM courses WHERE programme_id = $1', [programmeId]);
+        await client.query('DELETE FROM programmes WHERE id = $1', [programmeId]);
+        await client.query('RELEASE SAVEPOINT remove_programme');
+        return { deleted: true };
+    } catch (err) {
+        await client.query('ROLLBACK TO SAVEPOINT remove_programme');
+        if (err.code === '23503') {
+            return { error: [409, 'DELETE_IN_USE', 'This programme is in use, so it cannot be deleted'], blockedBy: [REFUSED_BY[err.constraint] || 'HAS_RECORDS'] };
+        }
+        throw err;
+    }
+};
+
 // The database refused to delete a course an application points to (migration 028, ON DELETE
 // RESTRICT): the routes answer it like any other "in use" refusal
 const isCourseInUseError = (err) => err && err.code === '23503' && err.constraint === 'applications_target_course_id_fkey';
@@ -304,14 +343,6 @@ const applyImport = async (client, semesterId, file, decisions = {}, { actorId =
         .map((c) => `${c.programme_code} ${c.course_code}`);
     if (refusedDeletes.length > 0) return refusal(409, 'DELETE_IN_USE', `In use, so it cannot be deleted: ${refusedDeletes.join(', ')}`, undefined, { refused: refusedDeletes });
 
-    // The university of the PTE courses (no name written in the code): the one this catalogue
-    // already uses, or, for a first import, the only university there is
-    const universityId = (await client.query(
-        `SELECT COALESCE(
-            (SELECT university_id FROM courses WHERE university_id IS NOT NULL GROUP BY university_id ORDER BY count(*) DESC LIMIT 1),
-            (SELECT min(id) FROM universities HAVING count(*) = 1)) AS id`
-    )).rows[0]?.id ?? null;
-
     let programmeId = programme.id;
     if (programme.isNew) {
         programmeId = (await client.query(
@@ -331,8 +362,8 @@ const applyImport = async (client, semesterId, file, decisions = {}, { actorId =
     }
     for (const c of preview.newCourses) {
         await client.query(
-            "INSERT INTO courses (university_id, programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, $3, $4, $5, $6, 'active')",
-            [universityId, programmeId, semesterId, c.course_code, c.course_name, c.credits]
+            "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, $3, $4, $5, 'active')",
+            [programmeId, semesterId, c.course_code, c.course_name, c.credits]
         );
     }
     for (const c of preview.changedCourses) {
@@ -369,5 +400,5 @@ const fileForProgramme = (file, code) => ({
 
 module.exports = {
     readNeptunFile, resolveProgramme, buildPreview, applyImport, fileForProgramme,
-    programmeBlockers, courseBlockers, courseUsageSql, isCourseInUseError, DECISIONS,
+    programmeBlockers, removeProgramme, courseBlockers, courseUsageSql, isCourseInUseError, DECISIONS,
 };

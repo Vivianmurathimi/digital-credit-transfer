@@ -40,7 +40,7 @@ const recorder = ({ failFor } = {}) => {
 const waitingApplication = async ({ deadline = at(72 * HOUR), status = 'needs_info' } = {}) => {
     const code = `JOBTEST${run}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
-        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, reviewer_note,
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, reviewer_note,
                                    info_requested_at, info_deadline, committee_state, target_course_id)
          VALUES ($1, $2, '[]', $3, $4, $5, 'Please add the syllabus.', $6, $7, CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
         [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Job test', credits: 1 }]), code, status,

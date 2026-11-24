@@ -12,6 +12,9 @@
  * demo:seed starts from scratch every time: the demo database is dropped and created again (stop
  * demo:start first) and the demo buckets are emptied. Sends no emails.
  *
+ * To check it on a throwaway database and buckets instead (the real demo stays as it is):
+ *   DEMO_DB_NAME=credit_demo_check DEMO_BUCKET_PREFIX=democheck- npm run demo:seed
+ *
  * The demo data (every account's password: Demo1234!):
  *   - two programmes (Computer Science Engineering, Civil Engineering), each with a main reviewer and an
  *     extra reviewer: assisting in CS (sees CS), on standby in Civil (sees nothing)
@@ -25,20 +28,31 @@
 process.env.DOTENV_CONFIG_QUIET = 'true';
 require('dotenv').config();
 
-const DEMO_ENV = { DB_NAME: 'credit_demo', MINIO_BUCKET: 'demo-transcripts', MINIO_ARCHIVE_BUCKET: 'demo-archives' };
-const DEMO_PASSWORD = 'Demo1234!';
-
-const command = process.argv[2];
-const devDatabase = process.env.DB_NAME;
-
 const stop = (message) => {
     console.error(message);
     process.exit(1);
 };
 
+// For checking the demo on a throwaway database (DB cleanup 3): DEMO_DB_NAME and DEMO_BUCKET_PREFIX
+// replace "credit_demo" and "demo-" for this one run, so the real demo is never touched. Plain
+// lowercase names only (they are written into SQL and bucket names).
+const demoDbName = process.env.DEMO_DB_NAME || 'credit_demo';
+const bucketPrefix = process.env.DEMO_BUCKET_PREFIX || 'demo-';
+if (!/^[a-z][a-z0-9_]{0,62}$/.test(demoDbName)) stop(`DEMO_DB_NAME "${demoDbName}": lowercase letters, digits and _ only, starting with a letter.`);
+if (!/^[a-z][a-z0-9-]{0,40}$/.test(bucketPrefix)) stop(`DEMO_BUCKET_PREFIX "${bucketPrefix}": lowercase letters, digits and - only, starting with a letter.`);
+
+const DEMO_ENV = { DB_NAME: demoDbName, MINIO_BUCKET: `${bucketPrefix}transcripts`, MINIO_ARCHIVE_BUCKET: `${bucketPrefix}archives` };
+const DEMO_PASSWORD = 'Demo1234!';
+
+const command = process.argv[2];
+const devDatabase = process.env.DB_NAME;
+
 if (process.env.NODE_ENV === 'production') stop('Refusing to run: NODE_ENV=production. The demo is for the defence on a development machine only.');
 if (!['seed', 'start'].includes(command)) stop('Use "npm run demo:seed" or "npm run demo:start".');
 if (devDatabase === DEMO_ENV.DB_NAME) stop(`DB_NAME in backend/.env is "${devDatabase}": set it back to the development database.`);
+if (DEMO_ENV.MINIO_BUCKET === process.env.MINIO_BUCKET || DEMO_ENV.MINIO_ARCHIVE_BUCKET === process.env.MINIO_ARCHIVE_BUCKET) {
+    stop('The demo buckets would be the development buckets: choose another DEMO_BUCKET_PREFIX.');
+}
 
 // From here on everything (db.js, minio buckets, the server) uses the demo settings
 Object.assign(process.env, DEMO_ENV);
@@ -155,7 +169,6 @@ const seed = async (pool) => {
     console.log(`Migrations applied: ${applied.length}`);
 
     const programmes = Object.fromEntries((await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id]));
-    await pool.query("INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary')");
 
     // Semesters (Budapest days): the previous one ended 60 days ago; the current one takes
     // applications from 30 days ago to 30 days from now and ends in 90 days

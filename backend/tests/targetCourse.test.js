@@ -83,8 +83,8 @@ const migrate = async ({ courses, applications }) => {
         await client.query(`ALTER TABLE ${schema}.applications DROP COLUMN target_course_id, ADD COLUMN pte_course_names TEXT`);
         await client.query(`SET LOCAL search_path TO ${schema}, public`);
         for (const c of courses) {
-            await client.query('INSERT INTO courses (id, university_id, programme_id, semester_id, course_code, course_name, credits) VALUES ($1, $2, $3, $4, $5, $6, 3)',
-                [c.id, c.university_id ?? null, c.programme_id, c.semester_id, c.code, c.code]);
+            await client.query('INSERT INTO courses (id, programme_id, semester_id, course_code, course_name, credits) VALUES ($1, $2, $3, $4, $5, 3)',
+                [c.id, c.programme_id, c.semester_id, c.code, c.code]);
         }
         for (const a of applications) {
             await client.query(
@@ -134,7 +134,7 @@ test('the fill stops and lists instead of guessing', async () => {
     assert.match(noMatch.error || '', /no single course found.*#7 .*0 matching/, 'another semester: no match');
 
     const two = await migrate({
-        courses: [{ id: 1, programme_id: 10, semester_id: 5, code: 'CS101', university_id: null }, { id: 2, programme_id: 10, semester_id: 5, code: 'cs101' }],
+        courses: [{ id: 1, programme_id: 10, semester_id: 5, code: 'CS101' }, { id: 2, programme_id: 10, semester_id: 5, code: 'cs101' }],
         applications: [{ id: 8, programme_id: 10, semester_id: 5, target: [{ course_code: 'CS101' }], code: 'CS101' }],
     });
     assert.match(two.error || '', /#8 .*2 matching/, 'two courses with the same normalised code: not guessed');

@@ -193,6 +193,10 @@ const removeSharingProgramme = async () => {
     await removeTestStudents();
     await removeFixtureCourses(pool); // the fixtures' courses (migration 028) keep a programme from going
     await pool.query('DELETE FROM courses WHERE programme_id = ANY($1) AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.target_course_id = courses.id)', [ids]);
+    // Nothing goes along with a programme any more (migration 029): its links and records first
+    for (const table of ['programme_aliases', 'reviewer_reminders', 'committee_reminders', 'staff_programmes', 'staff_invite_programmes']) {
+        await pool.query(`DELETE FROM ${table} WHERE programme_id = ANY($1)`, [ids]);
+    }
     await pool.query('DELETE FROM programmes WHERE id = ANY($1)', [ids]);
     return ids.length;
 };
@@ -239,6 +243,9 @@ const restoreCatalogue = async () => {
         const codes = b.programmeCodes.splice(0);
         await pool.query('DELETE FROM applications WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
         await pool.query('DELETE FROM courses WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
+        for (const table of ['programme_aliases', 'reviewer_reminders', 'committee_reminders', 'staff_programmes', 'staff_invite_programmes']) {
+            await pool.query(`DELETE FROM ${table} WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))`, [codes]);
+        }
         await pool.query('DELETE FROM programmes WHERE code = ANY($1)', [codes]);
     }
     if (b.semesterIds.length) {
@@ -943,7 +950,7 @@ const run = async () => {
         // Two temporary applications of student A, one rejected and one withdrawn (neither blocks
         // anything), deleted again at the end together with their history
         const closedApp = async (status) => (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check', CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: 'SECCHECK', course_name: 'Security check', credits: 1 }]), 'SECCHECK', status]
         )).rows[0].id;
@@ -1036,7 +1043,7 @@ const run = async () => {
         )).rows.filter((c) => !appliedCodes.has(c.course_code.replace(/\s/g, '').toUpperCase()));
         const pastApp = async (status, code) => {
             const id = (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade, committee_state, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check',
                          CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]),
@@ -1087,7 +1094,7 @@ const run = async () => {
             seq += 1;
             const code = `SECR${Date.now().toString(36)}${seq}`.toUpperCase();
             const { rows } = await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
                      student_note, supplemental_files, info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, 'Temporary application of the security check', $8,
                          CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($7::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($5)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
@@ -1302,7 +1309,7 @@ const run = async () => {
                 const code = `SECL${Date.now().toString(36)}${seq}`.toUpperCase();
                 const decided = status === 'approved' || status === 'rejected';
                 const { rows } = await pool.query(
-                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
                          decided_by_role, decided_at, info_requested_at, info_deadline, final_grade, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 'admin' END, CASE WHEN $7 THEN now() END,
                              CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END,
@@ -1424,7 +1431,7 @@ const run = async () => {
             const code = `SECD${Date.now().toString(36)}${seq}`.toUpperCase();
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
                      final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'approved' THEN 4 END,
                          CASE WHEN $6 THEN 'reviewer' END, CASE WHEN $6 THEN now() END,
@@ -1585,7 +1592,7 @@ const run = async () => {
             const code = `SECP${stamp}${seq}`.toUpperCase();
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($7)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($7)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
                      decided_by_role, decided_at, final_grade, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5, $6::varchar, $7, CASE WHEN $8 THEN 'admin' END, CASE WHEN $8 THEN now() END,
                          CASE WHEN $6::varchar = 'approved' THEN 4 END, CASE WHEN ($6::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($4)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
@@ -1724,7 +1731,7 @@ const run = async () => {
             seq += 1;
             const code = `SECK${Date.now().toString(36)}${seq}`.toUpperCase();
             return (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'Acting check', credits: 3 }]), code]
             )).rows[0].id;
@@ -1998,7 +2005,7 @@ const run = async () => {
                 const code = `SECM${stamp}${seq}`.toUpperCase();
                 const decided = status === 'approved';
                 return (await pool.query(
-                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
                          final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 4 END, CASE WHEN $7 THEN 'reviewer' END, CASE WHEN $7 THEN now() END,
                              CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
@@ -2130,7 +2137,7 @@ const run = async () => {
         const existingChoice = JSON.stringify({ id: programmeId });
         const snapshot = [{ course_id: sc3, course_code: 'SC3', course_name: 'Third', credits: 4 }];
         const usingApp = (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($4)::int, ('SC3')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($4)::int, ('SC3')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
              VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeId, JSON.stringify(snapshot), semesterId]
         )).rows[0].id;
@@ -2245,7 +2252,7 @@ const run = async () => {
                 seq += 1;
                 const c = `SECO${stamp}${seq}`.toUpperCase();
                 const id = (await pool.query(
-                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline, committee_state, target_course_id)
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                     [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: c, course_name: 'Period check', credits: 1 }]), c, status, sid]
                 )).rows[0].id;
@@ -2364,7 +2371,7 @@ const run = async () => {
                 seq += 1;
                 const c = `SECP${stamp}${seq}`.toUpperCase();
                 return (await pool.query(
-                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
                          final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN $5::varchar = 'approved' THEN 'reviewer' END,
                              CASE WHEN $5::varchar = 'approved' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() END,
@@ -2523,7 +2530,7 @@ const run = async () => {
                 [`analytics-${stamp}-${seq}${TEST_DOMAIN}`, `Q${stamp.slice(-4).toUpperCase()}${seq}`.replace(/[^A-Z0-9]/g, 'X').slice(0, 6).padEnd(6, '0'), d.studentA.programme_id]
             )).rows[0];
             const id = (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, created_at,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, created_at,
                      final_grade, decided_by_role, decided_at, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC', CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, d.studentA.programme_id, JSON.stringify([{ course_code: course.toUpperCase(), course_name: 'Analytics check', credits: 3 }]), course.toUpperCase(), status, closedId, T0,
@@ -2581,7 +2588,7 @@ const run = async () => {
             semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, review_end_at, end_date, close_reason, last_days_warning_days FROM semesters WHERE id = $1', [sid])).rows[0];
             // One undecided application of our own, so the warning always has something to show
             const own = (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, 'pending', $5, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: `SECRD${stamp}`, course_name: 'Review deadline check', credits: 1 }]), `SECRD${stamp}`.toUpperCase().slice(0, 20), sid]
             )).rows[0].id;
@@ -2676,7 +2683,7 @@ const run = async () => {
             // An open application of the programme, naming one of student B's files
             const code = `SECX${stamp}`.toUpperCase().slice(0, 20);
             const temp = (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5, 'pending', 'Temporary application of the security check', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($4)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeOfB, JSON.stringify([{ course_name: 'Security check', file: d.fileOfB }]),
                     JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code]
@@ -2765,7 +2772,7 @@ const run = async () => {
                 [`share-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `Q${stamp.slice(-5)}`.padEnd(6, 'Q').slice(0, 6), programmeId]
             )).rows[0];
             const app = async (n, status) => (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
                      info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Temporary application of the security check',
                          CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
@@ -2876,7 +2883,7 @@ const run = async () => {
         // One pending application of our own in the reviewer's programme (removed at the end of this section)
         const ownCode = `SECPDO${stamp}`.toUpperCase().slice(0, 20);
         const ownApp = (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: ownCode, course_name: 'PDF check' }]), ownCode]
         )).rows[0].id;
@@ -2919,7 +2926,7 @@ const run = async () => {
         // A withdrawn application of the reviewer's programme is not shown to reviewers
         const code = `SECPDF${stamp}`.toUpperCase().slice(0, 20);
         const withdrawn = (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, 'withdrawn', CASE WHEN ('withdrawn')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'PDF check' }]), code]
         )).rows[0].id;
@@ -3037,7 +3044,7 @@ const run = async () => {
         )).rows[0];
         const T = tokenFor(student);
         const app = async (n, status, extra = '') => (await pool.query(
-            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
                  info_requested_at, info_deadline, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Committee check',
                      CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '5 days' END, CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '1 hour' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
@@ -3117,7 +3124,7 @@ const run = async () => {
             )).rows[0];
             const [TM, T1, T2, TRC, TS] = [tokenFor(M), tokenFor(C1), tokenFor(C2), tokenFor(RC), tokenFor(student)];
             const app = async (n, status = 'pending') => (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: `CW${n}`, course_name: `Committee course ${n}` }]), `CW${n}${stamp}`.slice(0, 20), status]
             )).rows[0].id;
@@ -3235,7 +3242,7 @@ const run = async () => {
             const file = (name) => call('GET', `uploads/${encodeURIComponent(name)}`, { token: TC });
             // A temporary application of student A in this programme naming one file, in the given state
             const app = async (n, fileName, status, extra = {}) => (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
                      info_requested_at, info_deadline, decided_by_role, decided_at, committee_state, target_course_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END,
                          $8, $9, $10, COALESCE((($5)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
@@ -3304,7 +3311,7 @@ const run = async () => {
             const [TM, TC] = [tokenFor(main), tokenFor(member)];
             const activeSemester = (await pool.query("SELECT id FROM semesters WHERE status = 'active' ORDER BY id LIMIT 1")).rows[0]?.id || null;
             const app = async (n) => (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, 'pending', $5, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify([{ course_code: `CY${n}`, course_name: 'Views check' }]), `CY${n}${stamp}`.slice(0, 20), activeSemester]
             )).rows[0].id;
@@ -3489,7 +3496,7 @@ const run = async () => {
             // Delete with history: hidden, the name stays, the address is free again
             const hist = await person('hist', 'reviewer', [['extra', true]]);
             const appId = (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, 'pending', COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify([{ course_code: 'AA1', course_name: 'Accounts check' }]), `AA1${stamp}`.slice(0, 20)]
             )).rows[0].id;
@@ -3671,7 +3678,7 @@ const run = async () => {
                 await pool.query('UPDATE users SET programme_id = $2 WHERE id = $1', [studentId, d.studentA.programme_id]);
                 await counted(0, 'Without students, applications or drafts it is not counted');
                 await pool.query(
-                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($3)::int, ('NC0')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($3)::int, ('NC0')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
                      VALUES ($1, $2, '[]', '[{"course_code":"NC0","course_name":"No courses"}]', 'NC0', 'pending', $3, COALESCE((('[{"course_code":"NC0","course_name":"No courses"}]')::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))`,
                     [studentId, programmeId, semesterId]
                 );
@@ -3719,7 +3726,7 @@ const run = async () => {
             )).rows[0];
             const [TM, TC, TS] = [tokenFor(M), tokenFor(C), tokenFor(student)];
             const app = async (n) => (await pool.query(
-                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, 'pending', COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: `CG${n}`, course_name: `Grade course ${n}` }]), `CG${n}${stamp}`.slice(0, 20)]
             )).rows[0].id;
@@ -3823,6 +3830,87 @@ const run = async () => {
         } finally {
             const removed = await removeSharingProgramme();
             console.log(`(removed the temporary pointer programme (${removed}))`);
+        }
+    }
+
+    section('4af. Programmes are never deleted along with their links (DB cleanup 2, migration 029)');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        let seq = 0;
+        try {
+            const programme = async () => {
+                seq += 1;
+                return (await pool.query(
+                    "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Törlés', 'Delete check', 'Löschen') RETURNING id",
+                    [`${SHARING_PROGRAMME_PREFIX}D${stamp}${seq}`.slice(0, 20)]
+                )).rows[0].id;
+            };
+            const reviewer = (await pool.query(
+                "INSERT INTO users (name, email, password, role, is_verified) VALUES ('Delete Check', $1, 'not-a-password-hash', 'reviewer', true) RETURNING id",
+                [`${STAFF_TEST_PREFIX}pd-${stamp.toLowerCase()}${TEST_DOMAIN}`]
+            )).rows[0];
+            const deleteRoute = (id) => call('DELETE', `admin/programmes/${id}`, { token: S });
+            const sqlRefusal = async (id) => {
+                try { await pool.query('DELETE FROM programmes WHERE id = $1', [id]); return 'deleted'; } catch (err) { return err.constraint; }
+            };
+            const exists = async (id) => (await pool.query('SELECT 1 FROM programmes WHERE id = $1', [id])).rows.length > 0;
+
+            const current = await programme();
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, 'extra', false)", [reviewer.id, current]);
+            const ended = await programme();
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role, can_assist, ended_at) VALUES ($1, $2, 'extra', false, now())", [reviewer.id, ended]);
+            const invited = await programme();
+            const inviteId = (await pool.query(
+                "INSERT INTO staff_invites (email, role, token_hash, expires_at) VALUES ($1, 'reviewer', $2, now() + interval '1 day') RETURNING id",
+                [`${STAFF_TEST_PREFIX}pd-invite-${stamp.toLowerCase()}${TEST_DOMAIN}`, `pd${stamp}`.toLowerCase().padEnd(64, '0').slice(0, 64)]
+            )).rows[0].id;
+            await pool.query("INSERT INTO staff_invite_programmes (invite_id, programme_id, role) VALUES ($1, $2, 'extra')", [inviteId, invited]);
+
+            for (const [name, id, reason, constraint] of [
+                ['a current staff link', current, 'HAS_PEOPLE', 'staff_programmes_programme_id_fkey'],
+                ['an ended staff link', ended, 'HAS_PEOPLE', 'staff_programmes_programme_id_fkey'],
+                ['an invite line', invited, 'HAS_RECORDS', 'staff_invite_programmes_programme_id_fkey'],
+            ]) {
+                const r = await deleteRoute(id);
+                report(r.status === 409 && r.code === 'DELETE_IN_USE' && (r.body?.blockedBy || []).includes(reason), `Delete a programme with ${name}: 409 with its reason`, `${r.status} ${r.code} ${JSON.stringify(r.body?.blockedBy)}`);
+                report(await sqlRefusal(id) === constraint, `…and the database refuses it directly in SQL (${constraint})`);
+                report(await exists(id), '…the programme and its link are still there');
+            }
+
+            const unused = await programme();
+            await pool.query('INSERT INTO programme_aliases (programme_id, alias_code) VALUES ($1, $2)', [unused, `${SHARING_PROGRAMME_PREFIX}DA${stamp}`.slice(0, 20)]);
+            report(await sqlRefusal(unused) === 'programme_aliases_programme_id_fkey', 'Directly in SQL, even its other code keeps a programme (nothing goes along with it)');
+            await expect('Delete an unused programme with another code', deleteRoute(unused), 200);
+            report(!(await exists(unused)) && (await pool.query('SELECT count(*)::int AS n FROM programme_aliases WHERE programme_id = $1', [unused])).rows[0].n === 0,
+                'The programme and its other code are gone');
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary delete-check programmes (${removed}))`);
+        }
+    }
+
+    section('4ag. Courses without universities (DB cleanup 3, migration 030): one course code per programme and semester');
+    {
+        const gone = (await pool.query(
+            `SELECT to_regclass('public.universities') IS NULL
+                AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'courses' AND column_name = 'university_id') AS gone`
+        )).rows[0].gone;
+        report(gone, 'The universities table and courses.university_id are gone', gone ? '' : 'run "npm run migrate" in backend/');
+        const stamp = Date.now().toString(36).toUpperCase();
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Kurzuskód', 'Course code', 'Kurscode') RETURNING id", [`${SHARING_PROGRAMME_PREFIX}U${stamp}`.slice(0, 20)]
+            )).rows[0].id;
+            const add = () => pool.query(
+                "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, NULL, 'UC1', 'Twice', 3, 'hidden')", [programmeId]
+            );
+            await add();
+            let refused = null;
+            try { await add(); } catch (err) { refused = err.constraint; }
+            report(refused === 'courses_programme_semester_code_key', 'A second course with the same code in a programme and semester is refused by the database', refused || 'saved');
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary course-code programme (${removed}))`);
         }
     }
 

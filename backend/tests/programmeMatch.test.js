@@ -48,7 +48,8 @@ const cleanUp = async () => {
     const ids = (await pool.query('SELECT id FROM programmes WHERE code LIKE $1', [`${PREFIX}%`])).rows.map((r) => r.id);
     if (ids.length) {
         await pool.query('DELETE FROM courses WHERE programme_id = ANY($1)', [ids]);
-        await pool.query('DELETE FROM programmes WHERE id = ANY($1)', [ids]); // their aliases go with them
+        await pool.query('DELETE FROM programme_aliases WHERE programme_id = ANY($1)', [ids]); // nothing goes along with a programme (migration 029)
+        await pool.query('DELETE FROM programmes WHERE id = ANY($1)', [ids]);
     }
 };
 
@@ -157,4 +158,30 @@ test('cancel saves nothing; a code of another programme can never be treated as 
     const refused = await importFile(other, { programme: choice, mismatches: { [`${PREFIX}OTHER`]: 'same' } });
     assert.equal(refused.error?.[1], 'ALIAS_TAKEN');
     assert.deepEqual(await counts(), before, 'nothing saved, not even the new programme');
+});
+
+// DB cleanup 3 (migration 030): courses have no university any more; one code per programme and semester
+test('the import creates courses without a university; the same course code twice is refused', async () => {
+    const choice = { new: { code: `${PREFIX}EPS`, name_hu: 'Zqxepsilon szak' } };
+    const rows = [
+        `${PREFIX}EPS;Zqxepsilon szak;;;${PREFIX}501;Epsilon one;3`,
+        `${PREFIX}EPS;Zqxepsilon szak;;;${PREFIX} 501;Epsilon again;4`, // the same code, written with a space
+        `${PREFIX}EPS;Zqxepsilon szak;;;${PREFIX}502;Epsilon two;2`,
+    ];
+    const done = await importFile(rows, { programme: choice });
+    assert.deepEqual([done.summary?.coursesAdded, done.summary?.rowsSkipped], [2, 1], JSON.stringify(done));
+    assert.deepEqual(await coursesOf(`${PREFIX}EPS`), [`${PREFIX}501`, `${PREFIX}502`]);
+    const columns = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'courses'")).rows.map((r) => r.column_name);
+    assert.ok(!columns.includes('university_id'), 'courses.university_id is gone');
+    assert.equal((await pool.query("SELECT to_regclass('public.universities') AS t")).rows[0].t, null, 'the universities table is gone');
+
+    // The database refuses a second course with the same code in that programme and semester (also without a semester)
+    const programmeId = (await programme(`${PREFIX}EPS`)).id;
+    const insert = (semester) => pool.query(
+        "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, $3, 'Twice', 3, 'hidden')",
+        [programmeId, semester, `${PREFIX}501`]
+    );
+    await assert.rejects(insert(semesterId), (err) => err.constraint === 'courses_programme_semester_code_key');
+    await insert(null);
+    await assert.rejects(insert(null), (err) => err.constraint === 'courses_programme_semester_code_key', 'no semester: still once');
 });

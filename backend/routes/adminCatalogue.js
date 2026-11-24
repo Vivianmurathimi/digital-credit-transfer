@@ -9,7 +9,7 @@ const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT, noActiveCoursesSql } = require('../utils/semesters');
-const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql, isCourseInUseError } = require('../utils/neptun/catalogue');
+const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, removeProgramme, courseBlockers, courseUsageSql, isCourseInUseError } = require('../utils/neptun/catalogue');
 const { loadProgrammes, findLookalikes, checkNewProgramme, cleanNewProgramme } = require('../utils/programmeMatch');
 const { MAX_BYTES } = require('../utils/neptun/parse');
 
@@ -420,7 +420,7 @@ router.put('/admin/programmes/:id/status', ...adminOnly, requireIdParam('id'), a
     }
 });
 
-// DELETE /api/admin/programmes/:id?semester_id=: only when nothing uses it; its unused courses of
+// DELETE /api/admin/programmes/:id?semester_id=: only when nothing uses it; its other codes, reminder records and unused courses of
 // that semester go with it
 router.delete('/admin/programmes/:id', ...adminOnly, requireIdParam('id'), async (req, res) => {
     const semesterId = positiveInt(req.query.semester_id);
@@ -435,14 +435,13 @@ router.delete('/admin/programmes/:id', ...adminOnly, requireIdParam('id'), async
             )).rows;
             if (courses.some((c) => courseBlockers(c).length > 0)) blockedBy.push('COURSES_IN_USE');
             if (blockedBy.length > 0) return { error: [409, 'DELETE_IN_USE', 'This programme is in use, so it cannot be deleted'], blockedBy };
-            await client.query('DELETE FROM courses WHERE programme_id = $1', [programme.id]);
-            await client.query('DELETE FROM programmes WHERE id = $1', [programme.id]);
-            return {};
+            // Its other codes, reminder records and unused courses, then the programme (DB cleanup 2:
+            // the database deletes nothing along with it); a refusal by the database is "in use" too
+            return removeProgramme(client, programme.id);
         });
         if (result.error) return res.status(result.error[0]).json({ error: result.error[2], code: result.error[1], blockedBy: result.blockedBy });
         return res.json({ success: true });
     } catch (err) {
-        if (isCourseInUseError(err)) return res.status(409).json({ error: 'This programme is in use, so it cannot be deleted', code: 'DELETE_IN_USE', blockedBy: ['COURSES_IN_USE'] });
         console.error('❌ Delete programme error:', err.message);
         return sendError(res, 500, 'SERVER_ERROR', 'Could not delete the programme');
     }

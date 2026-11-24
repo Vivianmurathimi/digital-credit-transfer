@@ -32,7 +32,7 @@ const awaiting = async (decision, { reviewedBy = null } = {}) => {
     seq += 1;
     const code = `CG${run}${seq}`.slice(0, 20);
     const id = (await pool.query(
-        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
              reviewer_decision, reviewer_grade, decided_by_role, decided_at, decision_rationale, committee_state, reviewer_note, reviewed_by, target_course_id)
          VALUES ($1, $2, '[]', $3, $4, 'awaiting_committee', $5, $6, 'reviewer', now(), 'The reviewer''s reason', 'awaiting', 'Internal decision note', $7, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
          RETURNING id`,

@@ -5,7 +5,7 @@
  *
  *   npm run reset:dev -- --yes
  *
- * Keeps: programmes, universities, system settings, migration history and the
+ * Keeps: programmes, system settings, migration history and the
  * term-book archive bucket. Uses only tables from migration 001, so it also works
  * before migration 002 has run. Afterwards: npm run migrate, then npm run seed:dev.
  *
