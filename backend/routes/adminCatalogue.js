@@ -8,7 +8,7 @@ const { requireIdParam, positiveInt } = require('../utils/validate');
 const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
-const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT } = require('../utils/semesters');
+const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT, noActiveCoursesSql } = require('../utils/semesters');
 const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
 const { loadProgrammes, findLookalikes, checkNewProgramme, cleanNewProgramme } = require('../utils/programmeMatch');
 const { MAX_BYTES } = require('../utils/neptun/parse');
@@ -362,8 +362,11 @@ router.get('/admin/catalogue', ...adminOnly, async (req, res) => {
                     -- fixes 1b: the other codes the import treats as this programme
                     COALESCE((SELECT array_agg(pa.alias_code ORDER BY pa.alias_code) FROM programme_aliases pa WHERE pa.programme_id = p.id), '{}') AS aliases,
                     (SELECT count(*)::int FROM users u WHERE u.programme_id = p.id AND u.role = 'student') AS students,
-                    (SELECT count(*)::int FROM applications a WHERE a.programme_id = p.id) AS applications
-             FROM programmes p ORDER BY p.code`
+                    (SELECT count(*)::int FROM applications a WHERE a.programme_id = p.id) AS applications,
+                    -- no active course in the chosen semester: the "No courses this semester" chip
+                    ${noActiveCoursesSql('p.id', '$1')} AS no_courses
+             FROM programmes p ORDER BY p.code`,
+            [semesterId]
         )).rows;
         for (const p of programmes) {
             p.blockedBy = await programmeBlockers(pool, p.id, semesterId);

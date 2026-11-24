@@ -112,7 +112,25 @@ const reviewSoonSql = (sb, nowParam) =>
 const committeeSoonSql = (sb, nowParam) =>
     `((${sb}.committee_ends_at AT TIME ZONE 'Europe/Budapest') - make_interval(days => ${COMMITTEE_WARNING_DAYS})) AT TIME ZONE 'Europe/Budapest' <= ${nowParam}`;
 
+// SQL: programme `p` has no active course in semester `sem` (an id or a $n parameter)
+const noActiveCoursesSql = (p, sem) =>
+    `NOT EXISTS (SELECT 1 FROM courses c WHERE c.programme_id = ${p} AND c.semester_id = ${sem} AND c.status = 'active')`;
+
+// SQL: programme `p` is in use for semester `sem` (fixes, Overview notice): a registered student, or
+// an application in that semester (also from a student who has since changed programme). An unsent
+// draft always belongs to a registered student of the programme (drafts have no programme of their
+// own, and student accounts are never deactivated), so drafts are counted through their student.
+const programmeInUseSql = (p, sem) => `(
+    EXISTS (SELECT 1 FROM users su WHERE su.programme_id = ${p} AND su.role = 'student')
+    OR EXISTS (SELECT 1 FROM applications sa WHERE sa.programme_id = ${p} AND sa.semester_id = ${sem}))`;
+
+// SQL: the Overview's "programmes with students but no courses this semester": no active course
+// in `sem`, and in use there. A programme nobody uses is not counted (the Programmes & Courses
+// table still shows its "No courses this semester" chip).
+const programmeMissesCoursesSql = (p, sem) => `(${noActiveCoursesSql(p, sem)} AND ${programmeInUseSql(p, sem)})`;
+
 module.exports = {
+    noActiveCoursesSql, programmeInUseSql, programmeMissesCoursesSql,
     REVIEW_DAYS_DEFAULT, REVIEW_WARNING_DAYS, REVIEW_MARGIN_DAYS, reviewSoonSql,
     COMMITTEE_DAYS_DEFAULT, COMMITTEE_WARNING_DAYS, committeeSoonSql,
     semesterEndedSql, createSemester, adoptIntoSemester,

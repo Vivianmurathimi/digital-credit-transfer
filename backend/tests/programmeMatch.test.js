@@ -36,9 +36,12 @@ const programme = async (code) => (await pool.query('SELECT id, code FROM progra
 const coursesOf = async (code) => (await pool.query(
     'SELECT c.course_code FROM courses c JOIN programmes p ON p.id = c.programme_id WHERE p.code = $1 AND c.semester_id = $2 ORDER BY 1', [code, semesterId]
 )).rows.map((r) => r.course_code);
+// What this test can have saved (its own programmes and semester only: other test files run at the same time)
 const counts = async () => (await pool.query(
-    `SELECT (SELECT count(*)::int FROM programmes) AS programmes, (SELECT count(*)::int FROM courses) AS courses,
-            (SELECT count(*)::int FROM programme_aliases) AS aliases`
+    `SELECT (SELECT count(*)::int FROM programmes WHERE code LIKE $1) AS programmes,
+            (SELECT count(*)::int FROM courses WHERE semester_id = $2) AS courses,
+            (SELECT count(*)::int FROM programme_aliases a JOIN programmes p ON p.id = a.programme_id WHERE p.code LIKE $1 OR a.alias_code LIKE $1) AS aliases`,
+    [`${PREFIX}%`, semesterId]
 )).rows[0];
 
 const cleanUp = async () => {

@@ -322,6 +322,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A file with rows of another code: preview; import unanswered; an answer other than "same"; the counts | stopped, grouped with rows `3–4`; `409 MISMATCH_DECISION_NEEDED`; `400 INVALID_DECISIONS`; nothing saved |
 | | | Import with "Treat as the same programme"; preview again with that code; the Programmes table | all rows saved into the chosen programme, the code saved, no second programme; matched by itself; the other code shown |
 | | | Rows with another programme's code treated as the same; a new programme with that code | `409 ALIAS_TAKEN`, nothing saved (not even the new programme); `409 PROGRAMME_CODE_TAKEN` |
+| 4ac | **Overview: programmes with students but no courses this semester (fixes)**, a temporary programme in the semester students apply to | No courses and nobody using it; a registered student; the student moved to another programme; their application of this programme in that semester; an active course; the course hidden; the programme hidden | not counted (the Programmes table marks it "No courses this semester"); counted; not counted; counted; not counted (no mark); counted; not counted |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -366,6 +367,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-24 | throwaway copy, fixes 3a and the Overview's no-courses count (section 4ac) | **1038 passed, 0 failed, 2 skipped** (1040 checks); the same two skips. Temporary programme, student, application and course removed |
 | 2026-11-24 | throwaway copy with migration 026, fixes 1b (one programme per import, section 4ab; section 4n imports with the programme chosen first) | **1029 passed, 0 failed, 2 skipped** (1031 checks); the same two skips. Temporary programmes, courses and semester removed |
 | 2026-11-24 | throwaway copy with migration 025, fixes 1a: deleting an invited account without history (its accepted invite goes with it) | **997 passed, 0 failed, 2 skipped** (999 checks); the same two skips as below |
 | 2026-11-18 | throwaway copy with migration 025, fixes 1a (activate and delete staff, section 4aa) | **993 passed, 0 failed, 2 skipped** (995 checks); the duplicate check (student B has no open application) and "two admins deactivating each other" (the development data has only one other active admin). Temporary programme and accounts removed, also the hidden one |

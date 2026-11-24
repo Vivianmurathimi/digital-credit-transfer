@@ -12,7 +12,7 @@ const { FRONTEND_URL } = require('../config/urls');
 const { normalizeEmail } = require('../utils/rateLimit');
 const { isAllowedStudentEmail } = require('../utils/domains');
 const { isValidInviteEmail } = require('../utils/staffInvites');
-const { REVIEW_MARGIN_DAYS, reviewSoonSql, committeeSoonSql } = require('../utils/semesters');
+const { REVIEW_MARGIN_DAYS, reviewSoonSql, committeeSoonSql, programmeMissesCoursesSql } = require('../utils/semesters');
 const { periodFor } = require('../utils/applicationPeriod');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 
@@ -275,7 +275,8 @@ router.delete('/admin/late-access/:id', ...adminOnly, requireIdParam('id'), asyn
 //   undecided), reviewPassed (with the undecided counts per programme: nothing was rejected),
 //   canClose (period over, no late access running, nothing undecided).
 // programmesWithoutCourses: for the semester the application period rule talks about (the open
-// or coming period), since that is the catalogue students choose from.
+// or coming period), since that is the catalogue students choose from; only programmes with a
+// registered student, an application there or a draft count (utils/semesters.js).
 router.get('/admin/summary', ...adminOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
@@ -333,7 +334,8 @@ router.get('/admin/summary', ...adminOnly, async (req, res) => {
                         ${programmeHasReviewerSql('p.id')} AND NOT EXISTS (
                             SELECT 1 FROM staff_programmes m JOIN users mu ON mu.id = m.user_id AND mu.deactivated_at IS NULL
                             WHERE m.programme_id = p.id AND m.role = 'main' AND m.ended_at IS NULL) AS no_main,
-                        NOT EXISTS (SELECT 1 FROM courses c WHERE c.programme_id = p.id AND c.semester_id = $1 AND c.status = 'active') AS no_courses
+                        -- no active course there, and students, applications or drafts need them (fixes)
+                        ${programmeMissesCoursesSql('p.id', '$1')} AS no_courses
                  FROM programmes p WHERE p.status = 'active')
              SELECT (SELECT count(*)::int FROM programmes_needing WHERE no_reviewer) AS programmes_without_reviewer,
                     (SELECT count(*)::int FROM programmes_needing WHERE no_main) AS programmes_without_main,

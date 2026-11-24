@@ -3615,6 +3615,65 @@ const run = async () => {
         }
     }
 
+    section('4ac. Overview: programmes with students but no courses this semester (fixes)');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}N${stamp}`.slice(0, 20);
+        const summary = async () => (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+        const first = await summary();
+        // Fixes: counted only with a registered student (drafts belong to one) or an application there
+        const semesterId = first.catalogueSemester?.id;
+        if (!semesterId) {
+            skip('Programmes without courses on the Overview', 'no semester students apply to');
+        } else {
+            let programmeId = null;
+            try {
+                const n0 = first.programmesWithoutCourses;
+                const counted = async (expected, name) => {
+                    const n = (await summary()).programmesWithoutCourses;
+                    report(n === n0 + expected, name, `${n0} before, ${n} now`);
+                };
+                const chip = async () => ((await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S })).body?.programmes || []).find((p) => p.id === programmeId)?.no_courses;
+                programmeId = (await pool.query(
+                    "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Kurzus nélkül', 'No courses', 'Ohne Kurse') RETURNING id", [code]
+                )).rows[0].id;
+                await counted(0, 'A programme without courses and without students, applications or drafts is not counted');
+                report((await chip()) === true, 'The Programmes table marks it: no courses this semester');
+
+                const neptun = `N${stamp.slice(-5)}`.replace(/[^A-Z0-9]/g, 'X').padEnd(6, 'X').slice(0, 6);
+                const studentId = (await pool.query(
+                    `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                     VALUES ('Security Check No Courses', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id`,
+                    [`nocourses-${stamp}${TEST_DOMAIN}`.toLowerCase(), neptun, programmeId]
+                )).rows[0].id;
+                await counted(1, 'With a registered student it is counted');
+                // The student moves to another programme; an application of this programme still counts
+                await pool.query('UPDATE users SET programme_id = $2 WHERE id = $1', [studentId, d.studentA.programme_id]);
+                await counted(0, 'Without students, applications or drafts it is not counted');
+                await pool.query(
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
+                     VALUES ($1, $2, '[]', '[{"course_code":"NC1","course_name":"No courses"}]', 'NC1', 'pending', $3)`,
+                    [studentId, programmeId, semesterId]
+                );
+                await counted(1, 'An application in that semester counts');
+                const courseId = (await pool.query(
+                    "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, 'NC1', 'No courses', 3, 'active') RETURNING id",
+                    [programmeId, semesterId]
+                )).rows[0].id;
+                await counted(0, 'With an active course there it is not counted');
+                report((await chip()) === false, 'The table no longer marks it');
+                await pool.query("UPDATE courses SET status = 'hidden' WHERE id = $1", [courseId]);
+                await counted(1, 'A hidden course does not count as a course');
+                await pool.query("UPDATE programmes SET status = 'hidden' WHERE id = $1", [programmeId]);
+                await counted(0, 'A hidden programme is not counted');
+            } finally {
+                if (programmeId) await pool.query('DELETE FROM courses WHERE programme_id = $1', [programmeId]);
+                const removed = await removeSharingProgramme();
+                console.log(`(removed the temporary programme without courses (${removed}))`);
+            }
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

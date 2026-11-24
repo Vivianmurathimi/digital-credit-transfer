@@ -1,4 +1,5 @@
 import { cueForStatus } from './theme/statusCues.js'; // .js: also loaded by npm run check:reviewer-list (Node)
+import { foldText } from './searchText.js';
 // The reviewer dashboard's list rules (reviewer Group 3), without React, so they can be tested on
 // their own (npm run check:reviewer-list). The backend decides WHICH applications are listed (own
 // programme only, completed ones of the current semester only); these only split, search and sort them.
@@ -13,15 +14,8 @@ export const tabOf = (app) => {
     return null;
 };
 
-/**
- * Text for comparing, without case or accents: "Kovács Ödön" -> "kovacs odon", "Straße" -> "strasse".
- * NFD splits a letter from its accent marks (also Hungarian ő and ű), which are then dropped.
- */
-export const foldText = (value) => String(value ?? '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/ß/g, 'ss');
+// Case and accents are ignored when searching (shared with the admin lists: searchText.js)
+export { foldText };
 
 // fulfilled_courses_json is JSONB; very old rows may hold a JSON string
 const parseList = (value) => {

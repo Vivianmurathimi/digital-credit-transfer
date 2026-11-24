@@ -5,6 +5,8 @@ import { getErrorMessage } from '../../errorMessage';
 import { programmeName } from '../../programmeName';
 import Chip from '../reviewer/Chip';
 import ConfirmModal from '../ConfirmModal';
+import ListSearch from './ListSearch';
+import { courseMatches, programmeMatches } from '../../searchText';
 import { card, disabledButton, input, label, smallButton, td, th } from './adminStyles';
 
 // Programmes & Courses (admin round Group 4): every programme and the chosen semester's courses,
@@ -12,6 +14,9 @@ import { card, disabledButton, input, label, smallButton, td, th } from './admin
 // keeps all data); Delete only when nothing uses the item, otherwise greyed out with the reason.
 // Fixes 1b: a programme shows the other codes the import treats as it ("Also imported as: CIVIL").
 // Confirmations are in-app (ConfirmModal).
+// Fixes 3a: a search box above each table, filtering as you type (case and accents ignored):
+// programmes by code, other codes and names (every language), courses by code or name. The courses
+// are the chosen semester's only; the typed text stays when the semester changes.
 
 const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
@@ -21,6 +26,8 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
     const [notice, setNotice] = useState('');
     const [confirming, setConfirming] = useState(null); // { text, confirmLabel, danger, run }
     const [busy, setBusy] = useState(false);
+    const [programmeQuery, setProgrammeQuery] = useState('');
+    const [courseQuery, setCourseQuery] = useState('');
 
     // Start with the active semester
     useEffect(() => {
@@ -59,6 +66,9 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
         setBusy(true);
         try { await confirming.run(); } finally { setBusy(false); setConfirming(null); }
     };
+    const shownProgrammes = data ? data.programmes.filter((p) => programmeMatches(programmeQuery, p)) : [];
+    const shownCourses = data ? data.courses.filter((c) => courseMatches(courseQuery, c)) : [];
+    const noMatches = <p role="status" style={{ color: 'var(--text-muted)', margin: '8px 0' }}>{t('list_search_no_matches')}</p>;
     const reasonText = (reasons) => reasons.map((r) => t(`catalogue_blocked_${r}`)).join(' ');
     const statusChip = (status) => <Chip cue={status === 'active' ? 'approved' : 'neutral'}>{t(`catalogue_status_${status}`)}</Chip>;
     const toggle = (kind, item) => {
@@ -97,17 +107,24 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
             {data && (
                 <>
                     <h3>{t('catalogue_programmes')}</h3>
+                    <ListSearch id="catalogue-programme-search" label={t('catalogue_search_programmes')} placeholder={t('catalogue_search_programmes_placeholder')}
+                        value={programmeQuery} onChange={setProgrammeQuery} />
+                    {shownProgrammes.length === 0 && data.programmes.length > 0 ? noMatches : (
                     <div style={{ overflowX: 'auto' }}>
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead><tr><th style={th}>{t('staff_programme_label')}</th><th style={th}>{t('staff_status_column')}</th><th style={th}>{t('catalogue_use_column')}</th><th style={th}>{t('staff_actions_column')}</th></tr></thead>
                             <tbody>
-                                {data.programmes.map((p) => (
+                                {shownProgrammes.map((p) => (
                                     <tr key={p.id}>
                                         <td style={td}>
                                             {p.code} – {programmeName(p, i18n)}
                                             {p.aliases?.length > 0 && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('catalogue_aliases', { codes: p.aliases.join(', ') })}</div>}
                                         </td>
-                                        <td style={td}>{statusChip(p.status)}</td>
+                                        <td style={td}>
+                                            {statusChip(p.status)}
+                                            {/* A visible programme with no active course in the chosen semester */}
+                                            {p.status === 'active' && p.no_courses && <> <Chip cue="neutral">{t('catalogue_no_courses_chip')}</Chip></>}
+                                        </td>
                                         <td style={td}>{t('catalogue_programme_use', { students: p.students, applications: p.applications })}</td>
                                         <td style={td}>
                                             {toggle('programmes', p)}{remove('programmes', p, p.code)}
@@ -117,14 +134,19 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
                             </tbody>
                         </table>
                     </div>
+                    )}
 
                     <h3>{t('catalogue_courses')}</h3>
-                    {data.courses.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>{t('catalogue_no_courses')}</p> : (
+                    {data.courses.length > 0 && (
+                        <ListSearch id="catalogue-course-search" label={t('catalogue_search_courses')} placeholder={t('catalogue_search_courses_placeholder')}
+                            value={courseQuery} onChange={setCourseQuery} />
+                    )}
+                    {data.courses.length === 0 ? <p style={{ color: 'var(--text-muted)' }}>{t('catalogue_no_courses')}</p> : shownCourses.length === 0 ? noMatches : (
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead><tr><th style={th}>{t('staff_programme_label')}</th><th style={th}>{t('catalogue_course_column')}</th><th style={th}>{t('catalogue_credits_column')}</th><th style={th}>{t('staff_status_column')}</th><th style={th}>{t('catalogue_use_column')}</th><th style={th}>{t('staff_actions_column')}</th></tr></thead>
                                 <tbody>
-                                    {data.courses.map((c) => (
+                                    {shownCourses.map((c) => (
                                         <tr key={c.id}>
                                             <td style={td}>{c.programme_code}</td>
                                             <td style={td}>{c.course_code} – {c.course_name}</td>
