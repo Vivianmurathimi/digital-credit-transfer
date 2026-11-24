@@ -243,7 +243,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Change programme: same, unknown, none, a reviewer, bad id; then a real change | `400` / `404 STUDENT_NOT_FOUND`; pending and needs-info withdrawn as admin with `PROGRAMME_CHANGED`, approved kept, draft deleted, change recorded (not editable), profile and My Status updated |
 | 4n | **Semesters and catalogue (admin round Group 4)** | Semester, catalogue and import routes without a token / as student / as reviewer | `401` / `403` / `403` |
 | | | Semester: no name, broken time, closing before opening, ending before closing; same name; overlapping dates; activate while another is active | `400` / `409 SEMESTER_NAME_TAKEN` / `409 SEMESTERS_OVERLAP` / `409 ANOTHER_SEMESTER_ACTIVE`; times stored in UTC from Budapest time |
-| | | Import preview with a BOM, CRLF, a non-numeric credit and a programme name conflict | bad rows reported by number, the valid rows kept, programmes not in the file default to Keep, **nothing saved** |
+| | | Import preview (the programme chosen first, fixes 1b) with a BOM, CRLF, a non-numeric credit and a programme name conflict; a preview without choosing the programme | bad rows reported by number, the valid rows kept, other programmes not part of the import, **nothing saved**; `400 INVALID_PROGRAMME` |
 | | | Preview without a file, not UTF-8, missing columns; confirm with another file | `400 NO_FILE` / `400 NOT_UTF8` / `400 MISSING_COLUMNS` / `409 PREVIEW_MISMATCH` |
 | | | Second import: a changed course, missing courses (one used by an application); delete the used one / hide it and delete the unused one | `409 DELETE_IN_USE`, nothing saved / hidden (data kept) and deleted; the submitted application unchanged |
 | | | Programmes & Courses: counts; delete a programme or course in use; unknown status | `409 DELETE_IN_USE` / `400 INVALID_STATUS` |
@@ -316,6 +316,12 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | Invite and accept a new committee member, then Delete (no history); invite the same address again | deleted for real with its accepted invite, no error; `201` |
 | | | The deleted account: log in (old address, placeholder); the staff list; invite the old address; Activate; Delete again | `401`; not listed; `201`; `404`; `404` |
 | | | Delete yourself; a student; a second admin deactivated, Activate, log in, Delete | `400 CANNOT_DELETE_SELF`; `400 NOT_STAFF`; `403 ACCOUNT_DEACTIVATED`, `200`, `200`, deleted |
+| 4ab | **One programme per import (fixes 1b)**, a temporary programme and semester | `GET /api/admin/programmes` and `POST /api/admin/catalogue/programme-check` without a token / as a reviewer / as a student; the old merge route | `401` / `403` / `403`; `404` |
+| | | Check a new programme: no code; a bad code; no Hungarian name; a code starting like an existing one; the same name with other case and spaces; the same code | `400 MISSING_VALUE`; `400 INVALID_PROGRAMME_CODE`; `400 MISSING_VALUE`; look-alike (similar code); look-alike (same name); code taken |
+| | | Preview and import a look-alike new programme without the answer; a new programme with an existing code, even answered "Different"; an unknown programme; a choice that is not JSON | `409 PROGRAMME_LOOKALIKE` with the look-alikes (both); `409 PROGRAMME_CODE_TAKEN`; `404`; `400 INVALID_PROGRAMME` |
+| | | A file with rows of another code: preview; import unanswered; an answer other than "same"; the counts | stopped, grouped with rows `3–4`; `409 MISMATCH_DECISION_NEEDED`; `400 INVALID_DECISIONS`; nothing saved |
+| | | Import with "Treat as the same programme"; preview again with that code; the Programmes table | all rows saved into the chosen programme, the code saved, no second programme; matched by itself; the other code shown |
+| | | Rows with another programme's code treated as the same; a new programme with that code | `409 ALIAS_TAKEN`, nothing saved (not even the new programme); `409 PROGRAMME_CODE_TAKEN` |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -360,6 +366,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-24 | throwaway copy with migration 026, fixes 1b (one programme per import, section 4ab; section 4n imports with the programme chosen first) | **1029 passed, 0 failed, 2 skipped** (1031 checks); the same two skips. Temporary programmes, courses and semester removed |
 | 2026-11-24 | throwaway copy with migration 025, fixes 1a: deleting an invited account without history (its accepted invite goes with it) | **997 passed, 0 failed, 2 skipped** (999 checks); the same two skips as below |
 | 2026-11-18 | throwaway copy with migration 025, fixes 1a (activate and delete staff, section 4aa) | **993 passed, 0 failed, 2 skipped** (995 checks); the duplicate check (student B has no open application) and "two admins deactivating each other" (the development data has only one other active admin). Temporary programme and accounts removed, also the hidden one |
 | 2026-11-13 | throwaway copy with migrations 022–024, round 2 Group 2 (the committee: role and links, the step, files, who sees what, the deadline, PDFs and analytics) | **966 passed, 0 failed, 1 skipped** (967 checks); the same skip as before. Temporary programmes, committee members, reviewers, students, applications and semesters removed |

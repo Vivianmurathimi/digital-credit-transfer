@@ -109,6 +109,26 @@ Admins land on `/admin` (Overview). Each area has its own address: `/admin/semes
 `/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/analytics`, `/admin/reviewers`, `/admin/committee`,
 `/admin/students`, `/admin/admins`, `/admin/domains`.
 
+## One programme per import
+
+The Neptun import (Programmes & Courses → Import from Neptun) brings in one programme at a time, so the
+same programme is never created twice under two codes (`backend/utils/programmeMatch.js`):
+
+1. **Programme first.** Choose an existing programme, or type a new one (code, Hungarian name, optional
+   English and German names). A new one is checked against the existing programmes: the same name
+   (spaces, case and accents ignored) or a code that starts like an existing one ("CIV" / "CIVIL", from
+   3 characters) stops with **Same programme** or **Different programme**. An existing code is never
+   created again.
+2. **Upload the CSV.**
+3. **Every row is checked** against the chosen programme (its code, one of its other codes, or its
+   name). Rows with another code are listed by group ("Rows 3–15 say CIVIL, but you chose CIV"):
+   **Treat as the same programme** imports them and remembers the code (`programme_aliases`), so the
+   next import matches by itself; **Cancel the import** saves nothing. A code that belongs to another
+   programme can only be cancelled.
+
+Nothing is saved before the confirmation, and the import is one transaction. The Programmes table shows
+a programme's other codes ("Also imported as: CIVIL").
+
 ## The semester timeline
 
 Several semesters can be in progress at once: the next one's application period may open while the

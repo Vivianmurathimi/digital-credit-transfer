@@ -376,7 +376,8 @@ const loadTestData = async () => {
                                           WHERE sp.user_id = u.id AND sp.role = 'main' AND sp.ended_at IS NULL ORDER BY sp.id LIMIT 1)) AS programme_id
          FROM users u ORDER BY u.id`
     )).rows;
-    const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
+    // The programmes students can choose (a hidden one is not offered, e.g. an emptied duplicate)
+    const programmeCodes = (await pool.query("SELECT code FROM programmes WHERE status = 'active' ORDER BY code")).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
@@ -2081,29 +2082,34 @@ const run = async () => {
         const row = (c, name, credits, hu = 'Biztonsági teszt') => `${code};${hu};Security check;Sicherheitstest;${c};${name};${credits}`;
         const file1 = `﻿${[header, row('SC1', 'First', 5), row('SC2', 'Second', 'x'), row('SC3', 'Third', 4), row('SC4', 'Fourth', 3, 'Más név'), row('SC5', 'Fifth', 6)].join('\r\n')}\r\n`;
         const programmesBefore = (await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n;
-        const preview1 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file1 });
+        const hiddenBefore = (await pool.query("SELECT count(*)::int AS n FROM programmes WHERE status = 'hidden'")).rows[0].n;
+        // Fixes 1b: one programme per import, chosen first (here a new one)
+        const newChoice = JSON.stringify({ new: { code, name_hu: 'Biztonsági teszt', name_en: 'Security check', name_de: 'Sicherheitstest' }, confirmed_different: true });
+        const preview1 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: file1 });
         const p1 = preview1.body?.preview || {};
         report(preview1.status === 200 && p1.newProgrammes?.some((p) => p.code === code) && p1.newCourses?.length === 3
             && p1.errors?.some((e) => e.row === 3 && e.code === 'CREDITS_NOT_A_NUMBER') && p1.errors?.some((e) => e.row === 5 && e.code === 'PROGRAMME_NAME_CONFLICT'),
         'Preview: new programme, 3 valid courses, bad rows 3 and 5 reported by number', `${preview1.status} ${p1.newCourses?.length} ${JSON.stringify(p1.errors)}`);
-        report(p1.missingProgrammes?.length > 0 && p1.missingProgrammes.every((p) => p.default === 'keep'), 'Programmes not in the file default to Keep');
+        report(p1.missingProgrammes === undefined, 'Other programmes are not part of the import (one programme per import)');
         report((await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n === programmesBefore, 'The preview saved nothing');
-        await expect('Preview without a file', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId } }), 400, 'NO_FILE');
-        await expect('Preview of a file that is not UTF-8', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: Buffer.from([0x41, 0xff, 0x3b]) }), 400, 'NOT_UTF8');
-        await expect('Preview of a file without the columns', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: 'a;b\n1;2' }), 400, 'MISSING_COLUMNS');
-        await expect('Confirm with another file than the preview', callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: 'x'.repeat(64) }, file: file1 }), 409, 'PREVIEW_MISMATCH');
-        const confirmed1 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p1.hash, decisions: '{}' }, file: file1 });
+        await expect('Preview without a file', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice } }), 400, 'NO_FILE');
+        await expect('Preview of a file that is not UTF-8', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: Buffer.from([0x41, 0xff, 0x3b]) }), 400, 'NOT_UTF8');
+        await expect('Preview of a file without the columns', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: 'a;b\n1;2' }), 400, 'MISSING_COLUMNS');
+        await expect('Preview without choosing the programme', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file1 }), 400, 'INVALID_PROGRAMME');
+        await expect('Confirm with another file than the preview', callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: 'x'.repeat(64), programme: newChoice }, file: file1 }), 409, 'PREVIEW_MISMATCH');
+        const confirmed1 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p1.hash, programme: newChoice, decisions: '{}' }, file: file1 });
         catalogueBackup.programmeCodes.push(code);
         report(confirmed1.status === 200 && confirmed1.body.summary.programmesAdded === 1 && confirmed1.body.summary.coursesAdded === 3 && confirmed1.body.summary.rowsSkipped === 2,
             'Confirm: 1 programme and 3 courses saved, 2 rows skipped', `${confirmed1.status} ${JSON.stringify(confirmed1.body?.summary || confirmed1.body)}`);
         const realHidden = (await pool.query("SELECT count(*)::int AS n FROM programmes WHERE status = 'hidden' AND code <> $1", [code])).rows[0].n;
-        report(realHidden === 0, 'Keep (the default) left every other programme as it was');
+        report(realHidden === hiddenBefore, 'The import left every other programme as it was', `${hiddenBefore} hidden before, ${realHidden} after`);
 
         // Second file: SC1 changed, SC3 and SC5 missing (default Hide); an application uses SC3
         const courseId = async (c) => (await pool.query('SELECT c.id FROM courses c JOIN programmes p ON p.id = c.programme_id WHERE p.code = $1 AND c.course_code = $2 AND c.semester_id = $3', [code, c, semesterId])).rows[0]?.id;
         const sc3 = await courseId('SC3');
         const sc5 = await courseId('SC5');
         const programmeId = (await pool.query('SELECT id FROM programmes WHERE code = $1', [code])).rows[0].id;
+        const existingChoice = JSON.stringify({ id: programmeId });
         const snapshot = [{ course_id: sc3, course_code: 'SC3', course_name: 'Third', credits: 4 }];
         const usingApp = (await pool.query(
             `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
@@ -2111,17 +2117,17 @@ const run = async () => {
             [d.studentA.id, programmeId, JSON.stringify(snapshot), semesterId]
         )).rows[0].id;
         const file2 = `${[header, row('SC1', 'First, renamed', 6)].join('\n')}\n`;
-        const preview2 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file2 });
+        const preview2 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: existingChoice }, file: file2 });
         const p2 = preview2.body?.preview || {};
         const missing3 = p2.missingCourses?.find((c) => c.id === sc3);
         const missing5 = p2.missingCourses?.find((c) => c.id === sc5);
         report(p2.changedCourses?.some((c) => c.course_code === 'SC1' && c.before.credits === 5 && c.after.credits === 6), 'Preview: the changed course, old and new values');
-        report(missing3?.default === 'hide' && missing5?.default === 'hide', 'Courses missing from a programme in the file default to Hide');
+        report(missing3?.default === 'hide' && missing5?.default === 'hide', "The programme's courses missing from the file default to Hide");
         report(missing3?.canDelete === false && missing3.blockedBy.includes('HAS_APPLICATIONS') && missing5?.canDelete === true, 'Delete is refused (with the reason) only for the course in use');
-        const refused = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc3]: 'delete' } }) }, file: file2 });
+        const refused = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, programme: existingChoice, decisions: JSON.stringify({ courses: { [sc3]: 'delete' } }) }, file: file2 });
         report(refused.status === 409 && refused.code === 'DELETE_IN_USE' && (await pool.query('SELECT credits FROM courses WHERE id = (SELECT id FROM courses WHERE course_code = $1 AND semester_id = $2)', ['SC1', semesterId])).rows[0].credits === 5,
             'Deleting a course in use is refused and nothing is saved', `${refused.status} ${refused.code}`);
-        const confirmed2 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc5]: 'delete' } }) }, file: file2 });
+        const confirmed2 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, programme: existingChoice, decisions: JSON.stringify({ courses: { [sc5]: 'delete' } }) }, file: file2 });
         const after = Object.fromEntries((await pool.query('SELECT id, status, credits FROM courses WHERE id = ANY($1)', [[sc3, sc5]])).rows.map((r) => [r.id, r]));
         report(confirmed2.status === 200 && after[sc3]?.status === 'hidden' && !after[sc5], 'Confirm: the course in use is hidden (all data kept), the unused one deleted', `${confirmed2.status}`);
         const kept = (await pool.query('SELECT target_courses, status FROM applications WHERE id = $1', [usingApp])).rows[0];
@@ -3508,6 +3514,104 @@ const run = async () => {
                 await pool.query('DELETE FROM users WHERE id = ANY($1)', [left]);
             }
             console.log(`(removed the temporary accounts programme (${removed}) and ${left.length} temporary account(s))`);
+        }
+    }
+
+    section('4ab. One programme per import (fixes 1b): the programme chosen first, look-alikes, rows that do not match, other codes');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const base = `${SHARING_PROGRAMME_PREFIX}Q${stamp}`.slice(0, 16);
+        const codeA = `${base}AB`;
+        const word = `Qwopf${stamp}`; // names that look like nothing else in the database
+        const header = 'programme_code;programme_name_hu;programme_name_en;programme_name_de;course_code;course_name;credits';
+        const file = (rows) => [header, ...rows].join('\n');
+        const counts = async () => (await pool.query(
+            'SELECT (SELECT count(*)::int FROM programmes) AS p, (SELECT count(*)::int FROM courses) AS c, (SELECT count(*)::int FROM programme_aliases) AS a'
+        )).rows[0];
+        try {
+            const idA = (await pool.query(
+                'INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, $2, $3, $4) RETURNING id',
+                [codeA, `${word} Alpha szak`, `${word} Alpha Studies`, `${word} Alpha Studien`]
+            )).rows[0].id;
+            const semesterId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check programmes ${stamp}`, '2096-02-01', '2096-03-01', '2096-06-30', 'setup'])).rows[0].id;
+            tempSemesterIds.push(semesterId);
+            const check = (json, token = S) => call('POST', 'admin/catalogue/programme-check', { token, json });
+            const fields = (programme, extra = {}) => ({ semester_id: semesterId, programme: JSON.stringify(programme), ...extra });
+            const preview = (csv, programme, mismatches = {}) => callForm('admin/catalogue/preview', { token: S, file: csv, fields: fields(programme, { mismatches: JSON.stringify(mismatches) }) });
+            const importIt = (csv, programme, hash, mismatches = {}) => callForm('admin/catalogue/import', { token: S, file: csv, fields: fields(programme, { hash, mismatches: JSON.stringify(mismatches), decisions: '{}' }) });
+
+            // Who may
+            for (const [method, path] of [['GET', 'admin/programmes'], ['POST', 'admin/catalogue/programme-check']]) {
+                await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+                await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+                await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            }
+            await expect('The old merge route is gone', call('POST', `admin/programmes/${idA}/merge`, { token: S, json: { into_id: idA } }), 404);
+            const list = await call('GET', 'admin/programmes', { token: S });
+            report(list.status === 200 && list.body.programmes.some((p) => p.id === idA && Array.isArray(p.aliases)), 'The admin gets every programme with its other codes');
+
+            // Step 1: a new programme is checked against the existing ones
+            await expect('Check without a code', check({ name_hu: 'x' }), 400, 'MISSING_VALUE');
+            await expect('Check with a bad code', check({ code: 'a b', name_hu: 'x' }), 400, 'INVALID_PROGRAMME_CODE');
+            await expect('Check without the Hungarian name', check({ code: `${base}NEW` }), 400, 'MISSING_VALUE');
+            const prefix = await check({ code: `${base}A`, name_hu: `${word} Más` });
+            report(prefix.status === 200 && prefix.body.lookalikes.some((l) => l.id === idA && l.reasons.includes('similar_code')), 'A code starting like an existing one is a look-alike');
+            const sameName = await check({ code: `${base}ZZ`, name_hu: `  ${word.toLowerCase()}   ALPHA szak ` });
+            report(sameName.body?.lookalikes?.some((l) => l.id === idA && l.reasons.includes('same_name')), 'The same name (case and spaces aside) is a look-alike');
+            const sameCode = await check({ code: codeA.toLowerCase(), name_hu: 'x' });
+            report(sameCode.body?.codeTaken === true, 'The same code: it can only be the same programme');
+
+            // The server asks again: a look-alike new programme is refused without the answer
+            const newA = { new: { code: `${base}A`, name_hu: `${word} Gamma` } };
+            const csvNew = file([`${base}A;${word} Gamma;;;QW1;New course;3`]);
+            const before = await counts();
+            const refusedNew = await preview(csvNew, newA);
+            report(refusedNew.status === 409 && refusedNew.code === 'PROGRAMME_LOOKALIKE' && refusedNew.body?.lookalikes?.some((l) => l.id === idA),
+                'Preview of a look-alike new programme without an answer: refused, with the look-alikes', `${refusedNew.status} ${refusedNew.code}`);
+            const csvNewHash = require('crypto').createHash('sha256').update(Buffer.from(csvNew, 'utf8')).digest('hex');
+            await expect('Import it without an answer', importIt(csvNew, newA, csvNewHash), 409, 'PROGRAMME_LOOKALIKE');
+            await expect('A new programme with an existing code, even "Different"', preview(csvNew, { new: { code: codeA, name_hu: 'x' }, confirmed_different: true }), 409, 'PROGRAMME_CODE_TAKEN');
+            await expect('An existing programme that does not exist', preview(csvNew, { id: 999999999 }), 404, 'PROGRAMME_NOT_FOUND');
+            await expect('A programme choice that is not JSON', callForm('admin/catalogue/preview', { token: S, file: csvNew, fields: { semester_id: semesterId, programme: '{oops' } }), 400, 'INVALID_PROGRAMME');
+
+            // Step 3: rows with another code stop the import until answered
+            const otherCode = `${base}XY`;
+            const csvMixed = file([
+                `${codeA};${word} Alpha szak;${word} Alpha Studies;${word} Alpha Studien;QW10;Own row;3`,
+                `${otherCode};${word} Other szak;;;QW11;Other row;3`,
+                `${otherCode};${word} Other szak;;;QW12;Other row two;3`,
+            ]);
+            const stopped = await preview(csvMixed, { id: idA });
+            const group = stopped.body?.preview?.mismatches?.[0];
+            report(stopped.status === 200 && stopped.body.preview.ready === false && group?.code === otherCode && group.rowRanges === '3–4',
+                'Rows with another code stop the import, grouped by code with their rows', JSON.stringify(stopped.body?.preview?.mismatches));
+            const hash = stopped.body?.preview?.hash;
+            await expect('Import without answering the group', importIt(csvMixed, { id: idA }, hash), 409, 'MISMATCH_DECISION_NEEDED');
+            await expect('An answer other than "same"', importIt(csvMixed, { id: idA }, hash, { [otherCode]: 'merge' }), 400, 'INVALID_DECISIONS');
+            const unchanged = await counts();
+            report(JSON.stringify(unchanged) === JSON.stringify(before), 'Nothing was saved by the refused requests', `${JSON.stringify(before)} -> ${JSON.stringify(unchanged)}`);
+            const done = await importIt(csvMixed, { id: idA }, hash, { [otherCode]: 'same' });
+            report(done.status === 200 && done.body?.summary?.aliasesSaved === 1 && done.body.summary.coursesAdded === 3, 'Treat as the same programme: all rows imported, the code saved', `${done.status} ${JSON.stringify(done.body?.summary || done.code)}`);
+            report((await pool.query('SELECT 1 FROM programmes WHERE code = $1', [otherCode])).rows.length === 0, 'No second programme was made');
+            const again = await preview(file([`${otherCode};${word} Other szak;;;QW13;Later;3`]), { id: idA });
+            report(again.body?.preview?.ready === true && again.body.preview.mismatches.length === 0, 'The next import with that code matches by itself');
+            const page = await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S });
+            report((page.body?.programmes || []).find((p) => p.id === idA)?.aliases?.includes(otherCode), 'The Programmes table shows the other code');
+
+            // A code of another programme can never be treated as this one; a new programme can't take it either
+            const newB = { new: { code: `${base}QQ`, name_hu: `${word} Beta` }, confirmed_different: true };
+            const csvOwned = file([`${base}QQ;${word} Beta;;;QW20;Beta;3`, `${otherCode};${word} Other szak;;;QW21;Owned;3`]);
+            const owned = await preview(csvOwned, newB);
+            report(owned.body?.preview?.mismatches?.[0]?.owner?.id === idA, 'Rows with another programme\'s code name that programme');
+            const beforeOwned = await counts();
+            await expect('Treating them as the same', importIt(csvOwned, newB, owned.body?.preview?.hash, { [otherCode]: 'same' }), 409, 'ALIAS_TAKEN');
+            report(JSON.stringify(await counts()) === JSON.stringify(beforeOwned), 'Refused: nothing saved, not even the new programme');
+            await expect('A new programme with another programme\'s other code', preview(csvOwned, { new: { code: otherCode, name_hu: 'x' }, confirmed_different: true }), 409, 'PROGRAMME_CODE_TAKEN');
+        } finally {
+            const ids = (await pool.query('SELECT id FROM programmes WHERE code LIKE $1', [`${base}%`])).rows.map((r) => r.id);
+            if (ids.length) await pool.query('DELETE FROM courses WHERE programme_id = ANY($1)', [ids]);
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary import programmes (${removed}))`);
         }
     }
 

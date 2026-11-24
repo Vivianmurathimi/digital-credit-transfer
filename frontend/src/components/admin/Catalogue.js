@@ -4,17 +4,23 @@ import http from '../../http';
 import { getErrorMessage } from '../../errorMessage';
 import { programmeName } from '../../programmeName';
 import Chip from '../reviewer/Chip';
+import ConfirmModal from '../ConfirmModal';
 import { card, disabledButton, input, label, smallButton, td, th } from './adminStyles';
 
 // Programmes & Courses (admin round Group 4): every programme and the chosen semester's courses,
 // with status and how many students and applications use each. Hide and Show at any time (Hide
 // keeps all data); Delete only when nothing uses the item, otherwise greyed out with the reason.
+// Fixes 1b: a programme shows the other codes the import treats as it ("Also imported as: CIVIL").
+// Confirmations are in-app (ConfirmModal).
 
 const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
     const { t, i18n } = useTranslation();
     const [semesterId, setSemesterId] = useState('');
     const [data, setData] = useState(null);
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
+    const [confirming, setConfirming] = useState(null); // { text, confirmLabel, danger, run }
+    const [busy, setBusy] = useState(false);
 
     // Start with the active semester
     useEffect(() => {
@@ -30,12 +36,28 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
     }, [semesterId, t]);
     useEffect(() => { load(); }, [load, reloadKey]);
 
-    const act = async (confirmText, request) => {
-        if (confirmText && !window.confirm(confirmText)) return;
+    const run = async (request, onDone) => {
         setError('');
-        try { await request(); } catch (err) { setError(getErrorMessage(err, t, 'catalogue_action_failed')); }
+        setNotice('');
+        try {
+            const result = await request();
+            if (onDone) onDone(result);
+        } catch (err) {
+            setError(getErrorMessage(err, t, 'catalogue_action_failed'));
+        }
         load();
         onChange();
+    };
+    // confirm: a text, or { text, confirmLabel, danger }, asked in the in-app dialog first
+    const act = (confirm, request, onDone) => {
+        if (!confirm) return run(request, onDone);
+        const ask = typeof confirm === 'string' ? { text: confirm } : confirm;
+        setConfirming({ title: t('confirm_title'), ...ask, run: () => run(request, onDone) });
+        return undefined;
+    };
+    const confirmNow = async () => {
+        setBusy(true);
+        try { await confirming.run(); } finally { setBusy(false); setConfirming(null); }
     };
     const reasonText = (reasons) => reasons.map((r) => t(`catalogue_blocked_${r}`)).join(' ');
     const statusChip = (status) => <Chip cue={status === 'active' ? 'approved' : 'neutral'}>{t(`catalogue_status_${status}`)}</Chip>;
@@ -70,6 +92,7 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
                 </select>
             </div>
             {error && <p role="alert" style={{ color: 'var(--error-text)' }}>{error}</p>}
+            {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
 
             {data && (
                 <>
@@ -80,10 +103,15 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
                             <tbody>
                                 {data.programmes.map((p) => (
                                     <tr key={p.id}>
-                                        <td style={td}>{p.code} – {programmeName(p, i18n)}</td>
+                                        <td style={td}>
+                                            {p.code} – {programmeName(p, i18n)}
+                                            {p.aliases?.length > 0 && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('catalogue_aliases', { codes: p.aliases.join(', ') })}</div>}
+                                        </td>
                                         <td style={td}>{statusChip(p.status)}</td>
                                         <td style={td}>{t('catalogue_programme_use', { students: p.students, applications: p.applications })}</td>
-                                        <td style={td}>{toggle('programmes', p)}{remove('programmes', p, p.code)}</td>
+                                        <td style={td}>
+                                            {toggle('programmes', p)}{remove('programmes', p, p.code)}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -111,6 +139,10 @@ const Catalogue = ({ semesters, reloadKey, onChange = () => {} }) => {
                         </div>
                     )}
                 </>
+            )}
+            {confirming && (
+                <ConfirmModal title={confirming.title} text={confirming.text} confirmLabel={confirming.confirmLabel} danger={confirming.danger}
+                    busy={busy} onConfirm={confirmNow} onCancel={() => setConfirming(null)} />
             )}
         </section>
     );

@@ -9,7 +9,8 @@ const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT } = require('../utils/semesters');
-const { readNeptunFile, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
+const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
+const { loadProgrammes, findLookalikes, checkNewProgramme, cleanNewProgramme } = require('../utils/programmeMatch');
 const { MAX_BYTES } = require('../utils/neptun/parse');
 
 // Semesters and the catalogue (admin round Group 4), superadmin only.
@@ -226,31 +227,102 @@ const importSemester = async (db, value, { lock = false } = {}) => {
 
 const fileProblem = (file) => (file.fileError ? [400, file.fileError.code, file.fileError.message, 'file'] : null);
 
-// POST /api/admin/catalogue/preview (multipart: file, semester_id)
+// A JSON form field (multipart sends text): the object, null when missing, or false when it is not an object
+const jsonField = (text) => {
+    if (text === undefined || text === '') return null;
+    try {
+        const value = JSON.parse(text);
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : false;
+    } catch {
+        return false;
+    }
+};
+// A refusal from the import, with what the screen needs to show it (look-alikes, open groups, ...)
+const sendRefusal = (res, result) => {
+    const [status, code, message, field] = result.error;
+    const body = { error: message, code };
+    if (field) body.field = field;
+    for (const key of ['lookalikes', 'undecided', 'refused']) if (result[key]) body[key] = result[key];
+    return res.status(status).json(body);
+};
+
+// GET /api/admin/programmes: every programme (step 1 of the import: the programme to import into)
+router.get('/admin/programmes', ...adminOnly, async (req, res) => {
+    try {
+        const programmes = await loadProgrammes(pool);
+        res.json({ success: true, programmes });
+    } catch (err) {
+        console.error('❌ Programmes error:', err.message);
+        sendError(res, 500, 'SERVER_ERROR', 'Could not load the programmes');
+    }
+});
+
+/**
+ * POST /api/admin/catalogue/programme-check { code, name_hu, name_en?, name_de? } (fixes 1b): a new
+ * programme as typed, checked against the existing ones before anything is uploaded. Answers the
+ * look-alikes (same name, similar code, or the same code: then it cannot be created at all).
+ * The import checks it again on the server.
+ */
+router.post('/admin/catalogue/programme-check', ...adminOnly, async (req, res) => {
+    const problem = checkNewProgramme(req.body);
+    if (problem) return sendError(res, 400, problem[0], problem[1], { field: problem[2] });
+    try {
+        const programme = cleanNewProgramme(req.body);
+        const lookalikes = findLookalikes(await loadProgrammes(pool), programme);
+        return res.json({ success: true, programme, lookalikes, codeTaken: lookalikes.some((l) => l.reasons.includes('same_code')) });
+    } catch (err) {
+        console.error('❌ Programme check error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not check the programme');
+    }
+});
+
+// The fields every preview and import sends: the step 1 choice and the answers to step 3
+const readImportFields = (req, res) => {
+    const programme = jsonField(req.body.programme);
+    if (!programme) {
+        sendError(res, 400, 'INVALID_PROGRAMME', 'Choose the programme to import into', { field: 'programme' });
+        return null;
+    }
+    const mismatches = jsonField(req.body.mismatches);
+    if (mismatches === false) {
+        sendError(res, 400, 'INVALID_DECISIONS', 'mismatches must be a JSON object', { field: 'mismatches' });
+        return null;
+    }
+    return { programme, mismatches: mismatches || {} };
+};
+
+// POST /api/admin/catalogue/preview (multipart: file, semester_id, programme, mismatches?)
+//   programme   JSON: { id } an existing programme, or { new: {code, name_hu, ...}, confirmed_different? }
+//   mismatches  JSON: { [code]: 'same' } the answers so far to the rows that don't match the programme
+// Answers { ready: false, mismatches } while a group of rows is unanswered, then the full preview.
 router.post('/admin/catalogue/preview', ...adminOnly, receiveCsv, async (req, res) => {
+    const fields = readImportFields(req, res);
+    if (!fields) return undefined;
     try {
         const { semester, error } = await importSemester(pool, req.body.semester_id);
         if (error) return sendError(res, error[0], error[1], error[2], { field: error[3] });
         const file = readNeptunFile(req.file.buffer);
         const problem = fileProblem(file);
         if (problem) return sendError(res, problem[0], problem[1], problem[2], { field: problem[3] });
-        res.json({ success: true, semester, preview: await buildPreview(pool, semester.id, file) });
+        const resolved = await resolveProgramme(pool, fields.programme);
+        if (resolved.error) return sendRefusal(res, resolved);
+        const preview = await buildPreview(pool, semester.id, file, { programme: resolved.programme, mismatches: fields.mismatches });
+        if (preview.error) return sendRefusal(res, preview);
+        return res.json({ success: true, semester, preview });
     } catch (err) {
         console.error('❌ Import preview error:', err.message);
-        sendError(res, 500, 'SERVER_ERROR', 'Could not read the file');
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not read the file');
     }
 });
 
-// POST /api/admin/catalogue/import (multipart: file, semester_id, hash, decisions as JSON text)
-// The same file again: its hash must match the preview the admin confirmed.
+// POST /api/admin/catalogue/import (multipart: file, semester_id, hash, programme, mismatches, decisions)
+// The same file again: its hash must match the preview the admin confirmed. One transaction: a
+// refusal at any point saves nothing.
 router.post('/admin/catalogue/import', ...adminOnly, receiveCsv, async (req, res) => {
-    let decisions = {};
-    try {
-        decisions = req.body.decisions ? JSON.parse(req.body.decisions) : {};
-        if (typeof decisions !== 'object' || decisions === null || Array.isArray(decisions)) throw new Error('not an object');
-    } catch {
-        return sendError(res, 400, 'INVALID_DECISIONS', 'decisions must be a JSON object', { field: 'decisions' });
-    }
+    const fields = readImportFields(req, res);
+    if (!fields) return undefined;
+    const decisions = jsonField(req.body.decisions);
+    if (decisions === false) return sendError(res, 400, 'INVALID_DECISIONS', 'decisions must be a JSON object', { field: 'decisions' });
     const file = readNeptunFile(req.file.buffer);
     const problem = fileProblem(file);
     if (problem) return sendError(res, problem[0], problem[1], problem[2], { field: problem[3] });
@@ -261,13 +333,16 @@ router.post('/admin/catalogue/import', ...adminOnly, receiveCsv, async (req, res
             if (error) return { error };
             // One import at a time (a second one waits for this one)
             await client.query("SELECT pg_advisory_xact_lock(hashtext('catalogue_import'))");
-            return applyImport(client, semester.id, file, decisions);
-        });
-        if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2], { field: result.error[3] });
-        res.json({ success: true, summary: result.summary });
+            const outcome = await applyImport(client, semester.id, file, { ...(decisions || {}), ...fields }, { actorId: req.actor.id });
+            // A refusal undoes whatever ran before it
+            if (outcome.error) throw Object.assign(new Error('import refused'), { refusal: outcome });
+            return outcome;
+        }).catch((err) => { if (err.refusal) return err.refusal; throw err; });
+        if (result.error) return sendRefusal(res, result);
+        return res.json({ success: true, summary: result.summary });
     } catch (err) {
         console.error('❌ Import error:', err.message);
-        sendError(res, 500, 'SERVER_ERROR', 'Could not import the file');
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not import the file');
     }
 });
 
@@ -284,6 +359,8 @@ router.get('/admin/catalogue', ...adminOnly, async (req, res) => {
         if (!(await readSemester(pool, semesterId))) return sendError(res, 404, 'SEMESTER_NOT_FOUND', 'Semester not found');
         const programmes = (await pool.query(
             `SELECT p.id, p.code, p.name_en, p.name_hu, p.name_de, p.status,
+                    -- fixes 1b: the other codes the import treats as this programme
+                    COALESCE((SELECT array_agg(pa.alias_code ORDER BY pa.alias_code) FROM programme_aliases pa WHERE pa.programme_id = p.id), '{}') AS aliases,
                     (SELECT count(*)::int FROM users u WHERE u.programme_id = p.id AND u.role = 'student') AS students,
                     (SELECT count(*)::int FROM applications a WHERE a.programme_id = p.id) AS applications
              FROM programmes p ORDER BY p.code`
