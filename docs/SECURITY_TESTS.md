@@ -313,6 +313,7 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | | | A removed reviewer who is also on the committee: log in; Activate; log in with the old password; their committee page; Activate again | `403 REVIEWER_REMOVED`; both sides' links back, assisting kept; `200`; their programme listed; nothing changes |
 | | | A removed main reviewer whose programme got a new main reviewer: Activate | back as a standby extra reviewer (`becameExtra`) |
 | | | Delete without history; with a history entry | the account gone; kept with its name, email `deleted-<id>@invalid`, the name still on the history entry |
+| | | Invite and accept a new committee member, then Delete (no history); invite the same address again | deleted for real with its accepted invite, no error; `201` |
 | | | The deleted account: log in (old address, placeholder); the staff list; invite the old address; Activate; Delete again | `401`; not listed; `201`; `404`; `404` |
 | | | Delete yourself; a student; a second admin deactivated, Activate, log in, Delete | `400 CANNOT_DELETE_SELF`; `400 NOT_STAFF`; `403 ACCOUNT_DEACTIVATED`, `200`, `200`, deleted |
 
@@ -359,6 +360,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-24 | throwaway copy with migration 025, fixes 1a: deleting an invited account without history (its accepted invite goes with it) | **997 passed, 0 failed, 2 skipped** (999 checks); the same two skips as below |
 | 2026-11-18 | throwaway copy with migration 025, fixes 1a (activate and delete staff, section 4aa) | **993 passed, 0 failed, 2 skipped** (995 checks); the duplicate check (student B has no open application) and "two admins deactivating each other" (the development data has only one other active admin). Temporary programme and accounts removed, also the hidden one |
 | 2026-11-13 | throwaway copy with migrations 022–024, round 2 Group 2 (the committee: role and links, the step, files, who sees what, the deadline, PDFs and analytics) | **966 passed, 0 failed, 1 skipped** (967 checks); the same skip as before. Temporary programmes, committee members, reviewers, students, applications and semesters removed |
 | 2026-11-12 | throwaway copy with migrations 019–021, round 2 Group 1 (staff and programmes, sharing, the timeline, reviewer emails, PDFs) | **840 passed, 0 failed, 1 skipped** (841 checks); the skip is the duplicate check (student B has no open application). Temporary programmes, reviewers, students, applications and semesters removed |

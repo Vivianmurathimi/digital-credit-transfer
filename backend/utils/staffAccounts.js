@@ -131,6 +131,9 @@ const deleteAccount = async (client, { userId, actorId }) => {
         );
         return { outcome: 'hidden', lostMain, unassigned };
     }
+    // The invite they accepted goes with them (its programmes cascade): the foreign key would empty
+    // accepted_user_id while accepted_at stays, which staff_invites_accepted_by_someone refuses
+    await client.query('DELETE FROM staff_invites WHERE accepted_user_id = $1', [userId]);
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
     return { outcome: 'deleted', lostMain, unassigned };
 };

@@ -3442,6 +3442,24 @@ const run = async () => {
             const gone = await call('DELETE', `users/${fresh.id}`, { token: S });
             report(gone.body?.outcome === 'deleted' && (await pool.query('SELECT 1 FROM users WHERE id = $1', [fresh.id])).rows.length === 0, 'Delete without history: the account is gone');
 
+            // An account made by accepting an invite, without history: its accepted invite goes with it
+            const invitedEmail = `${STAFF_TEST_PREFIX}aa-invited-${stamp.toLowerCase()}${TEST_DOMAIN}`;
+            const invited = await call('POST', 'users/invites', { token: S, json: { email: invitedEmail, role: 'committee', language: 'en', programmes: [{ code, role: 'committee' }] } });
+            const accepted = invited.body?.link
+                ? await call('POST', `invites/${invited.body.link.split('/').pop()}/accept`, { json: { name: `${NAME} invited`, password: 'Check1234!' } })
+                : { status: invited.status };
+            const invitedUser = (await pool.query('SELECT id FROM users WHERE email = $1', [invitedEmail])).rows[0];
+            report(accepted.status === 200 && invitedUser, 'Invite and accept a new committee member', `${invited.status} / ${accepted.status}`);
+            if (invitedUser) {
+                const deleted = await call('DELETE', `users/${invitedUser.id}`, { token: S });
+                report(deleted.status === 200 && deleted.body?.outcome === 'deleted', 'Delete an invited account without history: deleted for real, no error', `${deleted.status} ${deleted.body?.outcome || deleted.code || ''}`);
+                report((await pool.query('SELECT 1 FROM users WHERE id = $1', [invitedUser.id])).rows.length === 0
+                    && (await pool.query('SELECT 1 FROM staff_invites WHERE accepted_user_id = $1', [invitedUser.id])).rows.length === 0,
+                'The account and its accepted invite are gone');
+                const invitedAgain = await call('POST', 'users/invites', { token: S, json: { email: invitedEmail, role: 'committee', language: 'en', programmes: [{ code, role: 'committee' }] } });
+                report(invitedAgain.status === 201, 'The same address can be invited again', `${invitedAgain.status} ${invitedAgain.code || ''}`);
+            }
+
             // Delete with history: hidden, the name stays, the address is free again
             const hist = await person('hist', 'reviewer', [['extra', true]]);
             const appId = (await pool.query(
