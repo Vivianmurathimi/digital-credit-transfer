@@ -28,6 +28,9 @@ const parseCourses = (value) => {
     try { return JSON.parse(value); } catch { return []; }
 };
 
+// The PTE course applied for, as saved at submission (DB cleanup 1): "CODE (Name)"
+const targetText = (app) => parseCourses(app.target_courses)
+    .map((c) => (c.course_name ? `${c.course_code} (${c.course_name})` : c.course_code)).filter(Boolean).join(' + ') || app.target_course_code || '';
 const COMMITTEE_FILTERS = ['awaiting', 'kept', 'changed'];
 
 const ApplicationsSection = ({ onChange = () => {} }) => {
@@ -134,7 +137,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                         </td>
                                         <td style={{ padding: '12px', color: 'var(--text-strong)', fontSize: '13px', verticalAlign: 'top' }}>
                                             <div style={{ marginBottom: '5px' }}><strong style={{ color: 'var(--link)' }}>{t('superadmin_from_label')}</strong> {fulfilledNames || '—'}</div>
-                                            <div><strong style={{ color: 'var(--success-accent)' }}>{t('superadmin_to_label')}</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}</div>
+                                            <div><strong style={{ color: 'var(--success-accent)' }}>{t('superadmin_to_label')}</strong> {targetText(app).length > 50 ? `${targetText(app).substring(0, 50)}...` : targetText(app)}</div>
                                         </td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                             <StatusChip status={app.status}>{t(`status_${app.status}`)}</StatusChip>

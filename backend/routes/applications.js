@@ -36,7 +36,7 @@ const WITHDRAWABLE_STATUSES = ['pending', 'needs_info'];
 
 // Submit an application. The student, their programme and the target courses' details all
 // come from the database; anything else in the request (student_id, programme_id,
-// pte_course_names, system_note) is ignored. Institutions and fulfilled courses are stored only as
+// target_course_id, system_note) is ignored. Institutions and fulfilled courses are stored only as
 // rebuilt from checked fields (utils/applicationForm.js).
 router.post('/applications', verifyToken, requireRole('student'), async (req, res) => {
     const { student_note } = req.body;
@@ -84,9 +84,6 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             const c = byId.get(id);
             return { course_id: c.id, course_code: c.course_code, course_name: c.course_name, credits: c.credits };
         });
-        // Legacy text list, still read by the reviewer and admin screens and the term book.
-        // To be dropped after the reviewer and admin rounds (use target_courses instead).
-        const pteCourseNames = targetCourses.map((c) => `${c.course_code} (${c.course_name})`).join(' + ');
 
         // 2b. One active application per PTE course: refused while one for the same course
         //     (code + programme, so it also works after courses are re-imported) is still open or approved.
@@ -123,9 +120,10 @@ router.post('/applications', verifyToken, requireRole('student'), async (req, re
             // programme sees it; the admin may assign it later (round 2 Group 1)
             const { rows } = await client.query(
                 `INSERT INTO applications 
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, syllabus_reasons, student_note, status, semester_id) 
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, target_course_id, system_note, syllabus_reasons, student_note, status, semester_id) 
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11) RETURNING id`,
-                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, pteCourseNames, syllabusNote(reasons), reasons, studentNote, submission.submitSemester.id]
+                // target_course_id (migration 028): the course checked above; target_courses: what it was called now
+                [student_id, programmeId, JSON.stringify(form.institutions), JSON.stringify(form.fulfilledCourses), JSON.stringify(targetCourses), targetCode, targetCourses[0].course_id, syllabusNote(reasons), reasons, studentNote, submission.submitSemester.id]
             );
             await addEvent(client, { applicationId: rows[0].id, kind: 'submitted', actorRole: actorRoleOf(req.actor), actorId: req.actor.id, status: 'pending', note: studentNote });
             return rows[0];
@@ -378,7 +376,7 @@ router.put('/applications/:id/withdraw', verifyToken, requireRole('student'), as
 });
 
 // Resubmit adds a note and evidence files only. Target courses and programme can't be changed
-// here: any target_course_ids, pte_course_names or programme_id in the request is ignored.
+// here: any target_course_ids or programme_id in the request is ignored (the course pointer stays).
 router.put('/applications/:id/resubmit', verifyToken, requireRole('student'), async (req, res) => {
     const id = Number(req.params.id);
     const { student_resubmit_note, new_files } = req.body;

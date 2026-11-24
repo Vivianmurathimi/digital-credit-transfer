@@ -129,6 +129,16 @@ same programme is never created twice under two codes (`backend/utils/programmeM
 Nothing is saved before the confirmation, and the import is one transaction. The Programmes table shows
 a programme's other codes ("Also imported as: CIVIL").
 
+## An application and its course
+
+Each application points to the PTE course it applies for (`applications.target_course_id`,
+migration 028). The database refuses to delete a course an application points to, also a withdrawn
+one's (it stays in the history), so Programmes & Courses and the import only offer Delete for unused
+courses; hiding is always possible. Next to the pointer, the application keeps what the course was
+called at submission (`target_courses`: code, name, credits), so PDFs and the history show what the
+student applied for even after a later import renames the course. The fulfilled courses from the
+student's earlier university are only kept as written, since they are not in this catalogue.
+
 ## The semester timeline
 
 Several semesters can be in progress at once: the next one's application period may open while the

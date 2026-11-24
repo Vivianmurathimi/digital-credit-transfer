@@ -326,6 +326,9 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | 4ad | **Change the grade (fixes Part A); the student's own PDF (fixes 4a)**, a temporary programme | Change the grade: without a grade; to the reviewer's grade; to 9; to 3 without a note; again; on a rejection; by the admin as committee | `400 GRADE_REQUIRED`; `400 GRADE_UNCHANGED`; `400 INVALID_FINAL_GRADE`; `200`, still approved, final 3, the reviewer's 4 kept, changed; `409 ALREADY_DECIDED`; `400 NOT_APPROVED`; `200`, recorded as the admin |
 | | | What the student sees after a grade change | approved, final grade 3, the reviewer's reason, no reviewer grade |
 | | | `GET /api/applications/mine/:id/pdf`: own; another student's; an unknown id; not a number; a reviewer; the admin; no token | `200` PDF `application-<id>.pdf`; `404`; `404`; `404`; `403`; `403`; `401` (what the PDF holds: `npm test`, committeeGrade) |
+| 4ae | **Each application points to its course (DB cleanup 1, migration 028)**, a temporary programme and semester | The course list; Delete a course an application points to; the same in SQL; once withdrawn; an unused course; the programme | counted, Delete greyed out (`HAS_APPLICATIONS`); `409 DELETE_IN_USE`; refused by `applications_target_course_id_fkey`; `409`; `200`; `409 DELETE_IN_USE` |
+| | | Hide that course; the student's view; analytics after a rename | `200`; "no longer offered", the saved name kept, no `pte_course_names`; counted under the course |
+| 4 | (added, DB cleanup 1) | Submit with a course of the student's programme in another semester; with a hidden course of it | `400 COURSE_NOT_IN_PROGRAMME`; `400 COURSE_NOT_IN_PROGRAMME` |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -370,6 +373,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-24 | throwaway copy with migration 028, each application points to its course (section 4ae, two submit checks) | **1068 passed, 0 failed, 2 skipped** (1070 checks), twice; the same two skips. Fixture courses, temporary programme, semester and application removed |
 | 2026-11-24 | throwaway copy with migration 027, the committee's grade change and the student's own PDF (sections 4w, 4ad) | **1057 passed, 0 failed, 2 skipped** (1059 checks); the same two skips. Temporary programmes, people and applications removed |
 | 2026-11-24 | throwaway copy, fixes 3a and the Overview's no-courses count (section 4ac) | **1038 passed, 0 failed, 2 skipped** (1040 checks); the same two skips. Temporary programme, student, application and course removed |
 | 2026-11-24 | throwaway copy with migration 026, fixes 1b (one programme per import, section 4ab; section 4n imports with the programme chosen first) | **1029 passed, 0 failed, 2 skipped** (1031 checks); the same two skips. Temporary programmes, courses and semester removed |
@@ -586,7 +590,7 @@ Run with both servers started (`backend`: `node server.js`, `frontend`: `npm sta
 | B22 | No profile for staff | Log in as a reviewer and as admin | No profile card (while acting as a student: that student's card) |
 | B23 | Course picker by programme | As `student.cs` and as `student.civil`, open the submit tab | 12 CS courses / 5 Civil courses, never the other programme's |
 | B24 | No courses yet | Delete the Civil courses (`DELETE FROM courses WHERE programme_id = …`), open the submit tab as `student.civil`; then `npm run seed:dev` | "No courses are available for your programme yet." and Submit disabled |
-| B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id` or `pte_course_names`; application appears with both courses |
+| B25 | Submit sends ids only | Submit as `student.cs` with two courses, watch DevTools → Network | Body has `target_course_ids`, no `student_id`; application appears with both courses |
 | B26 | Course removed while the page is open | Choose CS305 and CS101, delete CS305 in the database, press Submit; then `npm run seed:dev` | "…not part of your programme… Removed from your choice: CS305."; CS101 stays chosen |
 
 **Group 4: application form** (as `student.cs@students.example`, submit tab; check the errors in EN, HU and DE)

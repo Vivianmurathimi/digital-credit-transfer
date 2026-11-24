@@ -115,9 +115,13 @@ const programmeBlockers = async (db, programmeId, semesterId) => {
 };
 
 const courseUsageSql = `
-    (SELECT count(*)::int FROM applications a WHERE a.target_courses @> jsonb_build_array(jsonb_build_object('course_id', c.id))) AS applications,
+    (SELECT count(*)::int FROM applications a WHERE a.target_course_id = c.id) AS applications,
     (SELECT count(*)::int FROM application_drafts d WHERE d.data->>'target_course_id' = c.id::text) AS drafts,
     COALESCE(sb.status = 'closed', false) AS semester_closed`;
+
+// The database refused to delete a course an application points to (migration 028, ON DELETE
+// RESTRICT): the routes answer it like any other "in use" refusal
+const isCourseInUseError = (err) => err && err.code === '23503' && err.constraint === 'applications_target_course_id_fkey';
 
 const courseBlockers = (usage) => {
     const reasons = [];
@@ -365,5 +369,5 @@ const fileForProgramme = (file, code) => ({
 
 module.exports = {
     readNeptunFile, resolveProgramme, buildPreview, applyImport, fileForProgramme,
-    programmeBlockers, courseBlockers, courseUsageSql, DECISIONS,
+    programmeBlockers, courseBlockers, courseUsageSql, isCourseInUseError, DECISIONS,
 };

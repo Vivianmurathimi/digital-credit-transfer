@@ -29,7 +29,6 @@ Things deliberately left for later, with the reason and the round they belong to
 
 ## After the reviewer and admin rounds
 
-- **Drop `applications.pte_course_names`.** It is a text copy of `target_courses`, kept only because the reviewer screen, admin screen and term book still read it.
 - **Read notes from the history only.** `reviewer_note`, `student_resubmit_note` and `supplemental_files` duplicate what `application_events` records (Group 8), keeping only the latest of each. Once the reviewer screen, admin screen and term book read the history, they can be dropped.
 
 ## Group 3 (done)

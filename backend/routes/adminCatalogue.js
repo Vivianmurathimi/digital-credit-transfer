@@ -9,7 +9,7 @@ const sendError = require('../utils/sendError');
 const inTransaction = require('../utils/transaction');
 const { programmeHasReviewerSql } = require('../utils/reviewers');
 const { REVIEW_DAYS_DEFAULT, REVIEW_MARGIN_DAYS, COMMITTEE_DAYS_DEFAULT, noActiveCoursesSql } = require('../utils/semesters');
-const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql } = require('../utils/neptun/catalogue');
+const { readNeptunFile, resolveProgramme, buildPreview, applyImport, programmeBlockers, courseBlockers, courseUsageSql, isCourseInUseError } = require('../utils/neptun/catalogue');
 const { loadProgrammes, findLookalikes, checkNewProgramme, cleanNewProgramme } = require('../utils/programmeMatch');
 const { MAX_BYTES } = require('../utils/neptun/parse');
 
@@ -341,6 +341,8 @@ router.post('/admin/catalogue/import', ...adminOnly, receiveCsv, async (req, res
         if (result.error) return sendRefusal(res, result);
         return res.json({ success: true, summary: result.summary });
     } catch (err) {
+        // A course chosen for Delete that an application points to: the database refused it, nothing saved
+        if (isCourseInUseError(err)) return sendError(res, 409, 'DELETE_IN_USE', 'Something you chose to delete is in use, so nothing was saved');
         console.error('❌ Import error:', err.message);
         return sendError(res, 500, 'SERVER_ERROR', 'Could not import the file');
     }
@@ -440,6 +442,7 @@ router.delete('/admin/programmes/:id', ...adminOnly, requireIdParam('id'), async
         if (result.error) return res.status(result.error[0]).json({ error: result.error[2], code: result.error[1], blockedBy: result.blockedBy });
         return res.json({ success: true });
     } catch (err) {
+        if (isCourseInUseError(err)) return res.status(409).json({ error: 'This programme is in use, so it cannot be deleted', code: 'DELETE_IN_USE', blockedBy: ['COURSES_IN_USE'] });
         console.error('❌ Delete programme error:', err.message);
         return sendError(res, 500, 'SERVER_ERROR', 'Could not delete the programme');
     }
@@ -464,7 +467,8 @@ router.put('/admin/courses/:id/status', ...adminOnly, requireIdParam('id'), asyn
     }
 });
 
-// DELETE /api/admin/courses/:id: only when no application or draft names it and its semester is open
+// DELETE /api/admin/courses/:id: only when no application or draft names it and its semester is open.
+// The check below gives the reason; the database refuses it anyway when an application points to it.
 router.delete('/admin/courses/:id', ...adminOnly, requireIdParam('id'), async (req, res) => {
     try {
         const result = await inTransaction(async (client) => {
@@ -481,6 +485,8 @@ router.delete('/admin/courses/:id', ...adminOnly, requireIdParam('id'), async (r
         if (result.error) return res.status(result.error[0]).json({ error: result.error[2], code: result.error[1], blockedBy: result.blockedBy });
         return res.json({ success: true });
     } catch (err) {
+        // The database rule (migration 028) is the last word: an application points to this course
+        if (isCourseInUseError(err)) return res.status(409).json({ error: 'This course is in use, so it cannot be deleted', code: 'DELETE_IN_USE', blockedBy: ['HAS_APPLICATIONS'] });
         console.error('❌ Delete course error:', err.message);
         return sendError(res, 500, 'SERVER_ERROR', 'Could not delete the course');
     }

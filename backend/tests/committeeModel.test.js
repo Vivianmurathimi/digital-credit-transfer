@@ -12,18 +12,27 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const pool = require('../db');
+const { FIXTURE_COURSE_NAME, removeFixtureCourses } = require('./fixtureCourses');
 
 const run = Date.now().toString(36).toUpperCase();
 let student;
 const apps = [];
 
 // suffix: another course code, for applications that stay counted by the duplicate rule
-const insert = (fields, suffix = '') => {
+const insert = async (fields, suffix = '') => {
     const code = `CM${run}${suffix}`.slice(0, 20);
+    // The course it points to (migration 028): a hidden fixture course, made in the same statement
+    // (another test file's cleanup removes fixture courses that no application uses yet)
     const columns = ['student_id', 'programme_id', 'institutions', 'target_courses', 'target_course_code', ...Object.keys(fields)];
     const values = [student.id, student.programme_id, '[]', JSON.stringify([{ course_code: code }]), code, ...Object.values(fields)];
+    const nameParam = `$${values.length + 1}`;
     return pool.query(
-        `INSERT INTO applications (${columns.join(', ')}) VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`, values
+        `WITH fixture_course AS (
+             INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, NULL, $5, ${nameParam}, 3, 'hidden')
+             ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id)
+         INSERT INTO applications (${columns.join(', ')}, target_course_id)
+         VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')}, (SELECT id FROM fixture_course)) RETURNING id`,
+        [...values, FIXTURE_COURSE_NAME]
     ).then((r) => { apps.push(r.rows[0].id); return r.rows[0].id; });
 };
 // Refused by one of these rules (a row breaking two rules is reported by one of them)
@@ -43,6 +52,7 @@ before(async () => {
 
 after(async () => {
     if (apps.length) await pool.query('DELETE FROM applications WHERE id = ANY($1)', [apps]);
+    await removeFixtureCourses(pool); // their courses (migration 028), before programmes and semesters
     await pool.query('DELETE FROM users WHERE id = $1', [student.id]);
     await pool.end();
 });

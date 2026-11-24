@@ -85,13 +85,13 @@ const semesterAnalytics = async (db, semesterId) => {
 
     // ---- top requested courses ----
     const topCourses = (await db.query(
-        `SELECT p.code AS programme_code, p.name_en, p.name_hu, p.name_de, a.target_course_code AS course_code,
-                (array_agg(a.target_courses->0->>'course_name' ORDER BY a.id DESC))[1] AS course_name,
+        `SELECT p.code AS programme_code, p.name_en, p.name_hu, p.name_de, c.course_code, c.course_name,
                 count(*)::int AS applications
          FROM applications a JOIN programmes p ON p.id = a.programme_id
+         JOIN courses c ON c.id = a.target_course_id -- the course itself (DB cleanup 1, migration 028)
          WHERE a.semester_id = $1 AND a.status <> 'withdrawn'
-         GROUP BY p.id, a.target_course_code
-         ORDER BY applications DESC, p.code, a.target_course_code
+         GROUP BY p.id, c.id
+         ORDER BY applications DESC, p.code, c.course_code
          LIMIT ${TOP_COURSES}`,
         [semesterId]
     )).rows.map((r) => ({ programme: names(r), courseCode: r.course_code, courseName: r.course_name, applications: r.applications }));

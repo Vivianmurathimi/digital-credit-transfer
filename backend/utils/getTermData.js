@@ -106,7 +106,7 @@ const studentDecision = (row) => {
 
 const loadTermData = async ({ where, params, from, to, label = null, showCommitteeMember = false, forStudent = false }) => {
     const result = await pool.query(
-        `SELECT a.id, a.status, a.fulfilled_courses_json, a.pte_course_names,
+        `SELECT a.id, a.status, a.fulfilled_courses_json, a.target_courses,
                 a.student_note, a.system_note, a.reviewer_note, a.student_resubmit_note,
                 a.supplemental_files,
                 (SELECT e.reason_code FROM application_events e
@@ -178,7 +178,9 @@ const loadTermData = async ({ where, params, from, to, label = null, showCommitt
                 } : null,
             } : null,
             courses,
-            pteCourses: splitList(row.pte_course_names, ' + '),
+            // What the student applied for, as saved at submission (DB cleanup 1: the course may have
+            // been renamed or hidden since): "CODE (Name)"
+            pteCourses: parseCourses(row.target_courses).map((c) => (c.course_name ? `${c.course_code} (${c.course_name})` : c.course_code)).filter(Boolean),
             notes: {
                 student: row.student_note,
                 system: row.system_note,

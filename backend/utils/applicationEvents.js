@@ -54,7 +54,7 @@ const COMMITTEE_FLOW = "a.committee_state IN ('awaiting', 'kept', 'changed')";
 // The history steps a student may see (alias e; a = the application)
 const STUDENT_VISIBLE_EVENT = `NOT (e.kind = 'decided' AND ${COMMITTEE_FLOW})`;
 const STUDENT_APPLICATION_QUERY = `
-    SELECT a.id, a.status, a.target_courses, a.target_course_code, a.pte_course_names, a.fulfilled_courses_json,
+    SELECT a.id, a.status, a.target_courses, a.target_course_code, a.fulfilled_courses_json,
            CASE WHEN ${COMMITTEE_FLOW} THEN NULL ELSE a.reviewer_note END AS reviewer_note,
            a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
            CASE WHEN a.status = 'approved' THEN a.final_grade END AS final_grade,
@@ -64,7 +64,7 @@ const STUDENT_APPLICATION_QUERY = `
            d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
            sb.name AS semester_name, COALESCE(sb.status = 'active', false) AS current_semester,
            -- The chosen PTE course was hidden or removed later (admin round Group 4): "no longer offered"
-           NOT EXISTS (SELECT 1 FROM courses oc WHERE oc.id::text = a.target_courses->0->>'course_id' AND oc.status = 'active') AS course_no_longer_offered
+           NOT EXISTS (SELECT 1 FROM courses oc WHERE oc.id = a.target_course_id AND oc.status = 'active') AS course_no_longer_offered
     FROM applications a
     LEFT JOIN semester_bounds sb ON sb.id = a.semester_id
     LEFT JOIN LATERAL (

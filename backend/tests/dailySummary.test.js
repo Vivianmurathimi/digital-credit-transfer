@@ -15,6 +15,7 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const pool = require('../db');
+const { removeFixtureCourses } = require('./fixtureCourses');
 const { sendDailySummaries, remindReviewersBeforeReviewDeadline, DAILY_SUMMARY_HOUR } = require('../jobs/applicationJobs');
 
 const run = Date.now().toString(36).toUpperCase();
@@ -37,8 +38,8 @@ const summaries = (now, summarize) => sendDailySummaries({ now, summarize, onlyR
 const application = async (n, { status = 'pending', semester = null } = {}) => {
     const code = `ZSUM${run}${n}`.slice(0, 20);
     const id = (await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
-         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_university_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
+         VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
         [student.id, programmeId, JSON.stringify([{ course_code: code, course_name: `Summary course ${n}` }]), code, status, semester]
     )).rows[0].id;
     apps.push(id);
@@ -75,6 +76,7 @@ before(async () => {
 
 after(async () => {
     if (apps.length) await pool.query('DELETE FROM applications WHERE id = ANY($1)', [apps]);
+    await removeFixtureCourses(pool); // their courses (migration 028), before programmes and semesters
     if (semesterId) await pool.query('DELETE FROM semesters WHERE id = $1', [semesterId]);
     await pool.query('DELETE FROM users WHERE email LIKE $1', [`%-${run.toLowerCase()}@summary-test.invalid`]); // links and summaries go with them
     await pool.query('DELETE FROM programmes WHERE id = $1', [programmeId]);

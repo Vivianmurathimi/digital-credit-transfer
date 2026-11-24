@@ -236,7 +236,7 @@ const seed = async (pool) => {
         }
         const { rows } = await pool.query(
             `INSERT INTO applications
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names,
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, target_course_id,
                  system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id, created_at,
                  reviewer_note, student_resubmit_note, supplemental_files, reviewed_by, reviewed_at,
                  info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale,
@@ -252,7 +252,7 @@ const seed = async (pool) => {
             [
                 student.id, programmes[student.programme],
                 JSON.stringify([{ name: institution.name, country: institution.countryCode, grading_file: gradingFile }]),
-                JSON.stringify([row]), JSON.stringify([target]), normalizeCourseCode(target.course_code), `${target.course_code} (${target.course_name})`,
+                JSON.stringify([row]), JSON.stringify([target]), normalizeCourseCode(target.course_code), target.course_id,
                 syllabusNote(reasons), reasons, spec.note || null, final.status, semesters[spec.semester],
                 // open applications are shared (round 2 Group 1); decided ones name the programme's reviewer
                 ['pending', 'needs_info'].includes(final.status) ? null : reviewerOf(student.programme).id, utc(spec.submittedAt),
