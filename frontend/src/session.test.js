@@ -25,3 +25,20 @@ test('acting claims on a superadmin token are ignored (the server never issues s
     const token = tokenFor({ ...base, id: 1, role: 'superadmin', acting: { sessionId: 3, actorId: 1, name: 'x' } });
     expect(evaluateSession({ token, now }).view.acting).toBe(false);
 });
+
+test('a committee member\'s session (round 2 Group 2) is valid and shows the committee dashboard', () => {
+    const { valid, view } = evaluateSession({ token: tokenFor({ ...base, id: 33, role: 'committee' }), now });
+    expect(valid).toBe(true);
+    expect(view).toEqual({ userId: 33, role: 'committee', name: '', acting: false });
+});
+
+test('the admin acting as a committee member: valid, acting, with the banner name', () => {
+    const token = tokenFor({ ...base, id: 33, role: 'committee', acting: { sessionId: 4, actorId: 1, name: 'Martha Vee' } });
+    const { valid, view } = evaluateSession({ token, now });
+    expect(valid).toBe(true);
+    expect(view).toEqual({ userId: 33, role: 'committee', name: 'Martha Vee', acting: true });
+});
+
+test('an unknown role is still refused', () => {
+    expect(evaluateSession({ token: tokenFor({ ...base, id: 5, role: 'janitor' }), now })).toEqual({ valid: false, reason: 'INVALID_TOKEN' });
+});

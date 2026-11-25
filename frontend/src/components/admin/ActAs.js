@@ -5,8 +5,8 @@ import { getErrorMessage } from '../../errorMessage';
 import { startActing } from '../../acting';
 import { card } from './adminStyles';
 
-// Act as a student or a reviewer (admin round Group 1; in the Students and Reviewers sections of
-// the admin menu since Group 5). The server starts and records the session; everything done in it
+// Act as a student, a reviewer or a committee member (admin round Group 1; in the Students, Reviewers
+// and Committee sections of the admin menu since Group 5 and round 2 Group 2). The server starts and records the session; everything done in it
 // is saved as Admin. Removed reviewers are greyed out (nobody can act as them).
 // onActingStarted: called once the session is the person's (the dashboard then shows their screen)
 const ActAs = ({ role, onActingStarted }) => {

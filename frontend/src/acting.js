@@ -1,7 +1,7 @@
 import http from './http';
 import { saveSession } from './session';
 
-// The admin acting as a student or reviewer (admin round Group 1). The server issues a session
+// The admin acting as a student, reviewer or committee member (admin round Group 1; committee: round 2 Group 2). The server issues a session
 // token for that person which also carries the admin's id; Exit ends it on the server and gives
 // the admin's own session back. Nothing else is stored in the browser.
 

@@ -12,7 +12,7 @@ const ROLE_KEY = 'role';
 const OLD_IMPERSONATION_KEYS = ['originalRole', 'impersonatedRole', 'impersonatedUserId', 'impersonatedName'];
 const SESSION_KEYS = [TOKEN_KEY, ROLE_KEY, ...OLD_IMPERSONATION_KEYS];
 
-export const VALID_ROLES = ['student', 'reviewer', 'superadmin'];
+export const VALID_ROLES = ['student', 'reviewer', 'committee', 'superadmin'];
 
 // Reasons the login page may show after ?reason=. Anything else in the address is ignored,
 // because anyone can type a ?reason= value into the URL.
@@ -77,8 +77,8 @@ export const msUntilExpiry = () => {
  * Returns { valid: false, reason } or { valid: true, user, view }:
  * - user: the account the session is for, read from the TOKEN (not the separate 'role' key,
  *   which anyone can edit)
- * - view: whose dashboard to show. While the admin acts as a student or reviewer (admin round
- *   Group 1) the token itself is that person's, plus `acting` ({ sessionId, actorId, name }),
+ * - view: whose dashboard to show. While the admin acts as a student, reviewer or committee member
+ *   (admin round Group 1; committee: round 2 Group 2) the token itself is that person's, plus `acting` ({ sessionId, actorId, name }),
  *   which the server issued; then `acting` is true and `name` is the person's name for the banner.
  *
  * This only decides which screens to show. The backend checks every request itself.
@@ -96,8 +96,8 @@ export const evaluateSession = ({ token, now = Date.now() }) => {
     if (now - startedAt > MAX_SESSION_MS) return { valid: false, reason: 'SESSION_TOO_OLD' };
 
     const user = { id: payload.id, role: payload.role };
-    // Only a student or reviewer session can be an acting one (the server never issues another)
-    const acting = !!payload.acting && ['student', 'reviewer'].includes(payload.role);
+    // Only a student, reviewer or committee member session can be an acting one (the server never issues another)
+    const acting = !!payload.acting && ['student', 'reviewer', 'committee'].includes(payload.role);
     const view = { userId: user.id, role: user.role, name: acting ? String(payload.acting.name || '') : '', acting };
 
     return { valid: true, user, view };
