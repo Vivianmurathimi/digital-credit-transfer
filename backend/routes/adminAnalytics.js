@@ -64,9 +64,9 @@ const HEADERS = {
     },
     // The committee (round 2 Group 2)
     committee: {
-        en: ['Programme', 'Awaiting the committee', 'Kept', 'Changed', 'Changed: approved to rejected', 'Changed: rejected to approved', 'Kept with another grade', 'Changed (%)', 'Average days, reviewer decision to committee', 'Median days, reviewer decision to committee'],
-        hu: ['Szak', 'Bizottságra vár', 'Megtartva', 'Megváltoztatva', 'Megváltoztatva: elfogadásból elutasítás', 'Megváltoztatva: elutasításból elfogadás', 'Megtartva más jeggyel', 'Megváltoztatva (%)', 'Átlagos napok a bírálói döntéstől a bizottságig', 'Napok mediánja a bírálói döntéstől a bizottságig'],
-        de: ['Studiengang', 'Wartet auf den Ausschuss', 'Bestätigt', 'Geändert', 'Geändert: genehmigt zu abgelehnt', 'Geändert: abgelehnt zu genehmigt', 'Bestätigt mit anderer Note', 'Geändert (%)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Mittelwert)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Median)'],
+        en: ['Programme', 'Awaiting the committee', 'Kept', 'Changed', 'Changed: approved to rejected', 'Changed: rejected to approved', 'Changed: grade', 'Changed (%)', 'Average days, reviewer decision to committee', 'Median days, reviewer decision to committee'],
+        hu: ['Szak', 'Bizottságra vár', 'Megtartva', 'Megváltoztatva', 'Megváltoztatva: elfogadásból elutasítás', 'Megváltoztatva: elutasításból elfogadás', 'Megváltoztatva: jegy', 'Megváltoztatva (%)', 'Átlagos napok a bírálói döntéstől a bizottságig', 'Napok mediánja a bírálói döntéstől a bizottságig'],
+        de: ['Studiengang', 'Wartet auf den Ausschuss', 'Bestätigt', 'Geändert', 'Geändert: genehmigt zu abgelehnt', 'Geändert: abgelehnt zu genehmigt', 'Geändert: Note', 'Geändert (%)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Mittelwert)', 'Tage von der Gutachterentscheidung bis zum Ausschuss (Median)'],
     },
     courses: { en: ['Programme', 'Course code', 'Course', 'Applications'], hu: ['Szak', 'Tárgykód', 'Kurzus', 'Kérelmek'], de: ['Studiengang', 'Kurscode', 'Kurs', 'Anträge'] },
 };
@@ -92,7 +92,7 @@ router.get('/admin/analytics/export.csv', ...adminOnly, async (req, res) => {
         }
         if (table === 'committee') {
             rows = [...a.committee.byProgramme, a.committee.overall].map((r) => [
-                programmeText(r.programme, lang), r.awaiting, r.kept, r.changed, r.changedToRejected, r.changedToApproved, r.keptWithNewGrade,
+                programmeText(r.programme, lang), r.awaiting, r.kept, r.changed, r.changedToRejected, r.changedToApproved, r.gradeChanged,
                 r.changedPercent, r.averageDays, r.medianDays,
             ]);
         }

@@ -16,6 +16,7 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const pool = require('../db');
+const { removeFixtureCourses } = require('./fixtureCourses');
 const { periodFor } = require('../utils/applicationPeriod');
 
 const jobsModule = '../jobs/applicationJobs';
@@ -54,9 +55,9 @@ const recorder = () => {
 const application = async (status, student = students[0], semester = semesterId) => {
     const code = `SEMTEST${Date.now().toString(36)}${created.length}`.toUpperCase();
     const { rows } = await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade, committee_state)
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_deadline, final_grade, committee_state, target_course_id)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN $7::timestamptz END,
-                 CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                 CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
         [student.id, student.programme_id, JSON.stringify([{ course_code: code, course_name: 'Semester test', credits: 1 }]), code, status, semester,
             new Date(ENDS_AT.getTime() + 48 * HOUR)]
     );
@@ -102,6 +103,7 @@ before(async () => {
 
 after(async () => {
     if (created.length) await pool.query('DELETE FROM applications WHERE id = ANY($1)', [created]);
+    await removeFixtureCourses(pool); // their courses (migration 028), before programmes and semesters
     await pool.query('DELETE FROM late_access WHERE semester_id = ANY($1)', [[semesterId, raceSemesterId, laterSemesterId]]);
     await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [[semesterId, raceSemesterId, laterSemesterId]]);
     // The two students' drafts exactly as they were

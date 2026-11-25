@@ -167,7 +167,9 @@ router.post('/login', async (req, res) => {
         if (result.rows.length === 0) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
 
         const user = result.rows[0];
-        
+        // A deleted account (fixes 1a) never logs in, whatever is typed
+        if (user.deleted_at) return sendError(res, 401, 'INVALID_CREDENTIALS', 'Invalid credentials');
+
         // 🆕 YOUR ADDITION: Block unverified users right here!
         if (!user.is_verified) {
             return sendError(res, 403, 'EMAIL_NOT_VERIFIED', 'Please verify your email first. Check your inbox!');

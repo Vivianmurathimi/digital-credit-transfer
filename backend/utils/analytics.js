@@ -85,13 +85,13 @@ const semesterAnalytics = async (db, semesterId) => {
 
     // ---- top requested courses ----
     const topCourses = (await db.query(
-        `SELECT p.code AS programme_code, p.name_en, p.name_hu, p.name_de, a.target_course_code AS course_code,
-                (array_agg(a.target_courses->0->>'course_name' ORDER BY a.id DESC))[1] AS course_name,
+        `SELECT p.code AS programme_code, p.name_en, p.name_hu, p.name_de, c.course_code, c.course_name,
                 count(*)::int AS applications
          FROM applications a JOIN programmes p ON p.id = a.programme_id
+         JOIN courses c ON c.id = a.target_course_id -- the course itself (DB cleanup 1, migration 028)
          WHERE a.semester_id = $1 AND a.status <> 'withdrawn'
-         GROUP BY p.id, a.target_course_code
-         ORDER BY applications DESC, p.code, a.target_course_code
+         GROUP BY p.id, c.id
+         ORDER BY applications DESC, p.code, c.course_code
          LIMIT ${TOP_COURSES}`,
         [semesterId]
     )).rows.map((r) => ({ programme: names(r), courseCode: r.course_code, courseName: r.course_name, applications: r.applications }));
@@ -102,9 +102,10 @@ const semesterAnalytics = async (db, semesterId) => {
                 count(*) FILTER (WHERE a.committee_state = 'awaiting')::int AS awaiting,
                 count(*) FILTER (WHERE a.committee_state = 'kept')::int AS kept,
                 count(*) FILTER (WHERE a.committee_state = 'changed')::int AS changed,
-                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved')::int AS changed_to_rejected,
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved' AND a.status = 'rejected')::int AS changed_to_rejected,
                 count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'rejected')::int AS changed_to_approved,
-                count(*) FILTER (WHERE a.committee_state = 'kept' AND a.final_grade IS DISTINCT FROM a.reviewer_grade)::int AS kept_new_grade,
+                -- fixes Part A: still approved, with the committee's grade (counted as changed)
+                count(*) FILTER (WHERE a.committee_state = 'changed' AND a.reviewer_decision = 'approved' AND a.status = 'approved')::int AS grade_changed,
                 avg(GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0)) FILTER (WHERE a.committee_at IS NOT NULL) AS average_days,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY GREATEST(EXTRACT(EPOCH FROM (a.committee_at - a.decided_at)) / 86400, 0))
                     FILTER (WHERE a.committee_at IS NOT NULL) AS median_days
@@ -116,13 +117,13 @@ const semesterAnalytics = async (db, semesterId) => {
     )).rows.map((r) => ({
         programme: r.programme_id === null ? null : names(r),
         awaiting: r.awaiting, kept: r.kept, changed: r.changed,
-        changedToRejected: r.changed_to_rejected, changedToApproved: r.changed_to_approved, keptWithNewGrade: r.kept_new_grade,
+        changedToRejected: r.changed_to_rejected, changedToApproved: r.changed_to_approved, gradeChanged: r.grade_changed,
         // of the decisions the committee handled, the share it changed (percent, one decimal); null: none handled
         changedPercent: r.kept + r.changed > 0 ? round1((100 * r.changed) / (r.kept + r.changed)) : null,
         averageDays: round1(r.average_days), medianDays: round1(r.median_days),
     }));
     const overallCommittee = committeeRows.find((r) => r.programme === null) || {
-        programme: null, awaiting: 0, kept: 0, changed: 0, changedToRejected: 0, changedToApproved: 0, keptWithNewGrade: 0, changedPercent: null, averageDays: null, medianDays: null,
+        programme: null, awaiting: 0, kept: 0, changed: 0, changedToRejected: 0, changedToApproved: 0, gradeChanged: 0, changedPercent: null, averageDays: null, medianDays: null,
     };
 
     return {

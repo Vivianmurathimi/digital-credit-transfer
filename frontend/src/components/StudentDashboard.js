@@ -7,6 +7,7 @@ import { getErrorCode, getErrorMessage, getFieldErrors } from '../errorMessage';
 import SecureImage from './SecureImage';
 import SubmitSummary from './SubmitSummary';
 import ApplicationDetail from './ApplicationDetail';
+import StudentPdfButton from './StudentPdfButton';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import SubmissionBanner, { CLOSED_CODES } from './SubmissionBanner';
 import StatusChip from './StatusChip';
@@ -857,7 +858,7 @@ const StudentDashboard = ({ userId }) => {
                             const target = app.target_courses?.[0];
                             const course = target
                                 ? t('student_target_course_chip', { code: target.course_code, name: target.course_name, credits: target.credits })
-                                : app.pte_course_names || '';
+                                : app.target_course_code || '';
                             // The reviewer's note (or a translated reason, e.g. an automatic rejection) where it matters.
                             // A decision shows its own rationale (reviewer Group 6); an approval also its final grade.
                             const byCommittee = isCommitteeDecision(app);
@@ -905,6 +906,7 @@ const StudentDashboard = ({ userId }) => {
                                     <button type="button" onClick={(e) => openDetail(app.id, e, readOnly)} aria-label={t('student_view_details_label', { course })} style={{ padding: '6px 12px', backgroundColor: 'var(--surface-accent)', color: 'var(--link)', border: '1px solid var(--link)', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
                                         {t('student_view_details')}
                                     </button>
+                                    <div style={{ marginTop: '6px' }}><StudentPdfButton applicationId={app.id} course={course} /></div>
                                 </td>
                             </tr>
                         )})}

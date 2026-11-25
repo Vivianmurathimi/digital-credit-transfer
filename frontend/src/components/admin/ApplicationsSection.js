@@ -7,6 +7,7 @@ import downloadPdf from '../../downloadPdf';
 import { formatDateTime } from '../../dates';
 import DecisionModal from '../reviewer/DecisionModal';
 import CommitteeDecisionModal from '../committee/CommitteeDecisionModal';
+import CommitteeActions from '../committee/CommitteeActions';
 import CommitteeOutcome from '../committee/CommitteeOutcome';
 import Chip from '../reviewer/Chip';
 import StatusChip from '../StatusChip';
@@ -27,6 +28,9 @@ const parseCourses = (value) => {
     try { return JSON.parse(value); } catch { return []; }
 };
 
+// The PTE course applied for, as saved at submission (DB cleanup 1): "CODE (Name)"
+const targetText = (app) => parseCourses(app.target_courses)
+    .map((c) => (c.course_name ? `${c.course_code} (${c.course_name})` : c.course_code)).filter(Boolean).join(' + ') || app.target_course_code || '';
 const COMMITTEE_FILTERS = ['awaiting', 'kept', 'changed'];
 
 const ApplicationsSection = ({ onChange = () => {} }) => {
@@ -133,7 +137,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                         </td>
                                         <td style={{ padding: '12px', color: 'var(--text-strong)', fontSize: '13px', verticalAlign: 'top' }}>
                                             <div style={{ marginBottom: '5px' }}><strong style={{ color: 'var(--link)' }}>{t('superadmin_from_label')}</strong> {fulfilledNames || '—'}</div>
-                                            <div><strong style={{ color: 'var(--success-accent)' }}>{t('superadmin_to_label')}</strong> {app.pte_course_names && app.pte_course_names.length > 50 ? `${app.pte_course_names.substring(0, 50)}...` : app.pte_course_names}</div>
+                                            <div><strong style={{ color: 'var(--success-accent)' }}>{t('superadmin_to_label')}</strong> {targetText(app).length > 50 ? `${targetText(app).substring(0, 50)}...` : targetText(app)}</div>
                                         </td>
                                         <td style={{ padding: '12px', textAlign: 'center', verticalAlign: 'top' }}>
                                             <StatusChip status={app.status}>{t(`status_${app.status}`)}</StatusChip>
@@ -153,7 +157,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                                 : app.committee_state === 'kept' || app.committee_state === 'changed' ? (
                                                     <>
                                                         {app.reviewer_decision && <div>{t('committee_reviewer_label')} {t(`status_${app.reviewer_decision}`)}</div>}
-                                                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} at={app.committee_at}
+                                                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} reviewerDecision={app.reviewer_decision} at={app.committee_at}
                                                             note={app.committee_note} byRole={app.committee_by_role} byName={app.committee_by_name} />
                                                     </>
                                                 ) : '—'}
@@ -173,14 +177,7 @@ const ApplicationsSection = ({ onChange = () => {} }) => {
                                             {/* Awaiting the committee: the admin can take the committee step directly, recorded as "Admin, as committee" */}
                                             {app.status === 'awaiting_committee' && (
                                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center', marginBottom: '8px' }}>
-                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'keep' }); }}
-                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-approve)', color: 'var(--cue-btn-approve-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
-                                                        {t('committee_keep_button')}
-                                                    </button>
-                                                    <button type="button" onClick={() => { setNotice(''); setCommitteeStep({ app, action: 'change' }); }}
-                                                        style={{ padding: '6px 12px', backgroundColor: 'var(--cue-btn-info)', color: 'var(--cue-btn-info-text)', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
-                                                        {t('committee_change_button')}
-                                                    </button>
+                                                    <CommitteeActions compact reviewerDecision={app.reviewer_decision} onAct={(action) => { setNotice(''); setCommitteeStep({ app, action }); }} />
                                                 </div>
                                             )}
                                             {/* Reset and force approve break the decision rules (approvals need a grade, decided

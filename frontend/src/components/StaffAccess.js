@@ -5,6 +5,7 @@ import { getErrorMessage } from '../errorMessage';
 import { formatDate } from '../dates';
 import { programmeName } from '../programmeName';
 import Chip from './reviewer/Chip';
+import ConfirmModal from './ConfirmModal';
 
 // Staff access (admin round Group 2; round 2 Group 1: staff linked to programmes).
 // Reviewers and admins get in only by invite.
@@ -13,6 +14,9 @@ import Chip from './reviewer/Chip';
 // - Invites: every invite with its status (sent / accepted / expired / cancelled), resend, cancel
 // - Reviewers: their programmes and role in each; add a programme, remove from one, make an extra
 //   reviewer the main one, remove the reviewer. Admins: deactivate an admin.
+// Fixes 1a: Activate a deactivated person (the same account, password and programmes) and Delete
+// (for real without history, hidden with it), an Active / Deactivated filter, and the in-app
+// confirmation (ConfirmModal) instead of window.confirm.
 // The server enforces every rule (one main reviewer per programme, not yourself, not the last
 // admin); the buttons are only hidden where the server would refuse anyway.
 
@@ -59,6 +63,12 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
     const [sending, setSending] = useState(false);
     const [created, setCreated] = useState(null); // { email, link } of the last invite sent or resent
     const [actionError, setActionError] = useState('');
+    // Fixes 1a: the in-app confirmation ({ title, text, confirmLabel, danger, run }), a notice after
+    // Activate / Delete, and the Active / Deactivated filter of the people lists
+    const [confirming, setConfirming] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [notice, setNotice] = useState('');
+    const [personFilter, setPersonFilter] = useState('');
 
     const loadInvites = useCallback(async () => {
         try {
@@ -106,13 +116,15 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
         }
     };
 
-    // Runs one action after a confirmation, then reloads both lists
-    const act = async (confirmText, request) => {
-        if (confirmText && !window.confirm(confirmText)) return;
+    // Runs one action, then reloads both lists. confirm: a text, or { text, confirmLabel, danger }:
+    // asked first in the in-app dialog (fixes 1a: no window.confirm). onDone gets the answer.
+    const run = async (request, onDone) => {
         setActionError('');
+        setNotice('');
         try {
             const data = await request();
             if (data?.link) setCreated({ email: data.invite.email, link: data.link });
+            if (onDone) onDone(data);
         } catch (err) {
             setActionError(getErrorMessage(err, t, 'staff_action_failed'));
         }
@@ -120,6 +132,43 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
         loadStaff();
         onChange();
     };
+    const act = (confirm, request, onDone) => {
+        if (!confirm) return run(request, onDone);
+        const ask = typeof confirm === 'string' ? { text: confirm } : confirm;
+        setConfirming({ title: t('confirm_title'), ...ask, run: () => run(request, onDone) });
+        return Promise.resolve();
+    };
+    const confirmNow = async () => {
+        setBusy(true);
+        try { await confirming.run(); } finally { setBusy(false); setConfirming(null); }
+    };
+
+    // Activate (fixes 1a): the same account, password and programmes back
+    const activate = (person) => act(null, () => http.put(`users/${person.id}/activate`).json(), (data) => {
+        const restored = (data.restored || []).map((l) => l.code).join(', ');
+        setNotice([
+            t('staff_activated', { name: person.name }),
+            restored && t('staff_activated_programmes', { programmes: restored }),
+            (data.becameExtra || []).length > 0 && t('staff_activated_became_extra', { programmes: data.becameExtra.join(', ') }),
+        ].filter(Boolean).join(' '));
+    });
+    // Delete (fixes 1a): for real without history, hidden with it (the name stays on the records)
+    const remove = (person) => act(
+        { text: t('staff_confirm_delete', { name: person.name }), confirmLabel: t('staff_delete'), danger: true },
+        () => http.delete(`users/${person.id}`).json(),
+        (data) => setNotice(t(data.outcome === 'hidden' ? 'staff_deleted_hidden' : 'staff_deleted', { name: person.name })),
+    );
+    const shownPeople = (list) => list.filter((person) => !personFilter || (personFilter === 'deactivated') === Boolean(person.deactivated_at));
+    const personFilterSelect = (
+        <p style={{ margin: '6px 0' }}>
+            <label htmlFor={`person-filter-${role}`}>{t('staff_person_filter')}</label>{' '}
+            <select id={`person-filter-${role}`} value={personFilter} onChange={(e) => setPersonFilter(e.target.value)} style={{ padding: '4px' }}>
+                <option value="">{t('staff_person_filter_all')}</option>
+                <option value="active">{t('staff_status_active')}</option>
+                <option value="deactivated">{t('staff_person_filter_deactivated')}</option>
+            </select>
+        </p>
+    );
 
     const roleName = (r) => t({ superadmin: 'staff_role_admin', committee: 'staff_role_committee' }[r] || 'staff_role_reviewer');
     // "Civil Engineering (extra reviewer, standby)"
@@ -231,6 +280,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                 </div>
             )}
             {actionError && <p role="alert" style={{ color: 'var(--error-text)' }}>{actionError}</p>}
+            {notice && <p role="status" style={{ color: 'var(--success-text)', fontWeight: 'bold' }}>{notice}</p>}
 
             {/* Invites */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between', marginTop: '24px' }}>
@@ -289,6 +339,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
             {/* Reviewers, or the committee (the same table: people with programme links) */}
             {withProgrammes && (<>
             <h3 style={{ marginTop: '24px' }}>{t(role === 'committee' ? 'staff_committee_list_title' : 'staff_reviewers_list_title')}</h3>
+            {personFilterSelect}
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -301,9 +352,9 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                         </tr>
                     </thead>
                     <tbody>
-                        {reviewers.length === 0 ? (
+                        {shownPeople(reviewers).length === 0 ? (
                             <tr><td colSpan="5" style={{ ...td, textAlign: 'center', color: 'var(--text-muted)' }}>{t(role === 'committee' ? 'staff_no_committee' : 'staff_no_reviewers')}</td></tr>
-                        ) : reviewers.map((person) => (
+                        ) : shownPeople(reviewers).map((person) => (
                             <tr key={person.id}>
                                 <td style={td}>{person.name}{person.alsoReviewer && <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t('staff_also_reviewer')}</div>}</td>
                                 <td style={td}>
@@ -356,6 +407,13 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                                             {t('staff_remove_reviewer')}
                                         </button>
                                     )}
+                                    {/* Fixes 1a: the same account back, or deleted (a reviewer who also sits on a committee: in the Reviewers section) */}
+                                    {person.deactivated_at && !person.alsoReviewer && (
+                                        <button type="button" style={smallButton()} onClick={() => activate(person)}>{t('staff_activate')}</button>
+                                    )}
+                                    {!person.alsoReviewer && (
+                                        <button type="button" style={smallButton(true)} onClick={() => remove(person)}>{t('staff_delete')}</button>
+                                    )}
                                 </td>
                             </tr>
                         ))}
@@ -368,6 +426,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
             {/* Admins */}
             {role === 'superadmin' && (<>
             <h3 style={{ marginTop: '24px' }}>{t('staff_admins_list_title')}</h3>
+            {personFilterSelect}
             <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
@@ -379,7 +438,7 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                         </tr>
                     </thead>
                     <tbody>
-                        {admins.map((person) => (
+                        {shownPeople(admins).map((person) => (
                             <tr key={person.id}>
                                 <td style={td}>{person.name}{person.is_self && ` (${t('staff_you')})`}</td>
                                 <td style={td}>{person.email}</td>
@@ -391,6 +450,11 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                                             {t('staff_deactivate_admin')}
                                         </button>
                                     )}
+                                    {person.deactivated_at && <button type="button" style={smallButton()} onClick={() => activate(person)}>{t('staff_activate')}</button>}
+                                    {/* Not yourself; an active admin only while another one stays (the server checks it too) */}
+                                    {!person.is_self && (person.deactivated_at || activeAdmins > 1) && (
+                                        <button type="button" style={smallButton(true)} onClick={() => remove(person)}>{t('staff_delete')}</button>
+                                    )}
                                 </td>
                             </tr>
                         ))}
@@ -398,6 +462,10 @@ const StaffAccess = ({ role = 'reviewer', version = 0, onChange = () => {} }) =>
                 </table>
             </div>
             </>)}
+            {confirming && (
+                <ConfirmModal title={confirming.title} text={confirming.text} confirmLabel={confirming.confirmLabel} danger={confirming.danger}
+                    busy={busy} onConfirm={confirmNow} onCancel={() => setConfirming(null)} />
+            )}
         </section>
     );
 };

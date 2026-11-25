@@ -29,9 +29,11 @@ const jwt = require('jsonwebtoken');
 const { JWT_SECRET, ALGORITHM, signSessionToken } = require('../config/jwt');
 const { CORS_ORIGINS } = require('../config/urls');
 const pool = require('../db');
+const { removeFixtureCourses } = require('../tests/fixtureCourses');
 const minioClient = require('../minio');
 const { EVIDENCE_BUCKET, ARCHIVE_BUCKET } = require('../config/buckets');
 const { getFileOwner } = require('../utils/fileOwner');
+const bcrypt = require('bcryptjs');
 const { getApplicationTermData } = require('../utils/getTermData');
 const { LIMITS, hashKey, normalizeEmail } = require('../utils/rateLimit');
 
@@ -110,7 +112,8 @@ const restoreSemesters = async () => {
         done.push('semester times put back');
     }
     if (tempSemesterIds.length > 0) {
-        // Their applications are removed first (removeTempApplications)
+        // Their applications are removed first (removeTempApplications); then their fixture courses (migration 028)
+        await removeFixtureCourses(pool);
         const { rowCount } = await pool.query('DELETE FROM semesters WHERE id = ANY($1)', [tempSemesterIds.splice(0)]);
         done.push(`${rowCount} temporary semester(s) removed`);
     }
@@ -141,7 +144,10 @@ const restoreReviewerAccess = async () => {
     await pool.query("UPDATE users SET deactivated_at = now() WHERE id = ANY($1) AND role = 'reviewer'", [testUsers]);
     await pool.query('DELETE FROM staff_programmes WHERE user_id = ANY($1)', [testUsers]);
     await pool.query('DELETE FROM staff_programmes WHERE user_id = $1 AND NOT (id = ANY($2))', [b.reviewerId, b.links.map((l) => l.id)]);
-    for (const link of b.links) await pool.query('UPDATE staff_programmes SET ended_at = $2 WHERE id = $1', [link.id, link.ended_at]);
+    // A link put back as current is no longer "ended by deactivation" (migration 025: a rule)
+    for (const link of b.links) {
+        await pool.query('UPDATE staff_programmes SET ended_at = $2, ended_by_deactivation = (ended_by_deactivation AND $2::timestamptz IS NOT NULL) WHERE id = $1', [link.id, link.ended_at]);
+    }
     await pool.query('UPDATE users SET deactivated_at = $2 WHERE id = $1', [b.reviewerId, b.deactivatedAt]);
     for (const a of b.assignments) await pool.query('UPDATE applications SET assigned_reviewer_id = $2 WHERE id = $1', [a.id, a.assigned]);
     await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1)', [testUsers]);
@@ -185,6 +191,12 @@ const removeSharingProgramme = async () => {
     await pool.query('DELETE FROM applications WHERE programme_id = ANY($1)', [ids]);
     await removeTestStaff();
     await removeTestStudents();
+    await removeFixtureCourses(pool); // the fixtures' courses (migration 028) keep a programme from going
+    await pool.query('DELETE FROM courses WHERE programme_id = ANY($1) AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.target_course_id = courses.id)', [ids]);
+    // Nothing goes along with a programme any more (migration 029): its links and records first
+    for (const table of ['programme_aliases', 'reviewer_reminders', 'committee_reminders', 'staff_programmes', 'staff_invite_programmes']) {
+        await pool.query(`DELETE FROM ${table} WHERE programme_id = ANY($1)`, [ids]);
+    }
     await pool.query('DELETE FROM programmes WHERE id = ANY($1)', [ids]);
     return ids.length;
 };
@@ -231,6 +243,9 @@ const restoreCatalogue = async () => {
         const codes = b.programmeCodes.splice(0);
         await pool.query('DELETE FROM applications WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
         await pool.query('DELETE FROM courses WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))', [codes]);
+        for (const table of ['programme_aliases', 'reviewer_reminders', 'committee_reminders', 'staff_programmes', 'staff_invite_programmes']) {
+            await pool.query(`DELETE FROM ${table} WHERE programme_id IN (SELECT id FROM programmes WHERE code = ANY($1))`, [codes]);
+        }
         await pool.query('DELETE FROM programmes WHERE code = ANY($1)', [codes]);
     }
     if (b.semesterIds.length) {
@@ -251,6 +266,7 @@ const restoreClose = async () => {
     if (b.tempSemesterId) {
         if (b.bookName) await minioClient.removeObject(ARCHIVE_BUCKET, b.bookName).catch(() => {});
         await pool.query('DELETE FROM applications WHERE semester_id = $1', [b.tempSemesterId]);
+        await removeFixtureCourses(pool);
         await pool.query('DELETE FROM semesters WHERE id = $1', [b.tempSemesterId]);
         b.tempSemesterId = null;
         b.bookName = null;
@@ -372,7 +388,8 @@ const loadTestData = async () => {
                                           WHERE sp.user_id = u.id AND sp.role = 'main' AND sp.ended_at IS NULL ORDER BY sp.id LIMIT 1)) AS programme_id
          FROM users u ORDER BY u.id`
     )).rows;
-    const programmeCodes = (await pool.query('SELECT code FROM programmes ORDER BY code')).rows.map((p) => p.code);
+    // The programmes students can choose (a hidden one is not offered, e.g. an emptied duplicate)
+    const programmeCodes = (await pool.query("SELECT code FROM programmes WHERE status = 'active' ORDER BY code")).rows.map((p) => p.code);
     const apps = (await pool.query('SELECT id, student_id FROM applications ORDER BY id')).rows;
     const filesByOwner = await listFileOwners();
 
@@ -660,6 +677,19 @@ const run = async () => {
                 await expect('Submit with two PTE courses (one per application)', submitAs([ownCourses[0], otherCourses[0]]), 400, 'INVALID_TARGET_COURSES');
             }
             await expect('Submit with a course id that does not exist', submitAs([2147483000]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            // DB cleanup 1: the course must be of the semester students apply to, and offered (temporary courses of A's programme)
+            const tempCourse = async (semesterSql, status) => (await pool.query(
+                `INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, ${semesterSql}, $2, 'Security check temporary', 3, $3) RETURNING id`,
+                [d.studentA.programme_id, `SECTC${status === 'hidden' ? 'H' : 'S'}${Date.now().toString(36)}`.toUpperCase().slice(0, 20), status]
+            )).rows[0].id;
+            const otherSemesterCourse = await tempCourse('NULL', 'active');
+            const hiddenCourse = await tempCourse(SEMESTER_NOW, 'hidden');
+            try {
+                await expect("Submit with a course of A's programme in another semester", submitAs([otherSemesterCourse]), 400, 'COURSE_NOT_IN_PROGRAMME');
+                await expect("Submit with a hidden course of A's programme", submitAs([hiddenCourse]), 400, 'COURSE_NOT_IN_PROGRAMME');
+            } finally {
+                await pool.query('DELETE FROM courses WHERE id = ANY($1)', [[otherSemesterCourse, hiddenCourse]]);
+            }
             await expect('Submit without target courses', submitAs(undefined), 400, 'INVALID_TARGET_COURSES');
             const fieldCheck = await submitAs([2147483000]);
             report(fieldCheck.body?.field === 'target_course_ids', 'Course error names its field', fieldCheck.body?.field || 'no field');
@@ -880,7 +910,7 @@ const run = async () => {
     } else {
         // Only the fields a student may see: an explicit list, never internal columns
         const STUDENT_FIELDS = ['decided_at', 'decided_by', 'decision_reason', 'fulfilled_courses_json', 'id', 'info_deadline', 'last_resubmitted_at',
-            'pte_course_names', 'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
+            'resubmit_count', 'reviewer_note', 'status', 'submitted_at', 'target_course_code', 'target_courses',
             'semester_name', 'current_semester', 'course_no_longer_offered',
             // reviewer Group 6: the final grade and the reason given with a decision (never who decided)
             'final_grade', 'decision_rationale',
@@ -920,8 +950,8 @@ const run = async () => {
         // Two temporary applications of student A, one rejected and one withdrawn (neither blocks
         // anything), deleted again at the end together with their history
         const closedApp = async (status) => (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note, committee_state)
-             VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check', CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
+             VALUES ($1, $2, '[]', $3, $4, $5, 'Temporary application of the security check', CASE WHEN ($5)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: 'SECCHECK', course_name: 'Security check', credits: 1 }]), 'SECCHECK', status]
         )).rows[0].id;
         const rejectedOfA = await closedApp('rejected');
@@ -1013,9 +1043,9 @@ const run = async () => {
         )).rows.filter((c) => !appliedCodes.has(c.course_code.replace(/\s/g, '').toUpperCase()));
         const pastApp = async (status, code) => {
             const id = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, student_note, final_grade, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, 'Temporary application of the security check',
-                         CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                         CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]),
                     code.replace(/\s/g, '').toUpperCase(), status, pastId]
             )).rows[0].id;
@@ -1064,10 +1094,10 @@ const run = async () => {
             seq += 1;
             const code = `SECR${Date.now().toString(36)}${seq}`.toUpperCase();
             const { rows } = await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
-                     student_note, supplemental_files, info_requested_at, info_deadline, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                     student_note, supplemental_files, info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, 'Temporary application of the security check', $8,
-                         CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($7::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                         CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($7::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($5)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
                  RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify(fields.institutions || []), JSON.stringify(fields.courses || []),
                     JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code, status, fields.supplemental || null]
@@ -1279,11 +1309,11 @@ const run = async () => {
                 const code = `SECL${Date.now().toString(36)}${seq}`.toUpperCase();
                 const decided = status === 'approved' || status === 'rejected';
                 const { rows } = await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         decided_by_role, decided_at, info_requested_at, info_deadline, final_grade, committee_state)
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         decided_by_role, decided_at, info_requested_at, info_deadline, final_grade, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 'admin' END, CASE WHEN $7 THEN now() END,
                              CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END,
-                             CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                             CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
                      RETURNING id`,
                     [d.studentA.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Security check list', credits: 1 }]), code, status, semesterId, decided]
                 );
@@ -1401,11 +1431,11 @@ const run = async () => {
             const code = `SECD${Date.now().toString(36)}${seq}`.toUpperCase();
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
-                     final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status,
+                     final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'approved' THEN 4 END,
                          CASE WHEN $6 THEN 'reviewer' END, CASE WHEN $6 THEN now() END,
-                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
                  RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: code, course_name: 'Decision check', credits: 3 }]), code, status, decided]
             );
@@ -1562,10 +1592,10 @@ const run = async () => {
             const code = `SECP${stamp}${seq}`.toUpperCase();
             const decided = status === 'approved' || status === 'rejected';
             const { rows } = await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
-                     decided_by_role, decided_at, final_grade, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($7)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, semester_id,
+                     decided_by_role, decided_at, final_grade, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5, $6::varchar, $7, CASE WHEN $8 THEN 'admin' END, CASE WHEN $8 THEN now() END,
-                         CASE WHEN $6::varchar = 'approved' THEN 4 END, CASE WHEN ($6::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                         CASE WHEN $6::varchar = 'approved' THEN 4 END, CASE WHEN ($6::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($4)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
                  RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify(file ? [{ course_name: 'Past semester check', credits: 1, file }] : []),
                     JSON.stringify([{ course_code: code, course_name: 'Security check past', credits: 1 }]), code, status, semesterId, decided]
@@ -1701,8 +1731,8 @@ const run = async () => {
             seq += 1;
             const code = `SECK${Date.now().toString(36)}${seq}`.toUpperCase();
             return (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
-                 VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'Acting check', credits: 3 }]), code]
             )).rows[0].id;
         };
@@ -1975,10 +2005,10 @@ const run = async () => {
                 const code = `SECM${stamp}${seq}`.toUpperCase();
                 const decided = status === 'approved';
                 return (await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $7 THEN 4 END, CASE WHEN $7 THEN 'reviewer' END, CASE WHEN $7 THEN now() END,
-                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END)
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))
                      RETURNING id`,
                     [account.id, fromId, JSON.stringify([{ course_code: code, course_name: 'Programme check', credits: 3 }]), code, status, current, decided]
                 )).rows[0].id;
@@ -2077,47 +2107,52 @@ const run = async () => {
         const row = (c, name, credits, hu = 'Biztonsági teszt') => `${code};${hu};Security check;Sicherheitstest;${c};${name};${credits}`;
         const file1 = `﻿${[header, row('SC1', 'First', 5), row('SC2', 'Second', 'x'), row('SC3', 'Third', 4), row('SC4', 'Fourth', 3, 'Más név'), row('SC5', 'Fifth', 6)].join('\r\n')}\r\n`;
         const programmesBefore = (await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n;
-        const preview1 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file1 });
+        const hiddenBefore = (await pool.query("SELECT count(*)::int AS n FROM programmes WHERE status = 'hidden'")).rows[0].n;
+        // Fixes 1b: one programme per import, chosen first (here a new one)
+        const newChoice = JSON.stringify({ new: { code, name_hu: 'Biztonsági teszt', name_en: 'Security check', name_de: 'Sicherheitstest' }, confirmed_different: true });
+        const preview1 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: file1 });
         const p1 = preview1.body?.preview || {};
         report(preview1.status === 200 && p1.newProgrammes?.some((p) => p.code === code) && p1.newCourses?.length === 3
             && p1.errors?.some((e) => e.row === 3 && e.code === 'CREDITS_NOT_A_NUMBER') && p1.errors?.some((e) => e.row === 5 && e.code === 'PROGRAMME_NAME_CONFLICT'),
         'Preview: new programme, 3 valid courses, bad rows 3 and 5 reported by number', `${preview1.status} ${p1.newCourses?.length} ${JSON.stringify(p1.errors)}`);
-        report(p1.missingProgrammes?.length > 0 && p1.missingProgrammes.every((p) => p.default === 'keep'), 'Programmes not in the file default to Keep');
+        report(p1.missingProgrammes === undefined, 'Other programmes are not part of the import (one programme per import)');
         report((await pool.query('SELECT count(*)::int AS n FROM programmes')).rows[0].n === programmesBefore, 'The preview saved nothing');
-        await expect('Preview without a file', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId } }), 400, 'NO_FILE');
-        await expect('Preview of a file that is not UTF-8', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: Buffer.from([0x41, 0xff, 0x3b]) }), 400, 'NOT_UTF8');
-        await expect('Preview of a file without the columns', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: 'a;b\n1;2' }), 400, 'MISSING_COLUMNS');
-        await expect('Confirm with another file than the preview', callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: 'x'.repeat(64) }, file: file1 }), 409, 'PREVIEW_MISMATCH');
-        const confirmed1 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p1.hash, decisions: '{}' }, file: file1 });
+        await expect('Preview without a file', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice } }), 400, 'NO_FILE');
+        await expect('Preview of a file that is not UTF-8', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: Buffer.from([0x41, 0xff, 0x3b]) }), 400, 'NOT_UTF8');
+        await expect('Preview of a file without the columns', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: newChoice }, file: 'a;b\n1;2' }), 400, 'MISSING_COLUMNS');
+        await expect('Preview without choosing the programme', callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file1 }), 400, 'INVALID_PROGRAMME');
+        await expect('Confirm with another file than the preview', callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: 'x'.repeat(64), programme: newChoice }, file: file1 }), 409, 'PREVIEW_MISMATCH');
+        const confirmed1 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p1.hash, programme: newChoice, decisions: '{}' }, file: file1 });
         catalogueBackup.programmeCodes.push(code);
         report(confirmed1.status === 200 && confirmed1.body.summary.programmesAdded === 1 && confirmed1.body.summary.coursesAdded === 3 && confirmed1.body.summary.rowsSkipped === 2,
             'Confirm: 1 programme and 3 courses saved, 2 rows skipped', `${confirmed1.status} ${JSON.stringify(confirmed1.body?.summary || confirmed1.body)}`);
         const realHidden = (await pool.query("SELECT count(*)::int AS n FROM programmes WHERE status = 'hidden' AND code <> $1", [code])).rows[0].n;
-        report(realHidden === 0, 'Keep (the default) left every other programme as it was');
+        report(realHidden === hiddenBefore, 'The import left every other programme as it was', `${hiddenBefore} hidden before, ${realHidden} after`);
 
         // Second file: SC1 changed, SC3 and SC5 missing (default Hide); an application uses SC3
         const courseId = async (c) => (await pool.query('SELECT c.id FROM courses c JOIN programmes p ON p.id = c.programme_id WHERE p.code = $1 AND c.course_code = $2 AND c.semester_id = $3', [code, c, semesterId])).rows[0]?.id;
         const sc3 = await courseId('SC3');
         const sc5 = await courseId('SC5');
         const programmeId = (await pool.query('SELECT id FROM programmes WHERE code = $1', [code])).rows[0].id;
+        const existingChoice = JSON.stringify({ id: programmeId });
         const snapshot = [{ course_id: sc3, course_code: 'SC3', course_name: 'Third', credits: 4 }];
         const usingApp = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
-             VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($4)::int, ('SC3')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
+             VALUES ($1, $2, '[]', $3, 'SC3', 'pending', $4, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeId, JSON.stringify(snapshot), semesterId]
         )).rows[0].id;
         const file2 = `${[header, row('SC1', 'First, renamed', 6)].join('\n')}\n`;
-        const preview2 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId }, file: file2 });
+        const preview2 = await callForm('admin/catalogue/preview', { token: S, fields: { semester_id: semesterId, programme: existingChoice }, file: file2 });
         const p2 = preview2.body?.preview || {};
         const missing3 = p2.missingCourses?.find((c) => c.id === sc3);
         const missing5 = p2.missingCourses?.find((c) => c.id === sc5);
         report(p2.changedCourses?.some((c) => c.course_code === 'SC1' && c.before.credits === 5 && c.after.credits === 6), 'Preview: the changed course, old and new values');
-        report(missing3?.default === 'hide' && missing5?.default === 'hide', 'Courses missing from a programme in the file default to Hide');
+        report(missing3?.default === 'hide' && missing5?.default === 'hide', "The programme's courses missing from the file default to Hide");
         report(missing3?.canDelete === false && missing3.blockedBy.includes('HAS_APPLICATIONS') && missing5?.canDelete === true, 'Delete is refused (with the reason) only for the course in use');
-        const refused = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc3]: 'delete' } }) }, file: file2 });
+        const refused = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, programme: existingChoice, decisions: JSON.stringify({ courses: { [sc3]: 'delete' } }) }, file: file2 });
         report(refused.status === 409 && refused.code === 'DELETE_IN_USE' && (await pool.query('SELECT credits FROM courses WHERE id = (SELECT id FROM courses WHERE course_code = $1 AND semester_id = $2)', ['SC1', semesterId])).rows[0].credits === 5,
             'Deleting a course in use is refused and nothing is saved', `${refused.status} ${refused.code}`);
-        const confirmed2 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, decisions: JSON.stringify({ courses: { [sc5]: 'delete' } }) }, file: file2 });
+        const confirmed2 = await callForm('admin/catalogue/import', { token: S, fields: { semester_id: semesterId, hash: p2.hash, programme: existingChoice, decisions: JSON.stringify({ courses: { [sc5]: 'delete' } }) }, file: file2 });
         const after = Object.fromEntries((await pool.query('SELECT id, status, credits FROM courses WHERE id = ANY($1)', [[sc3, sc5]])).rows.map((r) => [r.id, r]));
         report(confirmed2.status === 200 && after[sc3]?.status === 'hidden' && !after[sc5], 'Confirm: the course in use is hidden (all data kept), the unused one deleted', `${confirmed2.status}`);
         const kept = (await pool.query('SELECT target_courses, status FROM applications WHERE id = $1', [usingApp])).rows[0];
@@ -2217,8 +2252,8 @@ const run = async () => {
                 seq += 1;
                 const c = `SECO${stamp}${seq}`.toUpperCase();
                 const id = (await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline, committee_state)
-                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, info_requested_at, info_deadline, committee_state, target_course_id)
+                     VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                     [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: c, course_name: 'Period check', credits: 1 }]), c, status, sid]
                 )).rows[0].id;
                 tempApplicationIds.push(id);
@@ -2336,11 +2371,11 @@ const run = async () => {
                 seq += 1;
                 const c = `SECP${stamp}${seq}`.toUpperCase();
                 return (await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state)
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                         final_grade, decided_by_role, decided_at, info_requested_at, info_deadline, committee_state, target_course_id)
                      VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, CASE WHEN $5::varchar = 'approved' THEN 4 END, CASE WHEN $5::varchar = 'approved' THEN 'reviewer' END,
                              CASE WHEN $5::varchar = 'approved' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() END,
-                             CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                             CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                     [student.id, d.reviewer.programme_id, JSON.stringify([{ course_code: c, course_name: 'Close check', credits: 3 }]), c, status, tempId]
                 )).rows[0].id;
             };
@@ -2495,9 +2530,9 @@ const run = async () => {
                 [`analytics-${stamp}-${seq}${TEST_DOMAIN}`, `Q${stamp.slice(-4).toUpperCase()}${seq}`.replace(/[^A-Z0-9]/g, 'X').slice(0, 6).padEnd(6, '0'), d.studentA.programme_id]
             )).rows[0];
             const id = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, created_at,
-                     final_grade, decided_by_role, decided_at, committee_state)
-                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC', CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, created_at,
+                     final_grade, decided_by_role, decided_at, committee_state, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC', CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, d.studentA.programme_id, JSON.stringify([{ course_code: course.toUpperCase(), course_name: 'Analytics check', credits: 3 }]), course.toUpperCase(), status, closedId, T0,
                     after === null ? null : by, after === null ? null : dayAt(after)]
             )).rows[0].id;
@@ -2526,7 +2561,8 @@ const run = async () => {
             const truth = (await pool.query(
                 `SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'approved')::int AS approved,
                         count(*)::int AS total,
-                        count(*) FILTER (WHERE status IN ('approved', 'rejected') AND decided_by_role IN ('reviewer', 'admin'))::int AS decided
+                        -- decided by a reviewer or admin, also while it awaits the committee (round 2 Group 2)
+                        count(*) FILTER (WHERE status IN ('approved', 'rejected', 'awaiting_committee') AND decided_by_role IN ('reviewer', 'admin'))::int AS decided
                  FROM applications WHERE semester_id = $1`, [sid]
             )).rows[0];
             const a = active.body.analytics;
@@ -2552,8 +2588,8 @@ const run = async () => {
             semesterBackup = (await pool.query('SELECT id, applications_open_at, applications_close_at, review_end_at, end_date, close_reason, last_days_warning_days FROM semesters WHERE id = $1', [sid])).rows[0];
             // One undecided application of our own, so the warning always has something to show
             const own = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state)
-                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, committee_state, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5, CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, d.studentA.programme_id, JSON.stringify([{ course_code: `SECRD${stamp}`, course_name: 'Review deadline check', credits: 1 }]), `SECRD${stamp}`.toUpperCase().slice(0, 20), sid]
             )).rows[0].id;
             tempApplicationIds.push(own);
@@ -2647,8 +2683,8 @@ const run = async () => {
             // An open application of the programme, naming one of student B's files
             const code = `SECX${stamp}`.toUpperCase().slice(0, 20);
             const temp = (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note, committee_state)
-                 VALUES ($1, $2, '[]', $3, $4, $5, 'pending', 'Temporary application of the security check', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($5)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status, student_note, committee_state, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, $5, 'pending', 'Temporary application of the security check', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($4)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeOfB, JSON.stringify([{ course_name: 'Security check', file: d.fileOfB }]),
                     JSON.stringify([{ course_code: code, course_name: 'Security check', credits: 1 }]), code]
             )).rows[0].id;
@@ -2736,10 +2772,10 @@ const run = async () => {
                 [`share-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `Q${stamp.slice(-5)}`.padEnd(6, 'Q').slice(0, 6), programmeId]
             )).rows[0];
             const app = async (n, status) => (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
-                     info_requested_at, info_deadline, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+                     info_requested_at, info_deadline, committee_state, target_course_id)
                  VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Temporary application of the security check',
-                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                         CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: `SHR${n}`, course_name: 'Security check', credits: 1 }]), `SHR${n}${stamp}`.slice(0, 20), status]
             )).rows[0].id;
             const [a1, a2, a3, a4] = [await app(1, 'pending'), await app(2, 'pending'), await app(3, 'pending'), await app(4, 'pending')];
@@ -2847,8 +2883,8 @@ const run = async () => {
         // One pending application of our own in the reviewer's programme (removed at the end of this section)
         const ownCode = `SECPDO${stamp}`.toUpperCase().slice(0, 20);
         const ownApp = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
-             VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+             VALUES ($1, $2, '[]', $3, $4, 'pending', CASE WHEN ('pending')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: ownCode, course_name: 'PDF check' }]), ownCode]
         )).rows[0].id;
         tempApplicationIds.push(ownApp);
@@ -2890,8 +2926,8 @@ const run = async () => {
         // A withdrawn application of the reviewer's programme is not shown to reviewers
         const code = `SECPDF${stamp}`.toUpperCase().slice(0, 20);
         const withdrawn = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state)
-             VALUES ($1, $2, '[]', $3, $4, 'withdrawn', CASE WHEN ('withdrawn')::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, committee_state, target_course_id)
+             VALUES ($1, $2, '[]', $3, $4, 'withdrawn', CASE WHEN ('withdrawn')::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [d.studentA.id, programmeOfB, JSON.stringify([{ course_code: code, course_name: 'PDF check' }]), code]
         )).rows[0].id;
         tempApplicationIds.push(withdrawn);
@@ -3008,10 +3044,10 @@ const run = async () => {
         )).rows[0];
         const T = tokenFor(student);
         const app = async (n, status, extra = '') => (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
-                 info_requested_at, info_deadline)
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, student_note,
+                 info_requested_at, info_deadline, target_course_id)
              VALUES ($1, $2, '[]', $3, $4, $5::varchar, 'Committee check',
-                     CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '5 days' END, CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '1 hour' END) RETURNING id`,
+                     CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '5 days' END, CASE WHEN $5::varchar = 'needs_info' THEN now() - interval '1 hour' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [student.id, programmeOfB, JSON.stringify([{ course_code: `SCV${n}${extra}`, course_name: 'Committee check' }]), `SCV${n}${stamp}`.slice(0, 20), status]
         )).rows[0].id;
         try {
@@ -3041,8 +3077,8 @@ const run = async () => {
             let blocked = false;
             try {
                 await pool.query(
-                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status)
-                     SELECT student_id, programme_id, '[]', target_courses, target_course_code, 'pending' FROM applications WHERE id = $1`, [rejected]
+                    `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
+                     SELECT student_id, programme_id, '[]', target_courses, target_course_code, 'pending', target_course_id FROM applications WHERE id = $1`, [rejected]
                 );
             } catch (err) { blocked = err.constraint === 'applications_one_active_per_course'; }
             report(blocked, 'The duplicate rule counts an application awaiting the committee, even one the reviewer rejected');
@@ -3088,8 +3124,8 @@ const run = async () => {
             )).rows[0];
             const [TM, T1, T2, TRC, TS] = [tokenFor(M), tokenFor(C1), tokenFor(C2), tokenFor(RC), tokenFor(student)];
             const app = async (n, status = 'pending') => (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline)
-                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, info_requested_at, info_deadline, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, $5::varchar, CASE WHEN $5::varchar = 'needs_info' THEN now() END, CASE WHEN $5::varchar = 'needs_info' THEN now() + interval '2 days' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [student.id, programmeId, JSON.stringify([{ course_code: `CW${n}`, course_name: `Committee course ${n}` }]), `CW${n}${stamp}`.slice(0, 20), status]
             )).rows[0].id;
             const decide = (id, json, token = TM) => call('PUT', `applications/${id}/status`, { token, json });
@@ -3119,10 +3155,12 @@ const run = async () => {
             await expect('An unknown action', step(a3, { action: 'reopen' }), 400, 'INVALID_ACTION');
             await expect('Change without a note', step(a3, { action: 'change' }), 400, 'COMMITTEE_NOTE_REQUIRED');
             await expect('A grade of 6', step(a3, { action: 'keep', final_grade: 6 }), 400, 'INVALID_FINAL_GRADE');
-            await expect('Keep the approval, another grade (3)', step(a3, { action: 'keep', final_grade: 3, note: 'Grade adjusted' }), 200);
-            const kept = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_state, committee_by, committee_by_role FROM applications WHERE id = $1', [a3])).rows[0];
-            report(kept.status === 'approved' && kept.final_grade === 3 && kept.reviewer_grade === 4 && kept.committee_state === 'kept' && kept.committee_by === C1.id && kept.committee_by_role === 'committee',
-                "Kept: final approved with the committee's grade; the reviewer's grade stays; who acted recorded", JSON.stringify(kept));
+            // Fixes Part A: Keep leaves the reviewer's grade; another grade is Change the grade
+            await expect('Keep the approval with another grade', step(a3, { action: 'keep', final_grade: 3 }), 400, 'GRADE_NOT_ON_KEEP');
+            await expect('Change the grade to 3', step(a3, { action: 'change_grade', final_grade: 3, note: 'Grade adjusted' }), 200);
+            const kept = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_grade, committee_state, committee_by, committee_by_role FROM applications WHERE id = $1', [a3])).rows[0];
+            report(kept.status === 'approved' && kept.final_grade === 3 && kept.reviewer_grade === 4 && kept.committee_grade === 3 && kept.committee_state === 'changed' && kept.committee_by === C1.id && kept.committee_by_role === 'committee',
+                "Grade changed: final approved with the committee's grade; the reviewer's grade stays; who acted recorded", JSON.stringify(kept));
             await expect('A second step on it', step(a3, { action: 'change', note: 'x' }, T2), 409, 'ALREADY_DECIDED');
             const mine = (await call('GET', 'applications/mine', { token: TS })).body?.applications || [];
             const studentKept = mine.find((a) => a.id === a3);
@@ -3130,14 +3168,14 @@ const run = async () => {
                 && studentKept.decision_rationale === 'Reviewer reason' && studentKept.committee_note === 'Grade adjusted' && !JSON.stringify(mine).includes('"reviewer_grade"'),
             'The student: approved, the final grade only, "decided by: committee", the reason and the committee note', JSON.stringify(studentKept && { s: studentKept.status, g: studentKept.final_grade, by: studentKept.decided_by }));
             const history = (await call('GET', `applications/mine/${a3}`, { token: TS })).body?.application?.events || [];
-            report(history.some((e) => e.kind === 'committee_kept' && e.actor_role === 'committee') && !history.some((e) => e.kind === 'decided'),
+            report(history.some((e) => e.kind === 'committee_changed' && e.actor_role === 'committee') && !history.some((e) => e.kind === 'decided'),
                 "The student's history: the committee's step as \"committee\", never the reviewer's");
 
             // Reviewer rejected, committee changes to approved: a grade is required
             const a4 = await app(4);
             await expect('The reviewer rejects', decide(a4, { status: 'rejected', note: 'Different content' }), 200);
             await expect('Change reject -> approve without a grade', step(a4, { action: 'change', note: 'Equivalent after all' }), 400, 'GRADE_REQUIRED');
-            await expect('Keep a rejection with a grade', step(a4, { action: 'keep', final_grade: 4 }), 400, 'GRADE_ONLY_ON_APPROVE');
+            await expect('Keep a rejection with a grade', step(a4, { action: 'keep', final_grade: 4 }), 400, 'GRADE_NOT_ON_KEEP');
             await expect('Change reject -> approve with grade 5', step(a4, { action: 'change', final_grade: 5, note: 'Equivalent after all' }), 200);
             const changed = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === a4);
             report(changed?.status === 'approved' && changed.final_grade === 5 && changed.decision_rationale === null && changed.committee_note === 'Equivalent after all',
@@ -3204,10 +3242,10 @@ const run = async () => {
             const file = (name) => call('GET', `uploads/${encodeURIComponent(name)}`, { token: TC });
             // A temporary application of student A in this programme naming one file, in the given state
             const app = async (n, fileName, status, extra = {}) => (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
-                     info_requested_at, info_deadline, decided_by_role, decided_at, committee_state)
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($6)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, status,
+                     info_requested_at, info_deadline, decided_by_role, decided_at, committee_state, target_course_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7::varchar, CASE WHEN $7::varchar = 'needs_info' THEN now() END, CASE WHEN $7::varchar = 'needs_info' THEN now() + interval '2 days' END,
-                         $8, $9, $10) RETURNING id`,
+                         $8, $9, $10, COALESCE((($5)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify(extra.institutions || []), JSON.stringify(extra.courses || [{ course_name: 'File check', file: fileName }]),
                     JSON.stringify([{ course_code: `CX${n}`, course_name: 'File check' }]), `CX${n}${stamp}`.slice(0, 20), status,
                     extra.by || null, extra.by ? new Date() : null, extra.state || null]
@@ -3273,8 +3311,8 @@ const run = async () => {
             const [TM, TC] = [tokenFor(main), tokenFor(member)];
             const activeSemester = (await pool.query("SELECT id FROM semesters WHERE status = 'active' ORDER BY id LIMIT 1")).rows[0]?.id || null;
             const app = async (n) => (await pool.query(
-                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id)
-                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5) RETURNING id`,
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($5)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', $5, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
                 [d.studentA.id, programmeId, JSON.stringify([{ course_code: `CY${n}`, course_name: 'Views check' }]), `CY${n}${stamp}`.slice(0, 20), activeSemester]
             )).rows[0].id;
             const changed = await app(1);
@@ -3374,6 +3412,506 @@ const run = async () => {
         }
         const summary = (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
         report((summary.semesters || []).every((x) => 'committeeEndsAt' in x && 'committeeSoon' in x && 'committeePassed' in x), 'The admin overview has the committee deadline of each semester in progress');
+    }
+
+    section('4aa. Activate and delete staff accounts (fixes 1a): the same account back; deleted for real, or hidden with its history');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}A${stamp}`.slice(0, 20);
+        const NAME = `Security check 4aa ${stamp}`; // hidden accounts lose their test address: found by this name
+        const made = [];
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Accounts', 'Security Check Accounts', 'Security Check Accounts') RETURNING id", [code]
+            )).rows[0].id;
+            const passwordHash = await bcrypt.hash('Check1234!', 4);
+            const person = async (key, role, links = []) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, $4, true) RETURNING id, role, name, email",
+                    [`${NAME} ${key}`, `${STAFF_TEST_PREFIX}aa-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, passwordHash, role]
+                )).rows[0];
+                for (const [linkRole, canAssist = false] of links) {
+                    await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, $4)', [user.id, programmeId, linkRole, canAssist]);
+                }
+                made.push(user.id);
+                return user;
+            };
+            const logIn = (email) => call('POST', 'login', { json: { email, password: 'Check1234!' } });
+            const linksOf = async (id) => (await pool.query(
+                "SELECT role || CASE WHEN role = 'extra' THEN CASE WHEN can_assist THEN '+assist' ELSE '+standby' END ELSE '' END AS l FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL ORDER BY role", [id]
+            )).rows.map((r) => r.l).join(',');
+
+            // Who may: the superadmin only
+            const target = await person('target', 'reviewer', [['main']]);
+            for (const [who, token] of [['no token', null], ['a student', A], ['a reviewer', R]]) {
+                const activate = await call('PUT', `users/${target.id}/activate`, { token });
+                const remove = await call('DELETE', `users/${target.id}`, { token });
+                report(activate.status === (token ? 403 : 401) && remove.status === (token ? 403 : 401), `Activate and Delete refused: ${who}`, `${activate.status} / ${remove.status}`);
+            }
+
+            // A reviewer who also sits on the committee: removed, still refused, then Activate gives both sides back
+            const dual = await person('dual', 'reviewer', [['extra', true], ['committee']]);
+            const before = await linksOf(dual.id);
+            await expect('Remove the reviewer who is also on the committee', call('PUT', `users/${dual.id}/remove-reviewer`, { token: S }), 200);
+            await expect('A deactivated person still cannot log in', logIn(dual.email), 403, 'REVIEWER_REMOVED');
+            const activated = await call('PUT', `users/${dual.id}/activate`, { token: S });
+            report(activated.status === 200 && (activated.body?.restored || []).length === 2 && (await linksOf(dual.id)) === before,
+                'Activate: the same links back, both sides, assisting kept', `${before} -> ${await linksOf(dual.id)}`);
+            const back = await logIn(dual.email);
+            report(back.status === 200, 'Activated: logs in with the OLD password', `${back.status} ${back.body?.code || ''}`);
+            const mine = await call('GET', 'committee/me', { token: back.body?.token });
+            report(mine.status === 200 && (mine.body?.programmes || []).some((p) => p.code === code), 'Activated: sees their committee programme again');
+            report((await call('PUT', `users/${dual.id}/activate`, { token: S })).body?.alreadyActive === true, 'Activate an active account: nothing changes');
+
+            // A main reviewer removed while someone else becomes main: back as a standby extra
+            await expect('Remove the main reviewer', call('PUT', `users/${target.id}/remove-reviewer`, { token: S }), 200);
+            await person('newmain', 'reviewer', [['main']]);
+            const swapped = await call('PUT', `users/${target.id}/activate`, { token: S });
+            report(swapped.status === 200 && (swapped.body?.becameExtra || []).includes(code) && (await linksOf(target.id)) === 'extra+standby',
+                'One main reviewer per programme: the old main one comes back as a standby extra', JSON.stringify(swapped.body?.becameExtra));
+
+            // Delete without history: gone for good
+            const fresh = await person('fresh', 'committee', [['committee']]);
+            const gone = await call('DELETE', `users/${fresh.id}`, { token: S });
+            report(gone.body?.outcome === 'deleted' && (await pool.query('SELECT 1 FROM users WHERE id = $1', [fresh.id])).rows.length === 0, 'Delete without history: the account is gone');
+
+            // An account made by accepting an invite, without history: its accepted invite goes with it
+            const invitedEmail = `${STAFF_TEST_PREFIX}aa-invited-${stamp.toLowerCase()}${TEST_DOMAIN}`;
+            const invited = await call('POST', 'users/invites', { token: S, json: { email: invitedEmail, role: 'committee', language: 'en', programmes: [{ code, role: 'committee' }] } });
+            const accepted = invited.body?.link
+                ? await call('POST', `invites/${invited.body.link.split('/').pop()}/accept`, { json: { name: `${NAME} invited`, password: 'Check1234!' } })
+                : { status: invited.status };
+            const invitedUser = (await pool.query('SELECT id FROM users WHERE email = $1', [invitedEmail])).rows[0];
+            report(accepted.status === 200 && invitedUser, 'Invite and accept a new committee member', `${invited.status} / ${accepted.status}`);
+            if (invitedUser) {
+                const deleted = await call('DELETE', `users/${invitedUser.id}`, { token: S });
+                report(deleted.status === 200 && deleted.body?.outcome === 'deleted', 'Delete an invited account without history: deleted for real, no error', `${deleted.status} ${deleted.body?.outcome || deleted.code || ''}`);
+                report((await pool.query('SELECT 1 FROM users WHERE id = $1', [invitedUser.id])).rows.length === 0
+                    && (await pool.query('SELECT 1 FROM staff_invites WHERE accepted_user_id = $1', [invitedUser.id])).rows.length === 0,
+                'The account and its accepted invite are gone');
+                const invitedAgain = await call('POST', 'users/invites', { token: S, json: { email: invitedEmail, role: 'committee', language: 'en', programmes: [{ code, role: 'committee' }] } });
+                report(invitedAgain.status === 201, 'The same address can be invited again', `${invitedAgain.status} ${invitedAgain.code || ''}`);
+            }
+
+            // Delete with history: hidden, the name stays, the address is free again
+            const hist = await person('hist', 'reviewer', [['extra', true]]);
+            const appId = (await pool.query(
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
+                [d.studentA.id, programmeId, JSON.stringify([{ course_code: 'AA1', course_name: 'Accounts check' }]), `AA1${stamp}`.slice(0, 20)]
+            )).rows[0].id;
+            await pool.query("INSERT INTO application_events (application_id, kind, actor_role, actor_id, status, note) VALUES ($1, 'info_requested', 'reviewer', $2, 'needs_info', 'x')", [appId, hist.id]);
+            const hidden = await call('DELETE', `users/${hist.id}`, { token: S });
+            const row = (await pool.query('SELECT name, email, deleted_at, deactivated_at FROM users WHERE id = $1', [hist.id])).rows[0];
+            report(hidden.body?.outcome === 'hidden' && row?.name === hist.name && row?.email === `deleted-${hist.id}@invalid` && row.deleted_at && row.deactivated_at,
+                'Delete with history: kept with its name, the address replaced', row?.email);
+            const who = (await pool.query('SELECT u.name FROM application_events e JOIN users u ON u.id = e.actor_id WHERE e.application_id = $1', [appId])).rows[0];
+            report(who?.name === hist.name, 'The name stays on their history entry');
+            await expect('A deleted account cannot log in with its old address', logIn(hist.email), 401, 'INVALID_CREDENTIALS');
+            await expect('Nor with the placeholder', call('POST', 'login', { json: { email: `deleted-${hist.id}@invalid`, password: 'Check1234!' } }), 401, 'INVALID_CREDENTIALS');
+            const staffList = (await call('GET', 'users/staff', { token: S })).body?.staff || [];
+            report(!staffList.some((p) => p.id === hist.id), 'A deleted account is in no list');
+            const reinvite = await call('POST', 'users/invites', { token: S, json: { email: hist.email, role: 'reviewer', language: 'en', programmes: [{ code, role: 'extra' }] } });
+            report(reinvite.status === 201, 'Its address can be invited again as a new account', `${reinvite.status} ${reinvite.code || ''}`);
+            await expect('A deleted account cannot be activated', call('PUT', `users/${hist.id}/activate`, { token: S }), 404, 'USER_NOT_FOUND');
+            await expect('Nor deleted twice', call('DELETE', `users/${hist.id}`, { token: S }), 404, 'USER_NOT_FOUND');
+
+            // Admins: never yourself; a student is never deleted here; a deactivated admin comes back
+            await expect('You cannot delete yourself', call('DELETE', `users/${d.admin.id}`, { token: S }), 400, 'CANNOT_DELETE_SELF');
+            await expect('A student is not deleted here', call('DELETE', `users/${d.studentB.id}`, { token: S }), 400, 'NOT_STAFF');
+            const admin2 = (await pool.query(
+                "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, $3, 'superadmin', true) RETURNING id, email",
+                [`${NAME} admin`, `aa-admin-${stamp.toLowerCase()}${TEST_DOMAIN}`, passwordHash]
+            )).rows[0];
+            made.push(admin2.id);
+            await expect('Deactivate the second admin', call('PUT', `users/${admin2.id}/deactivate-admin`, { token: S }), 200);
+            await expect('A deactivated admin cannot log in', logIn(admin2.email), 403, 'ACCOUNT_DEACTIVATED');
+            await expect('Activate the admin', call('PUT', `users/${admin2.id}/activate`, { token: S }), 200);
+            await expect('Activated admin: logs in with the old password', logIn(admin2.email), 200);
+            const adminGone = await call('DELETE', `users/${admin2.id}`, { token: S });
+            report(adminGone.body?.outcome === 'deleted', 'Delete an admin without history while another stays', adminGone.body?.outcome || adminGone.code);
+        } finally {
+            // The temporary programme first: its applications take their (append-only) history with them.
+            // Hidden accounts no longer have their test address: found by name.
+            const removed = await removeSharingProgramme();
+            const left = (await pool.query('SELECT id FROM users WHERE name LIKE $1', [`${NAME}%`])).rows.map((r) => r.id);
+            if (left.length) {
+                await pool.query('DELETE FROM acting_sessions WHERE person_id = ANY($1) OR admin_id = ANY($1)', [left]);
+                await pool.query('UPDATE applications SET assigned_reviewer_id = NULL WHERE assigned_reviewer_id = ANY($1)', [left]);
+                await pool.query('DELETE FROM users WHERE id = ANY($1)', [left]);
+            }
+            console.log(`(removed the temporary accounts programme (${removed}) and ${left.length} temporary account(s))`);
+        }
+    }
+
+    section('4ab. One programme per import (fixes 1b): the programme chosen first, look-alikes, rows that do not match, other codes');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const base = `${SHARING_PROGRAMME_PREFIX}Q${stamp}`.slice(0, 16);
+        const codeA = `${base}AB`;
+        const word = `Qwopf${stamp}`; // names that look like nothing else in the database
+        const header = 'programme_code;programme_name_hu;programme_name_en;programme_name_de;course_code;course_name;credits';
+        const file = (rows) => [header, ...rows].join('\n');
+        const counts = async () => (await pool.query(
+            'SELECT (SELECT count(*)::int FROM programmes) AS p, (SELECT count(*)::int FROM courses) AS c, (SELECT count(*)::int FROM programme_aliases) AS a'
+        )).rows[0];
+        try {
+            const idA = (await pool.query(
+                'INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, $2, $3, $4) RETURNING id',
+                [codeA, `${word} Alpha szak`, `${word} Alpha Studies`, `${word} Alpha Studien`]
+            )).rows[0].id;
+            const semesterId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check programmes ${stamp}`, '2096-02-01', '2096-03-01', '2096-06-30', 'setup'])).rows[0].id;
+            tempSemesterIds.push(semesterId);
+            const check = (json, token = S) => call('POST', 'admin/catalogue/programme-check', { token, json });
+            const fields = (programme, extra = {}) => ({ semester_id: semesterId, programme: JSON.stringify(programme), ...extra });
+            const preview = (csv, programme, mismatches = {}) => callForm('admin/catalogue/preview', { token: S, file: csv, fields: fields(programme, { mismatches: JSON.stringify(mismatches) }) });
+            const importIt = (csv, programme, hash, mismatches = {}) => callForm('admin/catalogue/import', { token: S, file: csv, fields: fields(programme, { hash, mismatches: JSON.stringify(mismatches), decisions: '{}' }) });
+
+            // Who may
+            for (const [method, path] of [['GET', 'admin/programmes'], ['POST', 'admin/catalogue/programme-check']]) {
+                await expect(`No token: ${method} /api/${path}`, call(method, path), 401, 'NO_TOKEN');
+                await expect(`Reviewer: ${method} /api/${path}`, call(method, path, { token: R, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+                await expect(`Student: ${method} /api/${path}`, call(method, path, { token: A, json: method === 'GET' ? undefined : {} }), 403, 'FORBIDDEN_ROLE');
+            }
+            await expect('The old merge route is gone', call('POST', `admin/programmes/${idA}/merge`, { token: S, json: { into_id: idA } }), 404);
+            const list = await call('GET', 'admin/programmes', { token: S });
+            report(list.status === 200 && list.body.programmes.some((p) => p.id === idA && Array.isArray(p.aliases)), 'The admin gets every programme with its other codes');
+
+            // Step 1: a new programme is checked against the existing ones
+            await expect('Check without a code', check({ name_hu: 'x' }), 400, 'MISSING_VALUE');
+            await expect('Check with a bad code', check({ code: 'a b', name_hu: 'x' }), 400, 'INVALID_PROGRAMME_CODE');
+            await expect('Check without the Hungarian name', check({ code: `${base}NEW` }), 400, 'MISSING_VALUE');
+            const prefix = await check({ code: `${base}A`, name_hu: `${word} Más` });
+            report(prefix.status === 200 && prefix.body.lookalikes.some((l) => l.id === idA && l.reasons.includes('similar_code')), 'A code starting like an existing one is a look-alike');
+            const sameName = await check({ code: `${base}ZZ`, name_hu: `  ${word.toLowerCase()}   ALPHA szak ` });
+            report(sameName.body?.lookalikes?.some((l) => l.id === idA && l.reasons.includes('same_name')), 'The same name (case and spaces aside) is a look-alike');
+            const sameCode = await check({ code: codeA.toLowerCase(), name_hu: 'x' });
+            report(sameCode.body?.codeTaken === true, 'The same code: it can only be the same programme');
+
+            // The server asks again: a look-alike new programme is refused without the answer
+            const newA = { new: { code: `${base}A`, name_hu: `${word} Gamma` } };
+            const csvNew = file([`${base}A;${word} Gamma;;;QW1;New course;3`]);
+            const before = await counts();
+            const refusedNew = await preview(csvNew, newA);
+            report(refusedNew.status === 409 && refusedNew.code === 'PROGRAMME_LOOKALIKE' && refusedNew.body?.lookalikes?.some((l) => l.id === idA),
+                'Preview of a look-alike new programme without an answer: refused, with the look-alikes', `${refusedNew.status} ${refusedNew.code}`);
+            const csvNewHash = require('crypto').createHash('sha256').update(Buffer.from(csvNew, 'utf8')).digest('hex');
+            await expect('Import it without an answer', importIt(csvNew, newA, csvNewHash), 409, 'PROGRAMME_LOOKALIKE');
+            await expect('A new programme with an existing code, even "Different"', preview(csvNew, { new: { code: codeA, name_hu: 'x' }, confirmed_different: true }), 409, 'PROGRAMME_CODE_TAKEN');
+            await expect('An existing programme that does not exist', preview(csvNew, { id: 999999999 }), 404, 'PROGRAMME_NOT_FOUND');
+            await expect('A programme choice that is not JSON', callForm('admin/catalogue/preview', { token: S, file: csvNew, fields: { semester_id: semesterId, programme: '{oops' } }), 400, 'INVALID_PROGRAMME');
+
+            // Step 3: rows with another code stop the import until answered
+            const otherCode = `${base}XY`;
+            const csvMixed = file([
+                `${codeA};${word} Alpha szak;${word} Alpha Studies;${word} Alpha Studien;QW10;Own row;3`,
+                `${otherCode};${word} Other szak;;;QW11;Other row;3`,
+                `${otherCode};${word} Other szak;;;QW12;Other row two;3`,
+            ]);
+            const stopped = await preview(csvMixed, { id: idA });
+            const group = stopped.body?.preview?.mismatches?.[0];
+            report(stopped.status === 200 && stopped.body.preview.ready === false && group?.code === otherCode && group.rowRanges === '3–4',
+                'Rows with another code stop the import, grouped by code with their rows', JSON.stringify(stopped.body?.preview?.mismatches));
+            const hash = stopped.body?.preview?.hash;
+            await expect('Import without answering the group', importIt(csvMixed, { id: idA }, hash), 409, 'MISMATCH_DECISION_NEEDED');
+            await expect('An answer other than "same"', importIt(csvMixed, { id: idA }, hash, { [otherCode]: 'merge' }), 400, 'INVALID_DECISIONS');
+            const unchanged = await counts();
+            report(JSON.stringify(unchanged) === JSON.stringify(before), 'Nothing was saved by the refused requests', `${JSON.stringify(before)} -> ${JSON.stringify(unchanged)}`);
+            const done = await importIt(csvMixed, { id: idA }, hash, { [otherCode]: 'same' });
+            report(done.status === 200 && done.body?.summary?.aliasesSaved === 1 && done.body.summary.coursesAdded === 3, 'Treat as the same programme: all rows imported, the code saved', `${done.status} ${JSON.stringify(done.body?.summary || done.code)}`);
+            report((await pool.query('SELECT 1 FROM programmes WHERE code = $1', [otherCode])).rows.length === 0, 'No second programme was made');
+            const again = await preview(file([`${otherCode};${word} Other szak;;;QW13;Later;3`]), { id: idA });
+            report(again.body?.preview?.ready === true && again.body.preview.mismatches.length === 0, 'The next import with that code matches by itself');
+            const page = await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S });
+            report((page.body?.programmes || []).find((p) => p.id === idA)?.aliases?.includes(otherCode), 'The Programmes table shows the other code');
+
+            // A code of another programme can never be treated as this one; a new programme can't take it either
+            const newB = { new: { code: `${base}QQ`, name_hu: `${word} Beta` }, confirmed_different: true };
+            const csvOwned = file([`${base}QQ;${word} Beta;;;QW20;Beta;3`, `${otherCode};${word} Other szak;;;QW21;Owned;3`]);
+            const owned = await preview(csvOwned, newB);
+            report(owned.body?.preview?.mismatches?.[0]?.owner?.id === idA, 'Rows with another programme\'s code name that programme');
+            const beforeOwned = await counts();
+            await expect('Treating them as the same', importIt(csvOwned, newB, owned.body?.preview?.hash, { [otherCode]: 'same' }), 409, 'ALIAS_TAKEN');
+            report(JSON.stringify(await counts()) === JSON.stringify(beforeOwned), 'Refused: nothing saved, not even the new programme');
+            await expect('A new programme with another programme\'s other code', preview(csvOwned, { new: { code: otherCode, name_hu: 'x' }, confirmed_different: true }), 409, 'PROGRAMME_CODE_TAKEN');
+        } finally {
+            const ids = (await pool.query('SELECT id FROM programmes WHERE code LIKE $1', [`${base}%`])).rows.map((r) => r.id);
+            if (ids.length) await pool.query('DELETE FROM courses WHERE programme_id = ANY($1)', [ids]);
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary import programmes (${removed}))`);
+        }
+    }
+
+    section('4ac. Overview: programmes with students but no courses this semester (fixes)');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}N${stamp}`.slice(0, 20);
+        const summary = async () => (await call('GET', 'admin/summary', { token: S })).body?.summary || {};
+        const first = await summary();
+        // Fixes: counted only with a registered student (drafts belong to one) or an application there
+        const semesterId = first.catalogueSemester?.id;
+        if (!semesterId) {
+            skip('Programmes without courses on the Overview', 'no semester students apply to');
+        } else {
+            let programmeId = null;
+            try {
+                const n0 = first.programmesWithoutCourses;
+                const counted = async (expected, name) => {
+                    const n = (await summary()).programmesWithoutCourses;
+                    report(n === n0 + expected, name, `${n0} before, ${n} now`);
+                };
+                const chip = async () => ((await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S })).body?.programmes || []).find((p) => p.id === programmeId)?.no_courses;
+                programmeId = (await pool.query(
+                    "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Kurzus nélkül', 'No courses', 'Ohne Kurse') RETURNING id", [code]
+                )).rows[0].id;
+                await counted(0, 'A programme without courses and without students, applications or drafts is not counted');
+                report((await chip()) === true, 'The Programmes table marks it: no courses this semester');
+
+                const neptun = `N${stamp.slice(-5)}`.replace(/[^A-Z0-9]/g, 'X').padEnd(6, 'X').slice(0, 6);
+                const studentId = (await pool.query(
+                    `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                     VALUES ('Security Check No Courses', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id`,
+                    [`nocourses-${stamp}${TEST_DOMAIN}`.toLowerCase(), neptun, programmeId]
+                )).rows[0].id;
+                await counted(1, 'With a registered student it is counted');
+                // The student moves to another programme; an application of this programme still counts
+                await pool.query('UPDATE users SET programme_id = $2 WHERE id = $1', [studentId, d.studentA.programme_id]);
+                await counted(0, 'Without students, applications or drafts it is not counted');
+                await pool.query(
+                    `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($3)::int, ('NC0')::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id, target_course_id)
+                     VALUES ($1, $2, '[]', '[{"course_code":"NC0","course_name":"No courses"}]', 'NC0', 'pending', $3, COALESCE((('[{"course_code":"NC0","course_name":"No courses"}]')::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course)))`,
+                    [studentId, programmeId, semesterId]
+                );
+                await counted(1, 'An application in that semester counts');
+                const courseId = (await pool.query(
+                    "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, 'NC1', 'No courses', 3, 'active') RETURNING id",
+                    [programmeId, semesterId]
+                )).rows[0].id;
+                await counted(0, 'With an active course there it is not counted');
+                report((await chip()) === false, 'The table no longer marks it');
+                await pool.query("UPDATE courses SET status = 'hidden' WHERE id = $1", [courseId]);
+                await counted(1, 'A hidden course does not count as a course');
+                await pool.query("UPDATE programmes SET status = 'hidden' WHERE id = $1", [programmeId]);
+                await counted(0, 'A hidden programme is not counted');
+            } finally {
+                // Its courses go with it (removeSharingProgramme: after the applications that point to them)
+                const removed = await removeSharingProgramme();
+                console.log(`(removed the temporary programme without courses (${removed}))`);
+            }
+        }
+    }
+
+    section('4ad. The committee changes the grade (fixes Part A); students download their own PDF (fixes 4a)');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}G${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_en, name_hu, name_de) VALUES ($1, 'Security Check Grade', 'Security Check Grade', 'Security Check Grade') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, linkRole) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role",
+                    [`Grade ${key}`, `${STAFF_TEST_PREFIX}cg-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, false)', [user.id, programmeId, linkRole]);
+                return user;
+            };
+            const M = await person('main', 'reviewer', 'main');
+            const C = await person('member', 'committee', 'committee');
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Grade Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id, role`,
+                [`cg-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `G${stamp.slice(-5)}`.padEnd(6, 'G').slice(0, 6), programmeId]
+            )).rows[0];
+            const [TM, TC, TS] = [tokenFor(M), tokenFor(C), tokenFor(student)];
+            const app = async (n) => (await pool.query(
+                `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, (NULL)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, target_course_id)
+                 VALUES ($1, $2, '[]', $3, $4, 'pending', COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_code: `CG${n}`, course_name: `Grade course ${n}` }]), `CG${n}${stamp}`.slice(0, 20)]
+            )).rows[0].id;
+            const decide = (id, json) => call('PUT', `applications/${id}/status`, { token: TM, json });
+            const step = (id, json, token = TC) => call('PUT', `committee/applications/${id}/decision`, { token, json });
+
+            const b1 = await app(1);
+            await expect('The reviewer approves with 4', decide(b1, { status: 'approved', final_grade: 4, note: 'Reviewer reason' }), 200);
+            await expect('Change the grade without a grade', step(b1, { action: 'change_grade' }), 400, 'GRADE_REQUIRED');
+            await expect("Change the grade to the reviewer's grade", step(b1, { action: 'change_grade', final_grade: 4 }), 400, 'GRADE_UNCHANGED');
+            await expect('Change the grade to 9', step(b1, { action: 'change_grade', final_grade: 9 }), 400, 'INVALID_FINAL_GRADE');
+            await expect('Change the grade to 3, no note', step(b1, { action: 'change_grade', final_grade: 3 }), 200);
+            const row = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_grade, committee_state FROM applications WHERE id = $1', [b1])).rows[0];
+            report(row.status === 'approved' && row.final_grade === 3 && row.reviewer_grade === 4 && row.committee_grade === 3 && row.committee_state === 'changed',
+                'Still approved, final grade 3, the reviewer\'s 4 kept, counted as changed', JSON.stringify(row));
+            await expect('Change the grade again', step(b1, { action: 'change_grade', final_grade: 2 }), 409, 'ALREADY_DECIDED');
+            const seen = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === b1);
+            report(seen?.status === 'approved' && seen.final_grade === 3 && seen.decision_rationale === 'Reviewer reason' && !('reviewer_grade' in (seen || {})),
+                'The student sees only the final result: approved, 3, with the reviewer\'s reason', JSON.stringify(seen && { s: seen.status, g: seen.final_grade }));
+
+            const b2 = await app(2);
+            await decide(b2, { status: 'rejected', note: 'Different content' });
+            await expect('Change the grade of a rejection', step(b2, { action: 'change_grade', final_grade: 3 }), 400, 'NOT_APPROVED');
+            const b3 = await app(3);
+            await decide(b3, { status: 'approved', final_grade: 4 });
+            await expect('The admin, as committee, changes the grade to 5', call('PUT', `admin/applications/${b3}/committee`, { token: S, json: { action: 'change_grade', final_grade: 5 } }), 200);
+            report((await pool.query('SELECT committee_by_role, final_grade FROM applications WHERE id = $1', [b3])).rows[0].committee_by_role === 'admin', 'Recorded as the admin');
+
+            // The student's own PDF
+            const pdfOf = (id, token) => fetch(`${API}/applications/mine/${id}/pdf`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+            const own = await pdfOf(b1, TS);
+            const ownBody = Buffer.from(await own.arrayBuffer());
+            report(own.status === 200 && own.headers.get('content-type') === 'application/pdf' && ownBody.subarray(0, 4).toString() === '%PDF'
+                && (own.headers.get('content-disposition') || '').includes(`application-${b1}.pdf`), 'The student downloads their own application as application-<id>.pdf', `${own.status}`);
+            report((await pdfOf(b1, A)).status === 404, "Another student: 404, the same as an id that doesn't exist");
+            report((await pdfOf(999999999, TS)).status === 404, 'An id that does not exist: 404');
+            report((await pdfOf('abc', TS)).status === 404, 'An id that is not a number: 404');
+            report((await pdfOf(b1, TM)).status === 403, 'A reviewer on the student route: 403');
+            report((await pdfOf(b1, S)).status === 403, 'The admin on the student route: 403');
+            report((await pdfOf(b1, null)).status === 401, 'No token: 401');
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary grade programme (${removed}) with its people and applications)`);
+        }
+    }
+
+    section('4ae. Each application points to its course (DB cleanup 1, migration 028): delete refused, hide allowed, analytics by the course');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}T${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Kurzus mutató', 'Course pointer', 'Kurszeiger') RETURNING id", [code]
+            )).rows[0].id;
+            const semesterId = (await pool.query(INSERT_SEMESTER_SQL, [`Security check pointer ${stamp}`, '2095-02-01', '2095-03-01', '2095-06-30', 'setup'])).rows[0].id;
+            tempSemesterIds.push(semesterId);
+            const course = async (courseCode) => (await pool.query(
+                "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, $2, $3, 'Pointer course', 4, 'active') RETURNING id",
+                [programmeId, semesterId, courseCode]
+            )).rows[0].id;
+            const used = await course('PT1');
+            const unused = await course('PT2');
+            const student = (await pool.query(
+                `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
+                 VALUES ('Pointer Student', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id`,
+                [`tc-student-${stamp.toLowerCase()}${TEST_DOMAIN}`, `P${stamp.slice(-5)}`.padEnd(6, 'P').slice(0, 6), programmeId]
+            )).rows[0];
+            const appId = (await pool.query(
+                `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, target_course_id, status, semester_id)
+                 VALUES ($1, $2, '[]', $3, 'PT1', $4, 'pending', $5) RETURNING id`,
+                [student.id, programmeId, JSON.stringify([{ course_id: used, course_code: 'PT1', course_name: 'Pointer course', credits: 4 }]), used, semesterId]
+            )).rows[0].id;
+            const TS = tokenFor({ id: student.id, role: 'student' });
+
+            const catalogue = (await call('GET', `admin/catalogue?semester_id=${semesterId}`, { token: S })).body?.courses || [];
+            const usedRow = catalogue.find((c) => c.id === used);
+            report(usedRow?.applications === 1 && usedRow.canDelete === false && usedRow.blockedBy.includes('HAS_APPLICATIONS'),
+                'The Programmes & Courses page counts the application through its course and refuses Delete', JSON.stringify(usedRow && { n: usedRow.applications, d: usedRow.canDelete }));
+            const refusedDelete = await call('DELETE', `admin/courses/${used}`, { token: S });
+            report(refusedDelete.status === 409 && refusedDelete.code === 'DELETE_IN_USE' && (refusedDelete.body?.blockedBy || []).includes('HAS_APPLICATIONS'),
+                'Delete a course an application points to', `${refusedDelete.status} ${refusedDelete.code}`);
+            let dbRefused = false;
+            try { await pool.query('DELETE FROM courses WHERE id = $1', [used]); } catch (err) { dbRefused = err.constraint === 'applications_target_course_id_fkey'; }
+            report(dbRefused, 'The database itself refuses to delete it (not only the route)');
+            await pool.query("UPDATE applications SET status = 'withdrawn' WHERE id = $1", [appId]);
+            await expect('…also once the application is withdrawn (it stays in the history)', call('DELETE', `admin/courses/${used}`, { token: S }), 409, 'DELETE_IN_USE');
+            await pool.query("UPDATE applications SET status = 'pending' WHERE id = $1", [appId]);
+            await expect('Delete an unused course', call('DELETE', `admin/courses/${unused}`, { token: S }), 200);
+            await expect('Delete the programme while a course is in use', call('DELETE', `admin/programmes/${programmeId}?semester_id=${semesterId}`, { token: S }), 409, 'DELETE_IN_USE');
+
+            await expect('Hide a course an application points to', call('PUT', `admin/courses/${used}/status`, { token: S, json: { status: 'hidden' } }), 200);
+            const mine = (await call('GET', 'applications/mine', { token: TS })).body?.applications?.find((a) => a.id === appId);
+            report(mine?.course_no_longer_offered === true && mine.target_courses?.[0]?.course_name === 'Pointer course' && !('pte_course_names' in (mine || {})),
+                'The student: "no longer offered" from the course itself, the saved name kept, no pte_course_names', JSON.stringify(mine && { off: mine.course_no_longer_offered }));
+            await pool.query("UPDATE courses SET status = 'active', course_name = 'Pointer course, renamed' WHERE id = $1", [used]);
+
+            // A semester in setup has no analytics page yet: the numbers are read the way the page reads them
+            const { semesterAnalytics } = require('../utils/analytics');
+            const top = ((await semesterAnalytics(pool, semesterId)).topCourses || []).find((c) => c.courseCode === 'PT1');
+            report(top?.applications === 1 && top.courseName === 'Pointer course, renamed', 'Analytics count the application under its course', JSON.stringify(top));
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary pointer programme (${removed}))`);
+        }
+    }
+
+    section('4af. Programmes are never deleted along with their links (DB cleanup 2, migration 029)');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        let seq = 0;
+        try {
+            const programme = async () => {
+                seq += 1;
+                return (await pool.query(
+                    "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Törlés', 'Delete check', 'Löschen') RETURNING id",
+                    [`${SHARING_PROGRAMME_PREFIX}D${stamp}${seq}`.slice(0, 20)]
+                )).rows[0].id;
+            };
+            const reviewer = (await pool.query(
+                "INSERT INTO users (name, email, password, role, is_verified) VALUES ('Delete Check', $1, 'not-a-password-hash', 'reviewer', true) RETURNING id",
+                [`${STAFF_TEST_PREFIX}pd-${stamp.toLowerCase()}${TEST_DOMAIN}`]
+            )).rows[0];
+            const deleteRoute = (id) => call('DELETE', `admin/programmes/${id}`, { token: S });
+            const sqlRefusal = async (id) => {
+                try { await pool.query('DELETE FROM programmes WHERE id = $1', [id]); return 'deleted'; } catch (err) { return err.constraint; }
+            };
+            const exists = async (id) => (await pool.query('SELECT 1 FROM programmes WHERE id = $1', [id])).rows.length > 0;
+
+            const current = await programme();
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, 'extra', false)", [reviewer.id, current]);
+            const ended = await programme();
+            await pool.query("INSERT INTO staff_programmes (user_id, programme_id, role, can_assist, ended_at) VALUES ($1, $2, 'extra', false, now())", [reviewer.id, ended]);
+            const invited = await programme();
+            const inviteId = (await pool.query(
+                "INSERT INTO staff_invites (email, role, token_hash, expires_at) VALUES ($1, 'reviewer', $2, now() + interval '1 day') RETURNING id",
+                [`${STAFF_TEST_PREFIX}pd-invite-${stamp.toLowerCase()}${TEST_DOMAIN}`, `pd${stamp}`.toLowerCase().padEnd(64, '0').slice(0, 64)]
+            )).rows[0].id;
+            await pool.query("INSERT INTO staff_invite_programmes (invite_id, programme_id, role) VALUES ($1, $2, 'extra')", [inviteId, invited]);
+
+            for (const [name, id, reason, constraint] of [
+                ['a current staff link', current, 'HAS_PEOPLE', 'staff_programmes_programme_id_fkey'],
+                ['an ended staff link', ended, 'HAS_PEOPLE', 'staff_programmes_programme_id_fkey'],
+                ['an invite line', invited, 'HAS_RECORDS', 'staff_invite_programmes_programme_id_fkey'],
+            ]) {
+                const r = await deleteRoute(id);
+                report(r.status === 409 && r.code === 'DELETE_IN_USE' && (r.body?.blockedBy || []).includes(reason), `Delete a programme with ${name}: 409 with its reason`, `${r.status} ${r.code} ${JSON.stringify(r.body?.blockedBy)}`);
+                report(await sqlRefusal(id) === constraint, `…and the database refuses it directly in SQL (${constraint})`);
+                report(await exists(id), '…the programme and its link are still there');
+            }
+
+            const unused = await programme();
+            await pool.query('INSERT INTO programme_aliases (programme_id, alias_code) VALUES ($1, $2)', [unused, `${SHARING_PROGRAMME_PREFIX}DA${stamp}`.slice(0, 20)]);
+            report(await sqlRefusal(unused) === 'programme_aliases_programme_id_fkey', 'Directly in SQL, even its other code keeps a programme (nothing goes along with it)');
+            await expect('Delete an unused programme with another code', deleteRoute(unused), 200);
+            report(!(await exists(unused)) && (await pool.query('SELECT count(*)::int AS n FROM programme_aliases WHERE programme_id = $1', [unused])).rows[0].n === 0,
+                'The programme and its other code are gone');
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary delete-check programmes (${removed}))`);
+        }
+    }
+
+    section('4ag. Courses without universities (DB cleanup 3, migration 030): one course code per programme and semester');
+    {
+        const gone = (await pool.query(
+            `SELECT to_regclass('public.universities') IS NULL
+                AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'courses' AND column_name = 'university_id') AS gone`
+        )).rows[0].gone;
+        report(gone, 'The universities table and courses.university_id are gone', gone ? '' : 'run "npm run migrate" in backend/');
+        const stamp = Date.now().toString(36).toUpperCase();
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Kurzuskód', 'Course code', 'Kurscode') RETURNING id", [`${SHARING_PROGRAMME_PREFIX}U${stamp}`.slice(0, 20)]
+            )).rows[0].id;
+            const add = () => pool.query(
+                "INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($1, NULL, 'UC1', 'Twice', 3, 'hidden')", [programmeId]
+            );
+            await add();
+            let refused = null;
+            try { await add(); } catch (err) { refused = err.constraint; }
+            report(refused === 'courses_programme_semester_code_key', 'A second course with the same code in a programme and semester is refused by the database', refused || 'saved');
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary course-code programme (${removed}))`);
+        }
     }
 
     section('5. Allowed reads still work -> 200');
@@ -3545,6 +4083,13 @@ const finish = async (ok) => {
         if (runStartedAt) await pool.query('DELETE FROM acting_sessions WHERE started_at >= $1', [runStartedAt]);
     } catch (err) {
         console.error('Could not remove this run\'s acting sessions:', err.message);
+    }
+    try {
+        // The hidden courses the fixtures made for their applications (migration 028), once unused
+        const courses = await removeFixtureCourses(pool);
+        if (courses) console.log(`(removed ${courses} fixture course(s))`);
+    } catch (err) {
+        console.error('Could not remove the fixture courses:', err.message);
     }
     try {
         const removed = await cleanupRateLimitRows();

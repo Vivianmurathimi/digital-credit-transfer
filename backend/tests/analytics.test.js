@@ -13,6 +13,7 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const pool = require('../db');
+const { removeFixtureCourses } = require('./fixtureCourses');
 const { semesterAnalytics } = require('../utils/analytics');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -36,10 +37,10 @@ const add = async ({ status, programme, course, decidedAfter = null, by = null }
     )).rows[0];
     students.push(student.id);
     const { rows } = await pool.query(
-        `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-             created_at, final_grade, decided_by_role, decided_at, committee_state)
+        `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+             created_at, final_grade, decided_by_role, decided_at, committee_state, target_course_id)
          VALUES ($1, $2, '[]', $3, $4, $5::varchar, $6, $7::timestamptz AT TIME ZONE 'UTC',
-                 CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END) RETURNING id`,
+                 CASE WHEN $5::varchar = 'approved' THEN 4 END, $8, $9, CASE WHEN ($5::varchar)::varchar IN ('approved', 'rejected') THEN 'before_committee' END, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
         [student.id, programme.id, JSON.stringify([{ course_code: course, course_name: `Course ${course}`, credits: 3 }]), course, status, semesterId,
             T0, decided ? by : null, decided ? at(decidedAfter) : null]
     );
@@ -77,6 +78,7 @@ before(async () => {
 
 after(async () => {
     await pool.query('DELETE FROM applications WHERE id = ANY($1)', [created]);
+    await removeFixtureCourses(pool); // their courses (migration 028), before programmes and semesters
     await pool.query('DELETE FROM users WHERE id = ANY($1)', [students]);
     await pool.query('DELETE FROM semesters WHERE id = $1', [semesterId]);
     await pool.end();
@@ -152,7 +154,7 @@ test('the committee (round 2 Group 2): awaiting, kept, changed both ways, kept w
     const [P1, P2] = programmes;
     const decidedAt = new Date('2095-04-01T10:00:00Z');
     // One application in the committee flow: the reviewer's decision, then (unless awaiting) the committee's after `days`
-    const add = async (n, programme, { status, reviewer, reviewerGrade = null, finalGrade = null, state, days = null, note = null }) => {
+    const add = async (n, programme, { status, reviewer, reviewerGrade = null, finalGrade = null, state, days = null, note = null, committeeGrade = null }) => {
         const student = (await pool.query(
             `INSERT INTO users (name, email, password, role, is_verified, neptun_code, programme_id)
              VALUES ('Analytics Committee', $1, 'not-a-password-hash', 'student', true, $2, $3) RETURNING id`,
@@ -160,32 +162,34 @@ test('the committee (round 2 Group 2): awaiting, kept, changed both ways, kept w
         )).rows[0];
         students.push(student.id);
         const id = (await pool.query(
-            `INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
-                 reviewer_decision, reviewer_grade, final_grade, decided_by_role, decided_at, committee_state, committee_at, committee_by_role, committee_note)
-             VALUES ($1, $2, '[]', $3, $4, $5, $6, $7, $8, $9, 'reviewer', $10, $11, $12, CASE WHEN $12::timestamptz IS NOT NULL THEN 'committee' END, $13) RETURNING id`,
+            `WITH fixture_course AS (INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, ($6)::int, ($4)::varchar, 'Fixture course (tests)', 3, 'hidden') ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id) INSERT INTO applications (student_id, programme_id, institutions, target_courses, target_course_code, status, semester_id,
+                 reviewer_decision, reviewer_grade, final_grade, decided_by_role, decided_at, committee_state, committee_at, committee_by_role, committee_note, committee_grade, target_course_id)
+             VALUES ($1, $2, '[]', $3, $4, $5, $6, $7, $8, $9, 'reviewer', $10, $11, $12, CASE WHEN $12::timestamptz IS NOT NULL THEN 'committee' END, $13, $14, COALESCE((($3)::jsonb->0->>'course_id')::int, (SELECT id FROM fixture_course))) RETURNING id`,
             [student.id, programme.id, JSON.stringify([{ course_code: `K${n}`, course_name: `Committee ${n}`, credits: 3 }]), `K${n}`, status, semester,
-                reviewer, reviewerGrade, finalGrade, decidedAt, state, days === null ? null : new Date(decidedAt.getTime() + days * DAY), note]
+                reviewer, reviewerGrade, finalGrade, decidedAt, state, days === null ? null : new Date(decidedAt.getTime() + days * DAY), note, committeeGrade]
         )).rows[0].id;
         created.push(id);
     };
     try {
         await add(1, P1, { status: 'awaiting_committee', reviewer: 'approved', reviewerGrade: 4, state: 'awaiting' });
         await add(2, P1, { status: 'approved', reviewer: 'approved', reviewerGrade: 4, finalGrade: 4, state: 'kept', days: 2 });
-        await add(3, P1, { status: 'approved', reviewer: 'approved', reviewerGrade: 4, finalGrade: 5, state: 'kept', days: 4 });
+        // fixes Part A: a grade change (still approved, the committee's grade) counts as changed
+        await add(3, P1, { status: 'approved', reviewer: 'approved', reviewerGrade: 4, finalGrade: 5, committeeGrade: 5, state: 'changed', days: 4 });
         await add(4, P1, { status: 'rejected', reviewer: 'approved', reviewerGrade: 3, state: 'changed', days: 1, note: 'Not equivalent' });
-        await add(5, P2, { status: 'approved', reviewer: 'rejected', finalGrade: 3, state: 'changed', days: 3, note: 'Equivalent after all' });
+        await add(5, P2, { status: 'approved', reviewer: 'rejected', finalGrade: 3, committeeGrade: 3, state: 'changed', days: 3, note: 'Equivalent after all' });
         const { committee } = await semesterAnalytics(pool, semester);
         const { programme: _all, ...overall } = committee.overall;
         assert.deepEqual(overall, {
-            awaiting: 1, kept: 2, changed: 2, changedToRejected: 1, changedToApproved: 1, keptWithNewGrade: 1,
-            changedPercent: 50, averageDays: 2.5, medianDays: 2.5,
+            awaiting: 1, kept: 1, changed: 3, changedToRejected: 1, changedToApproved: 1, gradeChanged: 1,
+            changedPercent: 75, averageDays: 2.5, medianDays: 2.5,
         });
         const p1 = committee.byProgramme.find((r) => r.programme.code === P1.code);
-        assert.deepEqual([p1.awaiting, p1.kept, p1.changed, p1.changedPercent, p1.averageDays], [1, 2, 1, 33.3, 2.3]);
+        assert.deepEqual([p1.awaiting, p1.kept, p1.changed, p1.gradeChanged, p1.changedPercent, p1.averageDays], [1, 1, 2, 1, 66.7, 2.3]);
         const p2 = committee.byProgramme.find((r) => r.programme.code === P2.code);
         assert.deepEqual([p2.changed, p2.changedToApproved, p2.changedPercent, p2.medianDays], [1, 1, 100, 3]);
     } finally {
         await pool.query('DELETE FROM applications WHERE semester_id = $1', [semester]);
+        await removeFixtureCourses(pool);
         await pool.query('DELETE FROM semesters WHERE id = $1', [semester]);
     }
 });

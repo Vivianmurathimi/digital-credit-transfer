@@ -162,7 +162,7 @@ const Analytics = () => {
                                     <th style={th}>{t('analytics_committee_changed')}</th>
                                     <th style={th}>{t('analytics_committee_to_rejected')}</th>
                                     <th style={th}>{t('analytics_committee_to_approved')}</th>
-                                    <th style={th}>{t('analytics_committee_new_grade')}</th>
+                                    <th style={th}>{t('analytics_committee_grade_changed')}</th>
                                     <th style={th}>{t('analytics_committee_changed_percent')}</th>
                                     <th style={th}>{t('analytics_average_column')}</th>
                                     <th style={th}>{t('analytics_median_column')}</th>
@@ -177,7 +177,7 @@ const Analytics = () => {
                                         <td style={td}>{r.changed}</td>
                                         <td style={td}>{r.changedToRejected}</td>
                                         <td style={td}>{r.changedToApproved}</td>
-                                        <td style={td}>{r.keptWithNewGrade}</td>
+                                        <td style={td}>{r.gradeChanged}</td>
                                         <td style={td}>{r.changedPercent === null ? '—' : t('analytics_percent', { value: r.changedPercent.toLocaleString(language, { maximumFractionDigits: 1 }) })}</td>
                                         <td style={td}>{days(r.averageDays)}</td>
                                         <td style={td}>{days(r.medianDays)}</td>

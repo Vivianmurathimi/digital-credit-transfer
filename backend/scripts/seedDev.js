@@ -113,11 +113,6 @@ const seed = async () => {
         (await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id])
     );
 
-    await pool.query(
-        "INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary') ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id"
-    );
-
-
     const semesterId = await ensureDevSemester();
     // The catalogue from the fixture file; nothing already there is hidden or deleted
     const imported = semesterId ? await importFixture(pool, semesterId) : { coursesAdded: 0 };
@@ -178,7 +173,7 @@ const seed = async () => {
             const targetCourses = [{ course_id: course.id, course_code: course.course_code, course_name: course.course_name, credits: course.credits }];
             const application = await pool.query(
                 `INSERT INTO applications
-                    (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, pte_course_names, system_note, student_note, status, semester_id)
+                    (student_id, programme_id, fulfilled_courses_json, target_courses, target_course_code, target_course_id, system_note, student_note, status, semester_id)
                  VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'pending', $8) RETURNING id, student_note`,
                 [
                     student.id,
@@ -186,7 +181,7 @@ const seed = async () => {
                     JSON.stringify([{ id: 1, ...previous, file }]),
                     JSON.stringify(targetCourses),
                     normalizeCourseCode(course.course_code),
-                    `${course.course_code} (${course.course_name})`,
+                    course.id,
                     'Test application created by seed:dev.',
                     semesterId,
                 ]

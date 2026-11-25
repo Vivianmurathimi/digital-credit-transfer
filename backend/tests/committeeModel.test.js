@@ -12,16 +12,27 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const pool = require('../db');
+const { FIXTURE_COURSE_NAME, removeFixtureCourses } = require('./fixtureCourses');
 
 const run = Date.now().toString(36).toUpperCase();
 let student;
 const apps = [];
 
-const insert = (fields) => {
+// suffix: another course code, for applications that stay counted by the duplicate rule
+const insert = async (fields, suffix = '') => {
+    const code = `CM${run}${suffix}`.slice(0, 20);
+    // The course it points to (migration 028): a hidden fixture course, made in the same statement
+    // (another test file's cleanup removes fixture courses that no application uses yet)
     const columns = ['student_id', 'programme_id', 'institutions', 'target_courses', 'target_course_code', ...Object.keys(fields)];
-    const values = [student.id, student.programme_id, '[]', JSON.stringify([{ course_code: `CM${run}` }]), `CM${run}`.slice(0, 20), ...Object.values(fields)];
+    const values = [student.id, student.programme_id, '[]', JSON.stringify([{ course_code: code }]), code, ...Object.values(fields)];
+    const nameParam = `$${values.length + 1}`;
     return pool.query(
-        `INSERT INTO applications (${columns.join(', ')}) VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`, values
+        `WITH fixture_course AS (
+             INSERT INTO courses (programme_id, semester_id, course_code, course_name, credits, status) VALUES ($2, NULL, $5, ${nameParam}, 3, 'hidden')
+             ON CONFLICT ON CONSTRAINT courses_programme_semester_code_key DO UPDATE SET course_code = EXCLUDED.course_code RETURNING id)
+         INSERT INTO applications (${columns.join(', ')}, target_course_id)
+         VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')}, (SELECT id FROM fixture_course)) RETURNING id`,
+        [...values, FIXTURE_COURSE_NAME]
     ).then((r) => { apps.push(r.rows[0].id); return r.rows[0].id; });
 };
 // Refused by one of these rules (a row breaking two rules is reported by one of them)
@@ -41,6 +52,7 @@ before(async () => {
 
 after(async () => {
     if (apps.length) await pool.query('DELETE FROM applications WHERE id = ANY($1)', [apps]);
+    await removeFixtureCourses(pool); // their courses (migration 028), before programmes and semesters
     await pool.query('DELETE FROM users WHERE id = $1', [student.id]);
     await pool.end();
 });
@@ -82,17 +94,51 @@ test('the duplicate rule counts an application awaiting the committee, even one 
 test("the committee's step: complete, and a change always says why", async () => {
     const id = await insert(AWAITING_REJECTED);
     const change = (fields) => pool.query(
-        `UPDATE applications SET status = 'approved', final_grade = 4, committee_state = 'changed',
+        `UPDATE applications SET status = 'approved', final_grade = 4, committee_grade = 4, committee_state = 'changed',
             committee_by_role = $2, committee_at = $3, committee_note = $4 WHERE id = $1`,
         [id, fields.role, fields.at, fields.note]
     );
-    assert.ok(await refused(change({ role: 'committee', at: new Date(), note: '  ' }), 'applications_committee_change_has_note'), 'a change without a note: refused');
+    assert.ok(await refused(change({ role: 'committee', at: new Date(), note: '  ' }), 'applications_committee_flip_has_note'), 'changing the decision without a note: refused');
     assert.ok(await refused(change({ role: 'committee', at: null, note: 'x' }), 'applications_committee_step_complete'), 'a step without its time: refused');
     assert.ok(await refused(change({ role: 'reviewer', at: new Date(), note: 'x' }), 'applications_committee_by_role_known'), 'taken by a reviewer: refused');
     await change({ role: 'committee', at: new Date(), note: 'Equivalent after all' });
     const row = (await pool.query('SELECT status, final_grade, reviewer_decision, committee_state FROM applications WHERE id = $1', [id])).rows[0];
     assert.deepEqual(row, { status: 'approved', final_grade: 4, reviewer_decision: 'rejected', committee_state: 'changed' },
         "the final result is the committee's; the reviewer's decision stays");
-    assert.ok(await refused(pool.query("UPDATE applications SET status = 'approved', final_grade = 4, committee_state = NULL WHERE id = $1", [id]),
+    assert.ok(await refused(pool.query("UPDATE applications SET status = 'approved', final_grade = 4, committee_grade = NULL, committee_state = NULL WHERE id = $1", [id]),
         'applications_committee_state_matches', 'applications_committee_step_taken'), 'a final decision without a committee state: refused');
+});
+
+// Fixes Part A (migration 027): the committee's own grade
+const AWAITING_APPROVED = {
+    status: 'awaiting_committee', reviewer_decision: 'approved', reviewer_grade: 4, committee_state: 'awaiting',
+    decided_by_role: 'reviewer', decided_at: new Date(), decision_rationale: 'Equivalent',
+};
+
+test("the committee's grade: a grade change needs no note, but another grade; the final grade follows it", async () => {
+    const id = await insert(AWAITING_APPROVED, 'G');
+    const regrade = (grade, finalGrade = grade, note = null) => pool.query(
+        `UPDATE applications SET status = 'approved', final_grade = $3, committee_grade = $2, committee_state = 'changed',
+            committee_by_role = 'committee', committee_at = now(), committee_note = $4 WHERE id = $1`,
+        [id, grade, finalGrade, note]
+    );
+    assert.ok(await refused(regrade(4), 'applications_committee_change_to_approved_grade'), "the reviewer's own grade: refused");
+    assert.ok(await refused(regrade(null, 4), 'applications_committee_change_to_approved_grade'), 'a grade change without a grade: refused');
+    assert.ok(await refused(regrade(3, 4), 'applications_committee_final_grade'), "a final grade other than the committee's: refused");
+    assert.ok(await refused(regrade(6), 'applications_committee_grade_range', 'applications_final_grade_range'), 'a grade outside 2-5: refused');
+    await regrade(3);
+    const row = (await pool.query('SELECT status, final_grade, reviewer_grade, committee_grade, committee_state FROM applications WHERE id = $1', [id])).rows[0];
+    assert.deepEqual(row, { status: 'approved', final_grade: 3, reviewer_grade: 4, committee_grade: 3, committee_state: 'changed' }, 'no note needed');
+});
+
+test("Keep: the reviewer's grade is the final one, and no committee grade", async () => {
+    const id = await insert(AWAITING_APPROVED, 'K');
+    const keep = (finalGrade, committeeGrade = null) => pool.query(
+        `UPDATE applications SET status = 'approved', final_grade = $2, committee_grade = $3, committee_state = 'kept',
+            committee_by_role = 'committee', committee_at = now() WHERE id = $1`,
+        [id, finalGrade, committeeGrade]
+    );
+    assert.ok(await refused(keep(5), 'applications_committee_final_grade'), 'kept with another grade: refused');
+    assert.ok(await refused(keep(4, 4), 'applications_committee_grade_on_change'), 'a committee grade on Keep: refused');
+    await keep(4);
 });

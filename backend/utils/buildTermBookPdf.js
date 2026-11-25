@@ -48,19 +48,24 @@ const contentWidth = (doc) => doc.page.width - 2 * MARGIN;
 // or System) and when. The same values as the Decision block of the application page.
 // Round 2 Group 2: what the committee did, in a few words (shared by the line and the Decision block)
 const COMMITTEE_STATES = { awaiting: 'Awaiting the committee', kept: 'Kept by the committee', changed: 'Changed by the committee' };
+// Fixes Part A: a grade change says the new grade ("Grade changed to 3 (satisfactory)")
+const committeeState = (committee) => (committee.outcome === 'grade_changed' && committee.grade
+    ? `Grade changed to ${gradeLabel(committee.grade, 'en')}`
+    : COMMITTEE_STATES[committee.state]);
 const committeeText = (committee) => {
     if (!committee) return null;
-    const parts = [COMMITTEE_STATES[committee.state]];
+    const parts = [committeeState(committee)];
     if (committee.at) parts.push(formatDateTime(committee.at));
     if (committee.by) parts.push(`by ${committee.by}`);
     return parts.join(', ');
 };
-const decisionLine = (app) => {
+// studentCopy (fixes 4a): the student's own PDF, without the reviewer's step and the committee line
+const decisionLine = (app, studentCopy = false) => {
     const d = app.decision;
     return [
         `Application #${app.id}`,
         appStatusLabel(app),
-        ...(d && d.committee ? [`Committee: ${COMMITTEE_STATES[d.committee.state]}`] : []),
+        ...(d && d.committee && d.committee.state && !studentCopy ? [`Committee: ${committeeState(d.committee)}`] : []),
         `Final grade: ${d && d.finalGrade ? gradeLabel(d.finalGrade, 'en') : '—'}`,
         `Decided by: ${d && d.decidedBy ? d.decidedBy : '—'}`,
         `Decided on: ${d ? formatDateTime(d.decidedAt) : '—'}`,
@@ -184,7 +189,7 @@ const drawIndex = (doc, data, firstIndexPage, startPages) => {
     }
 };
 
-const drawApplication = (doc, app, evidenceResults) => {
+const drawApplication = (doc, app, evidenceResults, studentCopy = false) => {
     // Title + status
     doc.font('Bold').fontSize(18).fillColor(COLORS.brand).text(`Application #${app.id}`, MARGIN, MARGIN);
     doc.font('Bold').fontSize(12).fillColor(statusColor(app.status)).text(appStatusLabel(app).toUpperCase());
@@ -205,13 +210,13 @@ const drawApplication = (doc, app, evidenceResults) => {
         ['Final grade', decision && decision.finalGrade ? gradeLabel(decision.finalGrade, 'en') : '—'],
         ['Decided by', decision && decision.decidedBy ? decision.decidedBy : '—'],
         ['Decided on', decision ? formatDateTime(decision.decidedAt) : '—'],
-        ['Last change by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email}), ${formatDateTime(app.reviewedAt)}` : '—'],
+        ...(studentCopy ? [] : [['Last change by', app.reviewer ? `${app.reviewer.name} (${app.reviewer.email}), ${formatDateTime(app.reviewedAt)}` : '—']]),
         // The committee (round 2 Group 2): the reviewer's own decision, then the committee's step
         ...(decision && decision.reviewerDecision ? [[
             'Reviewer decision',
             `${statusLabel(decision.reviewerDecision)}${decision.reviewerGrade ? `, ${gradeLabel(decision.reviewerGrade, 'en')}` : ''}`,
         ]] : []),
-        ...(decision && decision.committee ? [['Committee', committeeText(decision.committee)]] : []),
+        ...(decision && decision.committee && decision.committee.state ? [['Committee', committeeText(decision.committee)]] : []),
     ]);
     // An automatic rejection stores only its reason code: written here in English, like the whole book
     const reasonText = decision && ((decision.reasonCode && reasons.en[decision.reasonCode]) || decision.rationale);
@@ -288,7 +293,7 @@ const drawHeadersAndFooters = (doc, data, pageApps = {}) => {
         const app = pageApps[i];
         if (app) {
             doc.font('Bold').fontSize(7.5).fillColor(statusColor(app.status));
-            writeInMargin(doc, decisionLine(app), doc.page.height - FOOTER_OFFSET - 4 * MM, { align: 'center' });
+            writeInMargin(doc, decisionLine(app, !!data.studentCopy), doc.page.height - FOOTER_OFFSET - 4 * MM, { align: 'center' });
             doc.font('Body').fontSize(8).fillColor(COLORS.muted);
         }
         writeInMargin(doc, `Page ${i + 1} of ${range.count}`, doc.page.height - FOOTER_OFFSET, { align: 'center' });
@@ -348,7 +353,7 @@ const buildTermBookPdf = (data) => new Promise((resolve, reject) => {
             const evidenceResults = [];
             for (const item of app.evidence) evidenceResults.push(await fetchEvidence(item.file));
 
-            drawApplication(doc, app, evidenceResults);
+            drawApplication(doc, app, evidenceResults, !!data.studentCopy);
             app.evidence.forEach((item, i) => {
                 if (!evidenceResults[i].embeddable) return;
                 drawEvidencePage(doc, app, item, evidenceResults[i]);

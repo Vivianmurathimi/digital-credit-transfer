@@ -12,6 +12,7 @@ const { LIMITS, takeSlot, normalizeEmail, clientIp } = require('../utils/rateLim
 const { checkPassword } = require('../utils/passwordRules');
 const { REVIEWER_ROLES, LINK_ROLES, sideOf, sameSideSql, lockProgrammes, mainReviewerOf, endLink } = require('../utils/reviewers');
 const { notifyAdminsNoMainReviewer } = require('../utils/notifyAdmins');
+const { activateAccount, deleteAccount } = require('../utils/staffAccounts');
 const {
     INVITE_DAYS, INVITE_ROLES, INVITE_STATUSES, INVITE_STATUS_SQL, OPEN_INVITE,
     newToken, hashToken, inviteLink, isValidInviteEmail, sendInviteEmail, checkInviteAddress, createInvite,
@@ -103,6 +104,8 @@ const endLinkAndRetire = async (client, { linkId, userId, programmeId, handOverT
     const left = (await client.query('SELECT 1 FROM staff_programmes WHERE user_id = $1 AND ended_at IS NULL LIMIT 1', [userId])).rows.length;
     if (left) return { moved, deactivated: false };
     await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1 AND deactivated_at IS NULL', [userId]);
+    // Activate gives this link back (fixes 1a; as a standby extra reviewer when the programme has a main one)
+    await client.query('UPDATE staff_programmes SET ended_by_deactivation = true WHERE id = $1', [linkId]);
     await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [userId]);
     return { moved, deactivated: true };
 };
@@ -274,7 +277,7 @@ router.get('/users/staff', verifyToken, requireRole('superadmin'), async (req, r
                     ${linksSql(false)} AS programmes,
                     CASE WHEN u.deactivated_at IS NOT NULL THEN ${linksSql(true)} ELSE '[]' END AS past_programmes
              FROM users u
-             WHERE u.role IN ('reviewer', 'committee', 'superadmin')
+             WHERE u.role IN ('reviewer', 'committee', 'superadmin') AND u.deleted_at IS NULL
              ORDER BY u.role DESC, (u.deactivated_at IS NOT NULL), u.name`,
             [req.actor.id]
         );
@@ -307,6 +310,8 @@ router.put('/users/:id/remove-reviewer', verifyToken, requireRole('superadmin'),
             await client.query('UPDATE users SET deactivated_at = now() WHERE id = $1 AND deactivated_at IS NULL', [id]);
             let unassigned = 0;
             for (const link of links) unassigned += await endLink(client, { linkId: link.id, userId: id, programmeId: link.programme_id });
+            // Activate gives exactly these links back (fixes 1a)
+            if (links.length) await client.query('UPDATE staff_programmes SET ended_by_deactivation = true WHERE id = ANY($1)', [links.map((l) => l.id)]);
             // Admins acting as this reviewer: their sessions end too
             await client.query('UPDATE acting_sessions SET ended_at = now() WHERE person_id = $1 AND ended_at IS NULL', [id]);
             return { alreadyRemoved: false, unassigned, lostMain: links.filter((l) => l.role === 'main').map((l) => l.programme_id) };
@@ -359,6 +364,43 @@ router.put('/users/:id/deactivate-admin', verifyToken, requireRole('superadmin')
     } catch (err) {
         console.error('❌ Deactivate admin error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Could not deactivate the admin');
+    }
+});
+
+/**
+ * PUT /api/users/:id/activate (fixes 1a): a deactivated reviewer, committee member or admin back,
+ * the SAME account: same password, history and the programme links its deactivation ended
+ * (utils/staffAccounts.js). restored: the links given back; becameExtra: programmes where they had
+ * been main reviewer but someone else is now (they come back as a standby extra reviewer).
+ */
+router.put('/users/:id/activate', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    try {
+        const result = await inTransaction((client) => activateAccount(client, req.ids.id));
+        if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2]);
+        return res.json({ success: true, ...result });
+    } catch (err) {
+        if (isSecondMain(err)) return sendError(res, 409, 'PROGRAMME_HAS_REVIEWER', 'This programme already has a main reviewer');
+        console.error('❌ Activate account error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not activate the account');
+    }
+});
+
+/**
+ * DELETE /api/users/:id (fixes 1a): a reviewer, committee member or admin. Without history the
+ * account is deleted for real (outcome 'deleted'); with history it is hidden and its address freed,
+ * the name staying on its records (outcome 'hidden'). Not yourself, not the last active admin.
+ * A main reviewer leaving: the admins are told, as on removal.
+ */
+router.delete('/users/:id', verifyToken, requireRole('superadmin'), requireIdParam('id'), async (req, res) => {
+    try {
+        const result = await inTransaction((client) => deleteAccount(client, { userId: req.ids.id, actorId: req.actor.id }));
+        if (result.error) return sendError(res, result.error[0], result.error[1], result.error[2]);
+        res.json({ success: true, outcome: result.outcome, unassigned: result.unassigned });
+        notifyAdminsNoMainReviewer(result.lostMain);
+        return undefined;
+    } catch (err) {
+        console.error('❌ Delete account error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not delete the account');
     }
 });
 

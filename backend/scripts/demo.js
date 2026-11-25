@@ -12,6 +12,9 @@
  * demo:seed starts from scratch every time: the demo database is dropped and created again (stop
  * demo:start first) and the demo buckets are emptied. Sends no emails.
  *
+ * To check it on a throwaway database and buckets instead (the real demo stays as it is):
+ *   DEMO_DB_NAME=credit_demo_check DEMO_BUCKET_PREFIX=democheck- npm run demo:seed
+ *
  * The demo data (every account's password: Demo1234!):
  *   - two programmes (Computer Science Engineering, Civil Engineering), each with a main reviewer and an
  *     extra reviewer: assisting in CS (sees CS), on standby in Civil (sees nothing)
@@ -25,20 +28,31 @@
 process.env.DOTENV_CONFIG_QUIET = 'true';
 require('dotenv').config();
 
-const DEMO_ENV = { DB_NAME: 'credit_demo', MINIO_BUCKET: 'demo-transcripts', MINIO_ARCHIVE_BUCKET: 'demo-archives' };
-const DEMO_PASSWORD = 'Demo1234!';
-
-const command = process.argv[2];
-const devDatabase = process.env.DB_NAME;
-
 const stop = (message) => {
     console.error(message);
     process.exit(1);
 };
 
+// For checking the demo on a throwaway database (DB cleanup 3): DEMO_DB_NAME and DEMO_BUCKET_PREFIX
+// replace "credit_demo" and "demo-" for this one run, so the real demo is never touched. Plain
+// lowercase names only (they are written into SQL and bucket names).
+const demoDbName = process.env.DEMO_DB_NAME || 'credit_demo';
+const bucketPrefix = process.env.DEMO_BUCKET_PREFIX || 'demo-';
+if (!/^[a-z][a-z0-9_]{0,62}$/.test(demoDbName)) stop(`DEMO_DB_NAME "${demoDbName}": lowercase letters, digits and _ only, starting with a letter.`);
+if (!/^[a-z][a-z0-9-]{0,40}$/.test(bucketPrefix)) stop(`DEMO_BUCKET_PREFIX "${bucketPrefix}": lowercase letters, digits and - only, starting with a letter.`);
+
+const DEMO_ENV = { DB_NAME: demoDbName, MINIO_BUCKET: `${bucketPrefix}transcripts`, MINIO_ARCHIVE_BUCKET: `${bucketPrefix}archives` };
+const DEMO_PASSWORD = 'Demo1234!';
+
+const command = process.argv[2];
+const devDatabase = process.env.DB_NAME;
+
 if (process.env.NODE_ENV === 'production') stop('Refusing to run: NODE_ENV=production. The demo is for the defence on a development machine only.');
 if (!['seed', 'start'].includes(command)) stop('Use "npm run demo:seed" or "npm run demo:start".');
 if (devDatabase === DEMO_ENV.DB_NAME) stop(`DB_NAME in backend/.env is "${devDatabase}": set it back to the development database.`);
+if (DEMO_ENV.MINIO_BUCKET === process.env.MINIO_BUCKET || DEMO_ENV.MINIO_ARCHIVE_BUCKET === process.env.MINIO_ARCHIVE_BUCKET) {
+    stop('The demo buckets would be the development buckets: choose another DEMO_BUCKET_PREFIX.');
+}
 
 // From here on everything (db.js, minio buckets, the server) uses the demo settings
 Object.assign(process.env, DEMO_ENV);
@@ -155,7 +169,6 @@ const seed = async (pool) => {
     console.log(`Migrations applied: ${applied.length}`);
 
     const programmes = Object.fromEntries((await pool.query('SELECT id, code FROM programmes')).rows.map((p) => [p.code, p.id]));
-    await pool.query("INSERT INTO universities (name, country) VALUES ('University of Pécs (PTE)', 'Hungary')");
 
     // Semesters (Budapest days): the previous one ended 60 days ago; the current one takes
     // applications from 30 days ago to 30 days from now and ends in 90 days
@@ -236,21 +249,23 @@ const seed = async (pool) => {
         }
         const { rows } = await pool.query(
             `INSERT INTO applications
-                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, pte_course_names,
+                (student_id, programme_id, institutions, fulfilled_courses_json, target_courses, target_course_code, target_course_id,
                  system_note, syllabus_reasons, student_note, status, semester_id, assigned_reviewer_id, created_at,
                  reviewer_note, student_resubmit_note, supplemental_files, reviewed_by, reviewed_at,
                  info_requested_at, info_deadline, final_grade, decided_by, decided_by_role, decided_at, decision_rationale,
-                 reviewer_decision, reviewer_grade, committee_state, committee_by, committee_by_role, committee_at, committee_note)
+                 reviewer_decision, reviewer_grade, committee_state, committee_by, committee_by_role, committee_at, committee_note, committee_grade)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::timestamptz AT TIME ZONE 'UTC',
                      $15, $16, $17, $18, $19::timestamptz AT TIME ZONE 'UTC',
                      $20, info_reply_deadline($20), $21, $22, $23, $24, $25,
                      $26, $27, COALESCE($28, CASE WHEN ($11)::varchar IN ('approved', 'rejected') THEN 'before_committee' END),
-                     $29, CASE WHEN $29::int IS NOT NULL THEN 'committee' END, $30, $31)
+                     $29, CASE WHEN $29::int IS NOT NULL THEN 'committee' END, $30, $31,
+                     -- the committee's own grade (migration 027): a change that ends approved
+                     CASE WHEN $28::varchar = 'changed' AND ($11)::varchar = 'approved' THEN $21::smallint END)
              RETURNING id`,
             [
                 student.id, programmes[student.programme],
                 JSON.stringify([{ name: institution.name, country: institution.countryCode, grading_file: gradingFile }]),
-                JSON.stringify([row]), JSON.stringify([target]), normalizeCourseCode(target.course_code), `${target.course_code} (${target.course_name})`,
+                JSON.stringify([row]), JSON.stringify([target]), normalizeCourseCode(target.course_code), target.course_id,
                 syllabusNote(reasons), reasons, spec.note || null, final.status, semesters[spec.semester],
                 // open applications are shared (round 2 Group 1); decided ones name the programme's reviewer
                 ['pending', 'needs_info'].includes(final.status) ? null : reviewerOf(student.programme).id, utc(spec.submittedAt),

@@ -144,7 +144,7 @@ router.get('/admin/students/:id/programme-changes', ...adminOnly, requireIdParam
 const courseLabel = (app) => {
     const target = Array.isArray(app.target_courses) ? app.target_courses[0] : null;
     const code = target?.course_code || app.target_course_code || '';
-    return target?.course_name ? `${code} – ${target.course_name}` : code || app.pte_course_names || '';
+    return target?.course_name ? `${code} – ${target.course_name}` : code;
 };
 
 // PUT /api/admin/students/:id/programme { programme_code }
@@ -172,7 +172,7 @@ router.put('/admin/students/:id/programme', ...adminOnly, requireIdParam('id'), 
             const withdrawn = (await client.query(
                 `UPDATE applications SET status = 'withdrawn', info_requested_at = NULL, info_deadline = NULL, info_reminder_sent_at = NULL
                  WHERE student_id = $1 AND status = ANY($2) AND NOT ${semesterEndedSql()}
-                 RETURNING id, target_courses, target_course_code, pte_course_names`,
+                 RETURNING id, target_courses, target_course_code`,
                 [student.id, OPEN_STATUSES]
             )).rows;
             for (const app of withdrawn) {

@@ -46,24 +46,25 @@ const addEvent = (db, { applicationId, kind, actorRole, actorId = null, status, 
 // awaits the committee the student gets "awaiting_committee" and nothing of the reviewer's
 // decision: no outcome, grade, reason or note (reviewer_note holds the decision note too), and
 // their "decided" step is left out of the history. After the committee: the FINAL status and grade,
-// "decided by: committee" and its date; the reason is, on Keep, the reviewer's reason plus the
-// committee's note, on Change only the committee's note (decision_rationale / committee_note).
+// "decided by: committee" and its date; the reason is, when the decision stays (Keep, or Change the
+// grade: fixes Part A), the reviewer's reason plus the committee's note, when the decision changes
+// only the committee's note (decision_rationale / committee_note). Never the reviewer's own grade.
 // Decisions from before the committee existed, and System decisions, are shown as before.
 const COMMITTEE_FLOW = "a.committee_state IN ('awaiting', 'kept', 'changed')";
 // The history steps a student may see (alias e; a = the application)
 const STUDENT_VISIBLE_EVENT = `NOT (e.kind = 'decided' AND ${COMMITTEE_FLOW})`;
 const STUDENT_APPLICATION_QUERY = `
-    SELECT a.id, a.status, a.target_courses, a.target_course_code, a.pte_course_names, a.fulfilled_courses_json,
+    SELECT a.id, a.status, a.target_courses, a.target_course_code, a.fulfilled_courses_json,
            CASE WHEN ${COMMITTEE_FLOW} THEN NULL ELSE a.reviewer_note END AS reviewer_note,
            a.info_deadline, a.created_at AT TIME ZONE 'UTC' AS submitted_at,
            CASE WHEN a.status = 'approved' THEN a.final_grade END AS final_grade,
-           CASE WHEN a.status IN ('approved', 'rejected') AND a.committee_state IS DISTINCT FROM 'changed' THEN a.decision_rationale END AS decision_rationale,
+           CASE WHEN a.status IN ('approved', 'rejected') AND (a.committee_state IS DISTINCT FROM 'changed' OR a.status = a.reviewer_decision) THEN a.decision_rationale END AS decision_rationale,
            CASE WHEN a.committee_state IN ('kept', 'changed') THEN a.committee_note END AS committee_note,
            r.resubmit_count, r.last_resubmitted_at,
            d.actor_role AS decided_by, d.created_at AS decided_at, d.reason_code AS decision_reason,
            sb.name AS semester_name, COALESCE(sb.status = 'active', false) AS current_semester,
            -- The chosen PTE course was hidden or removed later (admin round Group 4): "no longer offered"
-           NOT EXISTS (SELECT 1 FROM courses oc WHERE oc.id::text = a.target_courses->0->>'course_id' AND oc.status = 'active') AS course_no_longer_offered
+           NOT EXISTS (SELECT 1 FROM courses oc WHERE oc.id = a.target_course_id AND oc.status = 'active') AS course_no_longer_offered
     FROM applications a
     LEFT JOIN semester_bounds sb ON sb.id = a.semester_id
     LEFT JOIN LATERAL (

@@ -109,6 +109,50 @@ Admins land on `/admin` (Overview). Each area has its own address: `/admin/semes
 `/admin/late-access`, `/admin/catalogue`, `/admin/applications`, `/admin/past-semesters`, `/admin/analytics`, `/admin/reviewers`, `/admin/committee`,
 `/admin/students`, `/admin/admins`, `/admin/domains`.
 
+## One programme per import
+
+The Neptun import (Programmes & Courses → Import from Neptun) brings in one programme at a time, so the
+same programme is never created twice under two codes (`backend/utils/programmeMatch.js`):
+
+1. **Programme first.** Choose an existing programme, or type a new one (code, Hungarian name, optional
+   English and German names). A new one is checked against the existing programmes: the same name
+   (spaces, case and accents ignored) or a code that starts like an existing one ("CIV" / "CIVIL", from
+   3 characters) stops with **Same programme** or **Different programme**. An existing code is never
+   created again.
+2. **Upload the CSV.**
+3. **Every row is checked** against the chosen programme (its code, one of its other codes, or its
+   name). Rows with another code are listed by group ("Rows 3–15 say CIVIL, but you chose CIV"):
+   **Treat as the same programme** imports them and remembers the code (`programme_aliases`), so the
+   next import matches by itself; **Cancel the import** saves nothing. A code that belongs to another
+   programme can only be cancelled.
+
+Nothing is saved before the confirmation, and the import is one transaction. The Programmes table shows
+a programme's other codes ("Also imported as: CIVIL").
+
+## An application and its course
+
+Each application points to the PTE course it applies for (`applications.target_course_id`,
+migration 028). The database refuses to delete a course an application points to, also a withdrawn
+one's (it stays in the history), so Programmes & Courses and the import only offer Delete for unused
+courses; hiding is always possible. Next to the pointer, the application keeps what the course was
+called at submission (`target_courses`: code, name, credits), so PDFs and the history show what the
+student applied for even after a later import renames the course. The fulfilled courses from the
+student's earlier university are only kept as written, since they are not in this catalogue.
+Every course in the catalogue is a PTE course: one course code per programme and semester
+(`courses_programme_semester_code_key`; there is no universities table since migration 030).
+
+To try the demo seed without touching the real demo, give it a throwaway database and buckets:
+`DEMO_DB_NAME=credit_demo_check DEMO_BUCKET_PREFIX=democheck- npm run demo:seed` (in `backend/`).
+
+## Deleting a programme
+
+A programme can be deleted only when nothing uses it: no students, no staff link (current or ended),
+no applications, invitations, programme changes or courses in other semesters. The database enforces
+it too (migration 029): nothing is deleted along with a programme any more, so a staff link, an
+invite line, another code or a reminder record keeps it. The delete removes its other codes, its
+reminder records and its unused courses explicitly, then the programme, in one transaction; if the
+database still refuses, the answer is the usual "in use".
+
 ## The semester timeline
 
 Several semesters can be in progress at once: the next one's application period may open while the

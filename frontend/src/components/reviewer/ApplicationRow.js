@@ -75,7 +75,7 @@ const ApplicationRow = ({ app, open, readOnly = false, showProgramme = false, me
                         {app.reviewer_decision && <>{t('committee_reviewer_label')} {t(`status_${app.reviewer_decision}`)}{' · '}</>}
                         {(app.reviewer_decision || app.status) === 'approved' && <>{t('reviewer_grade_line', { grade: gradeText(app.reviewer_grade ?? app.final_grade, t, language) })}{' · '}</>}
                         {t('reviewer_decided_line', { date: app.decided_at ? formatDate(app.decided_at, language) : '—', who: decidedBy })}
-                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} at={app.committee_at} note={app.committee_note} />
+                        <CommitteeOutcome compact status={app.status} finalGrade={app.final_grade} state={app.committee_state} reviewerDecision={app.reviewer_decision} at={app.committee_at} note={app.committee_note} />
                     </div>
                 )}
             </button>

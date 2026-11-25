@@ -9,6 +9,7 @@ import { formatDate, formatDateTime } from '../dates';
 import ReplyDeadline, { deadlineState } from './ReplyDeadline';
 import { gradeText } from '../grades';
 import StatusChip from './StatusChip';
+import StudentPdfButton from './StudentPdfButton';
 
 const sectionTitle = { fontSize: '15px', margin: '18px 0 6px 0', color: 'var(--link)' };
 const fileButton = { background: 'none', border: 'none', padding: 0, color: 'var(--link)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', textAlign: 'left', overflowWrap: 'anywhere' };
@@ -233,6 +234,7 @@ const ApplicationDetail = ({ applicationId, readOnly = false, countryName, statu
                         {t('student_add_missing_info')}
                     </button>
                 )}
+                {application && <StudentPdfButton applicationId={application.id} large />}
                 <button type="button" onClick={onClose} style={{ padding: '10px 15px', backgroundColor: 'var(--grey)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
                     {t('student_detail_close')}
                 </button>

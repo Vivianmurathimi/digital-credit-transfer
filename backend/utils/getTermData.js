@@ -62,21 +62,51 @@ const getSemesterTermData = async (semesterId, { programmeIds = null, programmes
  * One application, for its own PDF (round 2 Group 1): the same pages as in the book, without the
  * cover and the index. null when it doesn't exist. interim: its semester isn't closed yet.
  * showCommitteeMember: who in the committee acted (round 2 Group 2): the admin's PDF only.
+ * studentId (fixes 4a): the student's own copy: only their own application (else null), and only
+ * what the student may see (as in utils/applicationEvents.js): no reviewer, no internal note, no
+ * reviewer decision while the committee has it, no committee member; studentCopy is set.
  */
-const getApplicationTermData = async (applicationId, { showCommitteeMember = false } = {}) => {
-    const found = (await pool.query('SELECT semester_id FROM applications WHERE id = $1', [applicationId])).rows[0];
+const getApplicationTermData = async (applicationId, { showCommitteeMember = false, studentId = null } = {}) => {
+    const found = (await pool.query(
+        'SELECT semester_id FROM applications WHERE id = $1 AND ($2::int IS NULL OR student_id = $2)', [applicationId, studentId]
+    )).rows[0];
     if (!found) return null;
     const semester = found.semester_id ? (await pool.query(SEMESTER_LABEL_SQL, [found.semester_id])).rows[0] : null;
     const data = await loadTermData({
-        where: 'a.id = $1', params: [applicationId],
-        from: semester ? semester.from_day : '', to: semester ? semester.to_day : '', label: semester ? semester.name : null, showCommitteeMember,
+        where: 'a.id = $1 AND ($2::int IS NULL OR a.student_id = $2)', params: [applicationId, studentId],
+        from: semester ? semester.from_day : '', to: semester ? semester.to_day : '', label: semester ? semester.name : null,
+        showCommitteeMember: studentId === null && showCommitteeMember, forStudent: studentId !== null,
     });
-    return { ...data, single: true, interim: !semester || semester.status !== 'closed' };
+    return { ...data, single: true, interim: !semester || semester.status !== 'closed', studentCopy: studentId !== null };
 };
 
-const loadTermData = async ({ where, params, from, to, label = null, showCommitteeMember = false }) => {
+// What the committee did (fixes Part A): kept, the grade changed (still approved), or the decision changed
+const committeeOutcome = (row) => {
+    if (row.committee_state !== 'changed') return row.committee_state;
+    return row.status === row.reviewer_decision ? 'grade_changed' : 'decision_changed';
+};
+
+// The decision as the student sees it (utils/applicationEvents.js): after the committee only the
+// final result, "Committee" and its date; the reason only when the decision stayed; never names
+const studentDecision = (row) => {
+    if (!['approved', 'rejected'].includes(row.status)) return null;
+    const inFlow = ['kept', 'changed'].includes(row.committee_state);
+    return {
+        finalGrade: row.status === 'approved' ? row.final_grade : null,
+        decidedBy: inFlow ? 'Committee'
+            : row.decided_by_role === 'system' ? 'System' : row.decided_by_role === 'admin' ? 'Admin' : row.decided_by_role ? 'Reviewer' : null,
+        decidedAt: inFlow ? row.committee_at : row.decided_at,
+        rationale: row.committee_state !== 'changed' || row.status === row.reviewer_decision ? row.decision_rationale : null,
+        reasonCode: row.decided_by_role === 'system' ? row.auto_reason : null,
+        reviewerDecision: null,
+        reviewerGrade: null,
+        committee: inFlow && row.committee_note ? { state: null, note: row.committee_note } : null,
+    };
+};
+
+const loadTermData = async ({ where, params, from, to, label = null, showCommitteeMember = false, forStudent = false }) => {
     const result = await pool.query(
-        `SELECT a.id, a.status, a.fulfilled_courses_json, a.pte_course_names,
+        `SELECT a.id, a.status, a.fulfilled_courses_json, a.target_courses,
                 a.student_note, a.system_note, a.reviewer_note, a.student_resubmit_note,
                 a.supplemental_files,
                 (SELECT e.reason_code FROM application_events e
@@ -85,7 +115,7 @@ const loadTermData = async ({ where, params, from, to, label = null, showCommitt
                 a.reviewed_at AT TIME ZONE 'UTC' AS reviewed_at,
                 a.final_grade, a.decided_by_role, a.decided_at, a.decision_rationale, d.name AS decider_name,
                 a.reviewer_decision, a.reviewer_grade, a.committee_state, a.committee_at, a.committee_note, a.committee_by_role,
-                cm.name AS committee_member_name,
+                a.committee_grade, cm.name AS committee_member_name,
                 s.name AS student_name, s.email AS student_email,
                 r.name AS reviewer_name, r.email AS reviewer_email
          FROM applications a
@@ -119,11 +149,11 @@ const loadTermData = async ({ where, params, from, to, label = null, showCommitt
             submittedAt: row.submitted_at,
             reviewedAt: row.reviewed_at,
             student: { name: row.student_name, email: row.student_email },
-            reviewer: row.reviewer_name ? { name: row.reviewer_name, email: row.reviewer_email } : null,
+            reviewer: !forStudent && row.reviewer_name ? { name: row.reviewer_name, email: row.reviewer_email } : null,
             // The decision (reviewer Group 6): approved / rejected (round 2 Group 2: and awaiting the
             // committee). decidedBy: the reviewer's name, or 'Admin' / 'System' (from decided_by_role);
             // null for older decisions without it. finalGrade: the final one (none while awaiting).
-            decision: ['approved', 'rejected', 'awaiting_committee'].includes(row.status) ? {
+            decision: forStudent ? studentDecision(row) : ['approved', 'rejected', 'awaiting_committee'].includes(row.status) ? {
                 finalGrade: row.final_grade,
                 decidedBy: row.decided_by_role === 'admin' ? 'Admin'
                     : row.decided_by_role === 'system' ? 'System'
@@ -138,6 +168,9 @@ const loadTermData = async ({ where, params, from, to, label = null, showCommitt
                 reviewerGrade: row.reviewer_grade,
                 committee: ['awaiting', 'kept', 'changed'].includes(row.committee_state) ? {
                     state: row.committee_state,
+                    // kept / grade_changed / decision_changed (fixes Part A), and the committee's grade
+                    outcome: committeeOutcome(row),
+                    grade: row.committee_grade,
                     at: row.committee_at,
                     note: row.committee_note,
                     by: !showCommitteeMember || !row.committee_by_role ? null
@@ -145,11 +178,15 @@ const loadTermData = async ({ where, params, from, to, label = null, showCommitt
                 } : null,
             } : null,
             courses,
-            pteCourses: splitList(row.pte_course_names, ' + '),
+            // What the student applied for, as saved at submission (DB cleanup 1: the course may have
+            // been renamed or hidden since): "CODE (Name)"
+            pteCourses: parseCourses(row.target_courses).map((c) => (c.course_name ? `${c.course_code} (${c.course_name})` : c.course_code)).filter(Boolean),
             notes: {
                 student: row.student_note,
                 system: row.system_note,
-                reviewer: row.reviewer_note,
+                // The reviewer's note also holds the decision note: never in the student's copy while
+                // the committee has (or had) the application
+                reviewer: forStudent && ['awaiting', 'kept', 'changed'].includes(row.committee_state) ? null : row.reviewer_note,
                 resubmit: row.student_resubmit_note,
             },
             evidence,
