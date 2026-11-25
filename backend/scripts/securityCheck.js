@@ -3914,6 +3914,65 @@ const run = async () => {
         }
     }
 
+    section('4ah. Daily summary switches (migration 031): own settings only, the ones that apply, never while acting');
+    {
+        const stamp = Date.now().toString(36).toUpperCase();
+        const code = `${SHARING_PROGRAMME_PREFIX}E${stamp}`.slice(0, 20);
+        try {
+            const programmeId = (await pool.query(
+                "INSERT INTO programmes (code, name_hu, name_en, name_de) VALUES ($1, 'Értesítés', 'Email settings', 'E-Mail') RETURNING id", [code]
+            )).rows[0].id;
+            const person = async (key, role, links) => {
+                const user = (await pool.query(
+                    "INSERT INTO users (name, email, password, role, is_verified) VALUES ($1, $2, 'not-a-password-hash', $3, true) RETURNING id, role",
+                    [`Email ${key}`, `${STAFF_TEST_PREFIX}em-${key}-${stamp.toLowerCase()}${TEST_DOMAIN}`, role]
+                )).rows[0];
+                for (const linkRole of links) {
+                    await pool.query('INSERT INTO staff_programmes (user_id, programme_id, role, can_assist) VALUES ($1, $2, $3, false)', [user.id, programmeId, linkRole]);
+                }
+                return user;
+            };
+            const reviewerOnly = await person('reviewer', 'reviewer', ['main']);
+            const both = await person('both', 'reviewer', ['extra', 'committee']);
+            const member = await person('member', 'committee', ['committee']);
+            const [TR, TB, TM] = [tokenFor(reviewerOnly), tokenFor(both), tokenFor(member)];
+            const get = (token) => call('GET', 'me/email-settings', { token });
+            const put = (token, json) => call('PUT', 'me/email-settings', { token, json });
+
+            await expect('Email settings without a token', get(null), 401, 'NO_TOKEN');
+            report(JSON.stringify((await get(TR)).body?.settings) === '{"reviewerSummary":true}', 'A reviewer: only the reviewer summary, on');
+            report(JSON.stringify((await get(TB)).body?.settings) === '{"reviewerSummary":true,"committeeSummary":true}', 'A reviewer on a committee: both, on');
+            report(JSON.stringify((await get(TM)).body?.settings) === '{"committeeSummary":true}', 'A committee member: only the committee summary, on');
+            report(JSON.stringify((await get(A)).body?.settings) === '{}', 'A student: none');
+            report(JSON.stringify((await get(S)).body?.settings) === '{}', 'An admin: none (their alerts always come)');
+
+            const off = await put(TB, { committeeSummary: false });
+            report(off.status === 200 && off.body?.settings?.committeeSummary === false && off.body.settings.reviewerSummary === true, 'Switch one side off: only that one changes', `${off.status}`);
+            report((await pool.query('SELECT committee_summary_email FROM users WHERE id = $1', [both.id])).rows[0].committee_summary_email === false, '…saved for that person');
+            report((await pool.query('SELECT committee_summary_email FROM users WHERE id = $1', [member.id])).rows[0].committee_summary_email === true, '…nobody else changed');
+            await expect('Back on', put(TB, { committeeSummary: true }), 200);
+            await expect('A reviewer switches the committee summary (not theirs)', put(TR, { committeeSummary: false }), 400, 'EMAIL_SETTING_NOT_YOURS');
+            await expect('A student switches anything', put(A, { reviewerSummary: false }), 400, 'EMAIL_SETTING_NOT_YOURS');
+            await expect('A switch as text', put(TR, { reviewerSummary: 'false' }), 400, 'INVALID_EMAIL_SETTINGS');
+            await expect('An unknown switch (reminders have none)', put(TR, { deadlineReminders: false }), 400, 'INVALID_EMAIL_SETTINGS');
+            await expect('An empty change', put(TR, {}), 400, 'INVALID_EMAIL_SETTINGS');
+            await expect('Someone else\'s id in the body is not a switch', put(TR, { userId: member.id, reviewerSummary: false }), 400, 'INVALID_EMAIL_SETTINGS');
+
+            const acting = await actingTokenFor(S, both);
+            if (!acting) {
+                report(false, 'The admin starts acting as the reviewer on a committee', 'no acting token');
+            } else {
+                report(JSON.stringify((await get(acting)).body?.settings) === '{"reviewerSummary":true,"committeeSummary":true}', 'Acting: their settings can be seen');
+                await expect('Acting: changing them is refused', put(acting, { reviewerSummary: false }), 403, 'NOT_WHILE_ACTING');
+                report((await pool.query('SELECT reviewer_summary_email FROM users WHERE id = $1', [both.id])).rows[0].reviewer_summary_email === true, '…nothing changed');
+                await call('POST', 'acting/exit', { token: acting });
+            }
+        } finally {
+            const removed = await removeSharingProgramme();
+            console.log(`(removed the temporary email-settings programme (${removed}) and its people)`);
+        }
+    }
+
     section('5. Allowed reads still work -> 200');
     await expect('Student A reads own applications', call('GET', 'applications/mine', { token: A }), 200);
     await expect('Student B opens own file', call('GET', `uploads/${fileB}`, { token: B }), 200);

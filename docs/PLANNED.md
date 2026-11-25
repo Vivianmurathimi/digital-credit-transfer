@@ -71,7 +71,7 @@ Things deliberately left for later, with the reason and the round they belong to
 - ~~Staff linked to programmes: main and extra reviewers~~ **(done, Part B, migration 019).**
 - ~~Sharing work: assisting, assigning, distributing; main reviewer gone~~ **(done, Part C).**
 - ~~The timeline: review deadline, several semesters in progress, closing when everything is decided~~ **(done, Part D, migration 020).**
-- ~~Reviewer emails: daily summary instead of an email per event~~ **(done, Part E, migration 021).**
+- ~~Reviewer emails: daily summary instead of an email per event~~ **(done, Part E, migration 021).** Reviewers and committee members can switch their daily summary off (migration 031); reminders can't be.
 - ~~PDFs for reviewers and single-application PDFs~~ **(done, Part F).**
 
 ## Round 2 Group 2 (done): the committee

@@ -178,3 +178,52 @@ test('the reminders before the review deadline go to everyone who can see the pr
     assert.deepEqual(sent.map((r) => r.reviewer_id).sort(), [main.id, assisting.id].sort(), 'main and assisting; not the standby one');
     assert.equal(await remindReviewersBeforeReviewDeadline({ now: weekBefore, remind, only: [pending] }), 0, 'never twice');
 });
+
+// Migration 031: the reviewer switched the daily summary off
+const switchOf = (user, on) => pool.query('UPDATE users SET reviewer_summary_email = $2 WHERE id = $1', [user.id, on]);
+const rowOf = async (user, day) => (await pool.query(
+    'SELECT new_applications, emailed, covered_until FROM reviewer_summaries WHERE reviewer_id = $1 AND day = $2', [user.id, day]
+)).rows[0];
+
+test('switched off: a day with news is recorded with emailed = false and nothing is sent; turned back on, no backlog', async () => {
+    await switchOf(main, false);
+    try {
+        const a20 = await application(20);
+        await event(a20, 'submitted', '2091-12-01T10:00:00Z');
+        const { sent, summarize } = recorder();
+        assert.equal(await summaries(at('2091-12-02T06:00:00Z'), summarize), 1, 'only the assisting reviewer is emailed');
+        assert.deepEqual(sent.map((s) => s.reviewer_id), [assisting.id]);
+        const offDay = await rowOf(main, '2091-12-02');
+        assert.ok(offDay && offDay.new_applications >= 1, 'the switched-off day is recorded, with its news counted');
+        assert.equal(offDay.emailed, false, 'news, but the switch is off: emailed = false');
+        assert.equal(offDay.covered_until.toISOString(), '2091-12-02T06:00:00.000Z', 'its window has moved on');
+
+        // Back on: the next summary covers only what came after the switched-off day
+        await switchOf(main, true);
+        const a21 = await application(21);
+        await event(a21, 'submitted', '2091-12-02T10:00:00Z');
+        assert.equal(await summaries(at('2091-12-03T06:00:00Z'), summarize), 2);
+        const back = sent.slice(1).find((s) => s.reviewer_id === main.id);
+        assert.equal(back.newApplications.length, 1, 'only the application after the switched-off day: no backlog');
+        assert.equal((await rowOf(main, '2091-12-03')).emailed, true);
+
+        // On, but nothing new: still emailed = false (as before)
+        assert.equal(await summaries(at('2091-12-04T06:00:00Z'), summarize), 0);
+        assert.equal((await rowOf(main, '2091-12-04')).emailed, false);
+    } finally {
+        await switchOf(main, true);
+    }
+});
+
+test('switched off: the reminders before the review deadline still come', async () => {
+    await switchOf(main, false);
+    try {
+        const pending = await application(22, { semester: semesterId });
+        const sent = [];
+        const remind = async (r) => { sent.push(r); };
+        assert.equal(await remindReviewersBeforeReviewDeadline({ now: at('2091-10-13T21:59:00Z'), remind, only: [pending] }), 2, 'one day before: main and assisting');
+        assert.ok(sent.some((r) => r.reviewer_id === main.id), 'the reviewer with the summary switched off is reminded too');
+    } finally {
+        await switchOf(main, true);
+    }
+});

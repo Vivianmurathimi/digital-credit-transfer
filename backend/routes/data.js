@@ -4,6 +4,8 @@ const pool = require('../db');
 const verifyToken = require('../middleware/verifyToken');
 const requireRole = require('../middleware/requireRole');
 const sendError = require('../utils/sendError');
+const { sendValidationErrors } = require('../utils/sendError');
+const { emailSettingsOf, checkEmailSettingsChange, saveEmailSettings } = require('../utils/emailSettings');
 const { COUNTRY_CODES } = require('../utils/countries');
 const { periodFor } = require('../utils/applicationPeriod');
 
@@ -67,6 +69,37 @@ router.get('/me', verifyToken, async (req, res) => {
     } catch (err) {
         console.error('Fetch own profile error:', err.message);
         sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// GET /api/me/email-settings: the logged-in user's daily summary switches, only the ones that apply
+// (utils/emailSettings.js). The id comes only from the token.
+router.get('/me/email-settings', verifyToken, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+        const settings = await emailSettingsOf(pool, req.user.id);
+        if (!settings) return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
+        return res.json({ success: true, settings });
+    } catch (err) {
+        console.error('❌ Email settings error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Fetch failed');
+    }
+});
+
+// PUT /api/me/email-settings { reviewerSummary?: boolean, committeeSummary?: boolean }: the user's
+// own switches only. Not while the admin acts as them (their settings are theirs to choose).
+router.put('/me/email-settings', verifyToken, async (req, res) => {
+    if (req.acting) return sendError(res, 403, 'NOT_WHILE_ACTING', 'Email settings cannot be changed while acting as someone');
+    try {
+        const applicable = await emailSettingsOf(pool, req.user.id);
+        if (!applicable) return sendError(res, 401, 'ACCOUNT_GONE', 'Account no longer exists');
+        const { errors, changes } = checkEmailSettingsChange(req.body, applicable);
+        if (errors) return sendValidationErrors(res, errors);
+        await saveEmailSettings(pool, req.user.id, changes);
+        return res.json({ success: true, settings: await emailSettingsOf(pool, req.user.id) });
+    } catch (err) {
+        console.error('❌ Email settings save error:', err.message);
+        return sendError(res, 500, 'SERVER_ERROR', 'Could not save the email settings');
     }
 });
 

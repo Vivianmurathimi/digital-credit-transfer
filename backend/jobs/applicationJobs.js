@@ -3,6 +3,7 @@ const notifyStudent = require('../utils/notifyStudent');
 const sendEmail = require('../utils/sendEmail');
 const { buildReviewerEmail, buildReviewerSummaryEmail, buildAdminEmail, buildCommitteeEmail, buildCommitteeSummaryEmail } = require('../utils/emailTemplates');
 const { seesProgrammeSql } = require('../utils/reviewers');
+const { CURRENT_MEMBER_SQL } = require('../utils/committee');
 const inTransaction = require('../utils/transaction');
 const { REVIEW_WARNING_DAYS, COMMITTEE_WARNING_DAYS } = require('../utils/semesters');
 
@@ -241,7 +242,10 @@ const sendReviewerSummary = async (summary) => {
  *     see at that moment (main reviewer, or extra reviewer while allowed to assist), not withdrawn;
  *     and (round 2 Group 2) decisions the committee CHANGED there, with the final status (kept
  *     ones are not news; who in the committee acted is never said);
- *   - nothing new: recorded, no email (later news waits for the next day's summary).
+ *   - nothing new: recorded, no email (later news waits for the next day's summary);
+ *   - the reviewer switched the summary off (users.reviewer_summary_email, migration 031): recorded
+ *     with its counts, emailed = false, no email; the window still moves on, so switching it back
+ *     on starts from that day (no backlog). Deadline reminders don't depend on it.
  * A server that was off at 07:00 sends it at the next run the same day; off for days: the next
  * summary covers everything since the last one.
  */
@@ -285,12 +289,16 @@ const sendDailySummaries = async ({ now, summarize = sendReviewerSummary, onlyRe
         const newApplications = events.filter((e) => e.kind === 'submitted');
         const replies = events.filter((e) => e.kind === 'replied');
         const changed = events.filter((e) => e.kind === 'committee_changed');
+        // Their switch (migration 031), read before the day is completed: emailed = news AND the
+        // switch on. Off: the day stays recorded with its counts, so its window has moved on and
+        // turning the email back on never sends a backlog.
+        const reviewer = (await pool.query('SELECT name, email, preferred_language, reviewer_summary_email FROM users WHERE id = $1', [row.reviewer_id])).rows[0];
+        const sending = events.length > 0 && reviewer.reviewer_summary_email;
         await pool.query(
             'UPDATE reviewer_summaries SET new_applications = $3, student_replies = $4, emailed = $5 WHERE reviewer_id = $1 AND day = $2',
-            [row.reviewer_id, row.day, newApplications.length, replies.length, events.length > 0]
+            [row.reviewer_id, row.day, newApplications.length, replies.length, sending]
         );
-        if (events.length === 0) continue;
-        const reviewer = (await pool.query('SELECT name, email, preferred_language FROM users WHERE id = $1', [row.reviewer_id])).rows[0];
+        if (!sending) continue;
         const waiting = (await pool.query(
             `SELECT count(*)::int AS n FROM applications a
              WHERE a.programme_id = ANY($1) AND a.status = 'pending'
@@ -380,8 +388,7 @@ const alertReviewDeadlinePassed = async ({ now, alert = alertAdmins, only = null
 // reviewers' steps above count only pending and needs info).
 // ---------------------------------------------------------------------------------------------
 
-// Who is on a programme's committee now: a current committee link of an active account (alias cl)
-const CURRENT_MEMBER_SQL = (cl, u) => `${cl}.role = 'committee' AND ${cl}.ended_at IS NULL AND ${u}.deactivated_at IS NULL AND ${u}.role IN ('committee', 'reviewer')`;
+// Who is on a programme's committee now (utils/committee.js; the email settings use the same rule)
 const beforeCommitteeDeadline = (days) => `((sb.committee_ends_at AT TIME ZONE 'Europe/Budapest') - make_interval(days => ${days})) AT TIME ZONE 'Europe/Budapest'`;
 
 // One member's daily summary email, in their language. Never throws.
@@ -398,7 +405,8 @@ const sendCommitteeSummary = async (summary) => {
  * The committee members' daily summary, at DAILY_SUMMARY_HOUR (07:00) Budapest time, the same rules
  * as the reviewers' (sendDailySummaries): recorded first (committee_summaries, once per member and
  * day, also with two processes), covering everything since the previous one; an email only when
- * something is new. What is new: decisions made in the member's current committee programmes that
+ * something is new and the member's switch is on (users.committee_summary_email, migration 031: off,
+ * the day is still recorded with emailed = false and the window moves on). What is new: decisions made in the member's current committee programmes that
  * still await the committee, except the member's own (they can't confirm those). Someone who is also
  * a reviewer gets this and the reviewer summary separately: two tables, two emails.
  */
@@ -438,12 +446,15 @@ const sendCommitteeSummaries = async ({ now, summarizeCommittee = sendCommitteeS
              ORDER BY e.created_at, e.id`,
             [programmeIds, row.covered_from, row.covered_until, row.member_id]
         )).rows;
+        // Their switch (migration 031), read before the day is completed: emailed = news AND the
+        // switch on; off, the day stays recorded and its window has moved on (no backlog later)
+        const member = (await pool.query('SELECT name, email, preferred_language, committee_summary_email FROM users WHERE id = $1', [row.member_id])).rows[0];
+        const sending = decisions.length > 0 && member.committee_summary_email;
         await pool.query(
             'UPDATE committee_summaries SET new_decisions = $3, emailed = $4 WHERE member_id = $1 AND day = $2',
-            [row.member_id, row.day, decisions.length, decisions.length > 0]
+            [row.member_id, row.day, decisions.length, sending]
         );
-        if (decisions.length === 0) continue;
-        const member = (await pool.query('SELECT name, email, preferred_language FROM users WHERE id = $1', [row.member_id])).rows[0];
+        if (!sending) continue;
         const waiting = (await pool.query(
             `SELECT count(*)::int AS n FROM applications a
              WHERE a.programme_id = ANY($1) AND a.status = 'awaiting_committee' AND a.decided_by IS DISTINCT FROM $2

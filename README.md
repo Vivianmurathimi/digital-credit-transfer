@@ -166,4 +166,5 @@ period is over, no late access runs and everything is decided; it is then read-o
 Past semesters. Reviewers get one daily summary email at 07:00 Budapest time instead of an email per
 application. After a reviewer decides, the application **awaits the committee**; the committee has its
 own **committee deadline** (default: review deadline + 14 days, also a target), its own daily summary
-and reminders, and a semester closes only when nothing awaits it. More: [backend/REVIEWER.md](backend/REVIEWER.md), section 9.
+and reminders, and a semester closes only when nothing awaits it. Reviewers and committee members can
+switch their daily summary off under "Email settings" (deadline reminders always come). More: [backend/REVIEWER.md](backend/REVIEWER.md), section 9.

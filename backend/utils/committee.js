@@ -22,6 +22,10 @@ const { semesterEndedSql } = require('./semesters');
 const { addEvent } = require('./applicationEvents');
 
 const ACTIONS = ['keep', 'change_grade', 'change'];
+
+// Who is on a programme's committee now: a current committee link of an active account (alias cl
+// for staff_programmes, u for users). The daily summary and the email settings use the same rule.
+const CURRENT_MEMBER_SQL = (cl, u) => `${cl}.role = 'committee' AND ${cl}.ended_at IS NULL AND ${u}.deactivated_at IS NULL AND ${u}.role IN ('committee', 'reviewer')`;
 const FINAL_GRADES = [2, 3, 4, 5];
 
 // Which applications the committee sees: decided by a reviewer or admin, awaiting or already handled
@@ -118,4 +122,4 @@ const takeCommitteeStep = async (client, { applicationId, step, actorId, actorRo
     return { done: { studentId: app.student_id, status: finalStatus, finalGrade, emailNote } };
 };
 
-module.exports = { ACTIONS, COMMITTEE_VISIBLE_SQL, checkCommitteeStep, takeCommitteeStep };
+module.exports = { ACTIONS, COMMITTEE_VISIBLE_SQL, CURRENT_MEMBER_SQL, checkCommitteeStep, takeCommitteeStep };

@@ -10,6 +10,7 @@ import StudentDashboard from './StudentDashboard';
 import CommitteeDashboard from './committee/CommitteeDashboard';
 import ReviewerWorkspace from './committee/ReviewerWorkspace';
 import AdminLayout from './admin/AdminLayout';
+import EmailSettings from './EmailSettings';
 
 // Where Exit returns the admin: the menu section they started acting from (this tab only)
 const RETURN_KEY = 'actingReturnTo';
@@ -22,7 +23,7 @@ const Dashboard = () => {
     const navigate = useNavigate();
 
     // RequireAuth has already checked the session; `view` is whose dashboard to show. While the
-    // admin acts as a student or reviewer (admin round Group 1), the session itself is that
+    // admin acts as a student, reviewer or committee member (admin round Group 1), the session itself is that
     // person's, so their dashboard works exactly as for them. Starting and exiting swap the
     // session token, and this state shows the matching dashboard without reloading the page.
     const [session, setSession] = useState(getSessionState);
@@ -89,6 +90,9 @@ const Dashboard = () => {
             {/* A reviewer who also sits on a committee gets a Reviewer / Committee switch (round 2 Group 2) */}
             {role === 'reviewer' && <ReviewerWorkspace key={`reviewer-${userId}`} />}
             {role === 'committee' && <CommitteeDashboard key={`committee-${userId}`} />}
+            {/* The daily summary switches (migration 031), once per screen: a reviewer on a committee
+                sees both in one box. While acting: shown, locked. */}
+            {(role === 'reviewer' || role === 'committee') && <EmailSettings key={`email-${userId}`} acting={acting} />}
             {role === 'student' && <StudentDashboard key={`student-${userId}`} userId={userId} />}
         </div>
     );

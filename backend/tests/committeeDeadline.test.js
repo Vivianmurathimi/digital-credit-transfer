@@ -186,3 +186,49 @@ test('the members\' daily summary at 07:00: new decisions awaiting the committee
     assert.equal(await summaries('2093-10-14T05:00:00Z'), 2);
     assert.ok(sent.slice(1).every((s) => s.decisions.length === 1 && s.decisions[0].course.startsWith('ZCOM')));
 });
+
+// Migration 031: the member switched the daily summary off
+const committeeSwitch = (user, on) => pool.query('UPDATE users SET committee_summary_email = $2 WHERE id = $1', [user.id, on]);
+
+test('switched off: a day with news is recorded with emailed = false and nothing is sent; turned back on, no backlog', async () => {
+    const people = [member.id, both.id];
+    const sent = [];
+    const summarizeCommittee = async (s) => { sent.push(s); };
+    const summaries = (iso) => sendCommitteeSummaries({ now: at(iso), summarizeCommittee, onlyMembers: people });
+    const rowOf = async (day) => (await pool.query(
+        'SELECT new_decisions, emailed, covered_until FROM committee_summaries WHERE member_id = $1 AND day = $2', [member.id, day]
+    )).rows[0];
+    await committeeSwitch(member, false);
+    try {
+        await awaiting(10, reviewer, '2093-10-15T12:00:00Z');
+        assert.equal(await summaries('2093-10-16T05:00:00Z'), 1, 'only "both" is emailed');
+        assert.deepEqual(sent.map((s) => s.member_id), [both.id]);
+        const offDay = await rowOf('2093-10-16');
+        assert.ok(offDay && offDay.new_decisions >= 1, 'the switched-off day is recorded, with its news counted');
+        assert.equal(offDay.emailed, false, 'news, but the switch is off: emailed = false');
+        assert.equal(offDay.covered_until.toISOString(), '2093-10-16T05:00:00.000Z', 'its window has moved on');
+
+        await committeeSwitch(member, true);
+        await awaiting(11, reviewer, '2093-10-16T12:00:00Z');
+        assert.equal(await summaries('2093-10-17T05:00:00Z'), 2);
+        const back = sent.slice(1).find((s) => s.member_id === member.id);
+        assert.equal(back.decisions.length, 1, 'only the decision after the switched-off day: no backlog');
+        assert.equal((await rowOf('2093-10-17')).emailed, true);
+    } finally {
+        await committeeSwitch(member, true);
+    }
+});
+
+test('switched off: the reminders before the committee deadline still come', async () => {
+    await committeeSwitch(member, false);
+    try {
+        const only = [await awaiting(12, reviewer, '2093-10-18T10:00:00Z')];
+        // The earlier test already sent this semester's 1-day reminders: start that kind again for the member
+        await pool.query("DELETE FROM committee_reminders WHERE member_id = $1 AND semester_id = $2 AND kind = '1_day'", [member.id, semesterId]);
+        const sent = [];
+        await remindCommitteeBeforeDeadline({ now: at(DAY_BEFORE), remindCommittee: async (r) => { sent.push(r); }, only });
+        assert.ok(sent.some((r) => r.member_id === member.id && r.kind === '1_day'), 'the member with the summary switched off is reminded too');
+    } finally {
+        await committeeSwitch(member, true);
+    }
+});

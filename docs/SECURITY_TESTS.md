@@ -332,6 +332,9 @@ The script prints `PASS`, `FAIL` or `SKIP` per check and a total in the form `pa
 | 4af | **Programmes are never deleted along with their links (DB cleanup 2, migration 029)**, temporary programmes | Delete a programme with a current staff link; an ended one; an invite line (route, then directly in SQL) | `409 DELETE_IN_USE` with `HAS_PEOPLE` / `HAS_PEOPLE` / `HAS_RECORDS`; refused by the `…_programme_id_fkey` rules; nothing deleted |
 | | | An unused programme with another code: directly in SQL; through the route | refused (`programme_aliases_programme_id_fkey`); `200`, the programme and its other code gone |
 | 4ag | **Courses without universities (DB cleanup 3, migration 030)** | The schema; a second course with the same code in one programme and semester (no semester) | `universities` and `courses.university_id` gone (else: run `npm run migrate`); refused by `courses_programme_semester_code_key` |
+| 4ah | **Daily summary switches (migration 031)**, temporary people and programme | `GET /api/me/email-settings` without a token; as a reviewer, a reviewer on a committee, a committee member, a student, the admin | `401`; `{reviewerSummary}` / both / `{committeeSummary}` / `{}` / `{}`, all on |
+| | | `PUT`: one side off and back on; another side's switch; a student's; a switch as text; an unknown one; empty; another user's id in the body | `200`, only that person and switch changed; `400 EMAIL_SETTING_NOT_YOURS` ×2; `400 INVALID_EMAIL_SETTINGS` ×4 |
+| | | The admin acting as the person: read; change | settings shown; `403 NOT_WHILE_ACTING`, nothing changed (switched off: day recorded with `emailed = false`, no backlog, reminders still sent: `npm test`) |
 
 Also checked in round 2: an application period overlapping another semester's (`409 SEMESTERS_OVERLAP`, section 4n), a next semester whose period starts during this one's review time (allowed), two semesters in progress (allowed), the review deadline before the close (`400 REVIEW_BEFORE_CLOSE`), Reopen until and late access after the review deadline (`400 AFTER_REVIEW_DEADLINE`), and moving the review deadline in the same step (section 4o).
 | | | Generate an older semester's PDF book again | `200`, with the decision line (every application page: `npm test`, termBookPdf) |
@@ -376,6 +379,7 @@ With rate limiting, the 6 requests for the real address led to only 3 email atte
 
 | Date | Server | Result |
 |---|---|---|
+| 2026-11-25 | throwaway copy with migration 031, daily summary switches (section 4ah) | **1101 passed, 0 failed, 2 skipped** (1103 checks); the same two skips. Temporary people and programme removed |
 | 2026-11-24 | throwaway copy with migration 030, universities removed (section 4ag); also every migration 001–030, `seed:dev` and `demo:seed` (`DEMO_DB_NAME`) on empty databases | **1082 passed, 0 failed, 2 skipped** (1084 checks); the same two skips. Throwaway databases and buckets removed |
 | 2026-11-24 | throwaway copy with migration 029, programmes protected from cascading deletes (section 4af) | **1080 passed, 0 failed, 2 skipped** (1082 checks); the same two skips. Temporary programmes, reviewer and invite removed |
 | 2026-11-24 | throwaway copy with migration 028, each application points to its course (section 4ae, two submit checks) | **1068 passed, 0 failed, 2 skipped** (1070 checks), twice; the same two skips. Fixture courses, temporary programme, semester and application removed |
